@@ -1,0 +1,18 @@
+[
+  {
+    "entity_id": "dataset_source_tables",
+    "name": "来源整理表",
+    "kind": "directory",
+    "path": "source_tables",
+    "category": "source_tables",
+    "path_alias": "data/source_tables"
+  },
+  {
+    "entity_id": "ds_canonical_market",
+    "name": "标准行情宽表",
+    "kind": "parquet",
+    "path": "canonical.parquet",
+    "category": "canonical",
+    "path_alias": "data/canonical.parquet"
+  }
+]

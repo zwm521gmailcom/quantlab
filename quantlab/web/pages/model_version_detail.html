@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 模型版本</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/">研究总览</a>
+          <a href="/data">数据中心</a>
+          <a href="/kline">标准行情宽表</a>
+          <a href="/factors">因子研究</a>
+          <a href="/models">模型中心</a>
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main>
+        <p class="page-back"><a href="/models">← 模型中心</a></p>
+        <div class="eyebrow">模型版本</div>
+        <h2 id="title">模型版本详情</h2>
+        <p id="identity" class="muted">正在加载…</p>
+        <section class="card">
+          <h3>登记内容</h3>
+          <div id="detail"><p>正在加载…</p></div>
+        </section>
+        <p class="form-note">这里只看模型中心登记的默认参数。真正训练发生在回测里，折次和训练行数见对应回测运行记录。</p>
+        <p><a class="button-link" id="to-backtest" href="/backtests/new">在回测中心调用</a></p>
+      </main>
+    </div>
+    <script src="/assets/app.js?v=20260906x"></script>
+    <script src="/assets/nav.js?v=20260907a"></script>
+  </body>
+</html>

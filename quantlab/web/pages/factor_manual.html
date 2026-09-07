@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>QuantLab · 手动建立因子</title><link rel="stylesheet" href="/assets/app.css?v=20260906ai"></head>
+  <body><div class="shell"><aside><h1>QuantLab</h1><nav aria-label="主导航"><a href="/">研究总览</a><a href="/data">数据中心</a><a href="/kline">标准行情宽表</a><a href="/data/factors">因子数据</a><a href="/factors">因子库</a><a href="/research/factors" aria-current="page">因子研究</a><a href="/models">模型中心</a><a href="/backtests/new">回测中心</a><a href="/backtests/runs">结果档案</a><a href="/settings">设置</a></nav></aside>
+    <main><nav class="page-back" aria-label="返回路径"><a href="/factors">← 因子数据</a></nav><div class="eyebrow">手动建因子</div><h2>手动建立因子</h2><p>使用登记数据版本和受控公式创建草稿；预览、诊断、发布分别执行，绝不写入权威数据目录。</p>
+      <ol id="manual-factor-steps" class="workflow-steps" aria-label="手动建立因子步骤"><li class="step current" data-step="definition">1 定义</li><li class="step" data-step="preview">2 校验与预览</li><li class="step" data-step="diagnose">3 真实诊断</li><li class="step" data-step="publish">4 发布版本</li></ol>
+      <div id="manual-factor-error" class="state error hidden"></div><div id="manual-factor-result" class="state hidden"></div>
+      <form id="manual-factor-form" class="factor-form-grid">
+        <section class="factor-form-section">
+          <div class="form-section-head"><h3>基本信息</h3><span class="tag">定义与归属</span></div>
+          <div class="factor-form-fields">
+            <label>因子名称<input id="manual-factor-name" required placeholder="例如：一步动量"></label>
+            <label>分类<input id="manual-factor-category" value="技术" required></label>
+          </div>
+          <p class="form-note">因子代码由“factor_ + 字段名”命名，页面保存后由服务端返回；当前登记模型暂不提供因子说明字段。</p>
+        </section>
+        <section class="factor-form-section">
+          <div class="form-section-head"><h3>公式与数据</h3><span class="tag">锁定数据版本</span></div>
+          <div class="factor-form-fields">
+            <label>数据集 ID<input id="manual-factor-dataset" value="ds_canonical_market" required></label>
+            <label>数据版本 ID<input id="manual-factor-dataset-version" value="current" required></label>
+            <label class="span-2">输入字段（逗号分隔）<input id="manual-factor-fields" placeholder="hfq_close" required></label>
+            <div class="span-2"><button id="manual-factor-load-fields" type="button">浏览登记字段</button><div id="manual-factor-field-list" class="state"></div></div>
+            <label class="span-2">受控公式<textarea id="manual-factor-formula" required placeholder="hfq_close / hfq_close.shift(5) - 1"></textarea></label>
+          </div>
+        </section>
+        <section class="factor-form-section">
+          <div class="form-section-head"><h3>计算口径</h3><span class="tag">当前可编辑项</span></div>
+          <div class="factor-form-fields">
+            <label>方向<select id="manual-factor-direction"><option value="positive">正向</option><option value="negative">反向</option></select></label>
+            <label>缺失处理<select id="manual-factor-missing"><option value="drop">删除缺失</option><option value="keep_missing">保留缺失</option></select></label>
+            <label>市场
+              <div class="multi-select" id="manual-factor-market" data-empty="未选择市场" data-all="全市场">
+                <button type="button" class="multi-select-toggle">沪市, 深市</button>
+                <div class="multi-select-dropdown hidden">
+                  <label class="multi-select-all"><input type="checkbox" data-role="all" value="ALL"> 全选</label>
+                  <div class="multi-select-divider"></div>
+                  <label><input type="checkbox" value="SH" data-label="沪市" checked> 沪市（SH）</label>
+                  <label><input type="checkbox" value="SZ" data-label="深市" checked> 深市（SZ）</label>
+                  <label><input type="checkbox" value="BJ" data-label="北交所"> 北交所（BJ）</label>
+                </div>
+              </div>
+            </label>
+            <label>计算起始日期<input type="date" id="manual-factor-date-from" value="2026-01-01" required></label>
+            <label>计算结束日期<input type="date" id="manual-factor-date-to" value="2026-08-31" required></label>
+          <p class="form-note">复权方式、频率、回看窗口与异常值规则由所选数据版本与受控公式共同决定；尚未作为独立字段建模前不提供伪输入。</p>
+          <p class="form-note">预览/诊断仅计算所选区间（默认 2026 年）。</p>
+        </section>
+        <section class="factor-form-section">
+          <div class="form-section-head"><h3>点时约束</h3><span class="tag">版本快照保护</span></div>
+          <p class="form-note">草稿使用锁定的 DatasetVersion（PIT 快照），公式只引用 t 日及以前登记字段；具体检查在“校验与预览”后展示。</p>
+        </section>
+        <div class="factor-form-actions"><button id="manual-factor-preview" type="button">校验并预览</button><button type="submit">保存草稿</button></div>
+      </form>
+      <section id="manual-factor-preview-box" class="card hidden"><h3>真实预览</h3><pre id="manual-factor-preview-output" class="config-block"></pre><button id="manual-factor-diagnose" type="button" class="hidden">运行诊断</button><button id="manual-factor-publish" type="button" class="hidden">发布版本</button></section>
+    </main></div><script src="/assets/app.js?v=20260906x"></script><script src="/assets/nav.js?v=20260907a"></script></body>
+</html>

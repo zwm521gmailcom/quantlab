@@ -1,0 +1,86 @@
+[project]
+name = "quantlab"
+dynamic = ["version"]
+description = "本机 A 股因子、模型与回测研究平台。"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [{name = "zwm521gmailcom", email = "zwm521@gmail.com"}]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Natural Language :: Chinese (Simplified)",
+]
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "pydantic>=2.10.0",
+    "pandas>=2.2.3",
+    "numpy>=2.2.3",
+    "pyarrow>=19.0.1",
+    "scikit-learn>=1.6.1",
+    "lightgbm>=4.6.0",
+    "xgboost>=2.1.0",
+]
+keywords = ["quant", "factor", "backtest", "a-share"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.9.0",
+    "playwright>=1.50.0",
+    "pytest-playwright>=0.7.0",
+]
+
+[project.scripts]
+quantlab = "quantlab.cli:main"
+
+[project.urls]
+"Source" = "https://github.com/zwm521gmailcom/quantlab"
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "quantlab/__init__.py"
+pattern = "__version__ = ['\"](?P<version>[^'\"]+)['\"]"
+
+[tool.hatch.build.targets.wheel]
+packages = ["quantlab"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"quantlab/services/_recovered_pyc/backtest_job.pyc" = "quantlab/services/_recovered_pyc/backtest_job.pyc"
+"quantlab/services/_recovered_pyc/backtest_workbench.pyc" = "quantlab/services/_recovered_pyc/backtest_workbench.pyc"
+"quantlab/services/_recovered_pyc/model_training.pyc" = "quantlab/services/_recovered_pyc/model_training.pyc"
+"quantlab/services/_recovered_pyc/portfolio.pyc" = "quantlab/services/_recovered_pyc/portfolio.pyc"
+"quantlab/services/_recovered_pyc/trade_filters.pyc" = "quantlab/services/_recovered_pyc/trade_filters.pyc"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/quantlab",
+    "/tests",
+    "/docs",
+    "/README.md",
+    "/LICENSE",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py310"
+src = ["quantlab", "tests"]
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "UP", "W"]
+ignore = ["E501"]

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 研究总览</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/" aria-current="page">研究总览</a>
+          <a href="/data">数据中心</a>
+          <a href="/kline">标准行情宽表</a>
+          <a href="/research/factors">因子研究</a>
+          <a href="/models">模型中心</a>
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main class="dash">
+        <header class="dash-hero">
+          <div>
+            <div class="eyebrow">研究台</div>
+            <h2>研究总览</h2>
+            <p class="dash-lead">数据、因子、模型与回测的运行台。服务在本机，结果也落在本机。</p>
+            <nav class="dash-actions" aria-label="快捷入口">
+              <a class="dash-action dash-action-primary" href="/backtests/new" title="冻结数据、因子和撮合规则后开跑"><b>新建回测</b></a>
+              <a class="dash-action" href="/factors/new/manual" title="写公式，登记进因子库"><b>手动建立因子</b></a>
+              <a class="dash-action" href="/research/factor-mining" title="从宽表里搜候选表达式"><b>自动挖掘因子</b></a>
+              <a class="dash-action" href="/backtests/runs" title="对比净值、基准和历史运行"><b>结果档案</b></a>
+            </nav>
+          </div>
+          <div class="dash-hero-aside">
+            <div id="dataset-summary" class="dash-live">正在连接本地服务…</div>
+          </div>
+        </header>
+        <div id="loading-state" class="state">正在连接本地服务…</div>
+        <div id="empty-state" class="state hidden">暂无运行记录。</div>
+        <div id="error-state" class="state error hidden"></div>
+        <div id="overview-summary" class="overview-grid dash-kpis"></div>
+        <div class="dash-body">
+          <section class="dash-panel">
+            <div class="dash-panel-head">
+              <h3>最近运行</h3>
+              <a class="dash-link" href="/backtests/runs">结果档案 →</a>
+            </div>
+            <div id="run-status" class="dash-chips"></div>
+            <div id="recent-runs" class="dash-run-grid"></div>
+          </section>
+          <div class="dash-side">
+            <section class="dash-panel">
+              <div class="dash-panel-head"><h3>数据健康</h3><a class="dash-link" href="/data">数据中心 →</a></div>
+              <div id="data-health" class="state">正在读取登记数据集质量…</div>
+            </section>
+            <section class="dash-panel">
+              <div class="dash-panel-head"><h3>质量告警</h3></div>
+              <div id="quality-alerts"></div>
+            </section>
+          </div>
+        </div>
+        <section class="dash-panel">
+          <div class="dash-panel-head"><h3>最近回测</h3><a class="dash-link" href="/backtests/runs">结果档案 →</a></div>
+          <div id="recent-performance" class="dash-run-grid dash-run-grid-3 state">暂无真实回测记录；完成一次回测后会在此显示净值表现与基准对比。</div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js?v=20260906x"></script>
+    <script src="/assets/nav.js?v=20260907a"></script>
+  </body>
+</html>

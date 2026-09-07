@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 数据中心</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/">研究总览</a>
+          <a href="/data" aria-current="page">数据中心</a>
+          <a href="/kline">标准行情宽表</a>
+          <a href="/research/factors">因子研究</a>
+          <a href="/models">模型中心</a>
+          
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main>
+        <div class="eyebrow">数据中心</div>
+        <h2>数据中心</h2>
+        <p>只读展示原始数据仓库（raw）；标准、因子与研究数据在因子/回测中消费。</p>
+        <section class="card" aria-live="polite">
+          <div id="data-error-state" class="state error hidden"></div>
+          <div class="data-toolbar">
+            <label>关键字 <input id="dataset-query" type="search" autocomplete="off"></label>
+            <label>类别 <select id="dataset-category"><option value="">全部</option><option value="source_tables">来源整理表</option><option value="raw">raw</option></select></label>
+            <label>质量 <select id="dataset-quality"><option value="">全部</option><option value="passed">passed</option><option value="warning">warning</option><option value="needs_review">needs_review</option><option value="failed">failed</option></select></label>
+            <button id="apply-dataset-filters" class="primary" type="button">筛选</button>
+            <button id="rescan-datasets" type="button">重新扫描元数据</button>
+          </div>
+          <p id="rescan-result" class="state hidden"></p>
+          <div id="dataset-table" class="dataset-table" role="table" aria-label="数据集目录"></div>
+          <div id="dataset-empty" class="state hidden">没有匹配的数据集。</div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js?v=20260908b"></script>
+  <script src="/assets/nav.js?v=20260907a"></script></body>
+</html>

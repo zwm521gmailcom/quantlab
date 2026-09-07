@@ -1,0 +1,1181 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 回测中心</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260908e">
+  </head>
+  <body>
+    <div class="shell">
+      <aside><h1>QuantLab</h1><nav aria-label="主导航"><a href="/">研究总览</a><a href="/data">数据中心</a><a href="/kline">标准行情宽表</a><a href="/data/factors">因子数据</a><a href="/factors">因子库</a><a href="/research/factors">因子研究</a><a href="/models">模型中心</a><a href="/backtests/new" aria-current="page">回测中心</a><a href="/backtests/runs">结果档案</a><a href="/settings">设置</a></nav></aside>
+      <main class="main">
+        <div class="top">
+          <div><div class="eyebrow">回测工作台</div><div class="title">回测中心</div><div class="sub">从数据、因子、模型到成交规则，一次保存完整运行配置</div></div>
+        </div>
+        <div class="root"><b>结果保存总目录</b><code>quantlab_runtime/results/</code><button id="edit-root" class="root-edit" type="button" title="修改目录" aria-label="修改目录"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></button></div>
+        <div id="banner" class="banner"><strong>配置状态：</strong><span id="banner-text">新建回测。名称现在填写；保存配置不会自动运行，点击“开始回测”后才创建运行 ID。</span></div>
+        <div class="layout">
+          <div class="layout-col">
+            <section class="panel" data-panel-id="identity"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>运行身份</h2><span class="tag">必填名称</span></div><div class="form"><div class="field"><label for="name">回测名称</label><input class="input" id="name" value="未命名回测"></div><div class="field"><label for="run-id">运行 ID</label><div class="id-preview" id="run-id">开始回测后由系统生成：YYYYMMDD-HHMMSS-序号</div></div><div class="field wide"><label for="note">备注</label><input class="input" id="note" value="用于本地回测与 BQ 结果对比"></div></div></section>
+            <section class="panel" data-panel-id="factors"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>因子组合</h2><span class="tag">模块 1</span></div><div class="form"><div class="field wide"><label for="factor-search">因子组合</label><div class="factor-combo" id="factors"><span class="factor-combo-chips" id="factor-chips"></span><input class="factor-combo-input" id="factor-search" type="text" placeholder="输入名称或字段，回车添加；也可点选多项" autocomplete="off" aria-autocomplete="list"><div class="factor-combo-menu hidden" id="factor-menu" role="listbox"></div></div><p class="form-note">可多选。同一张标准行情宽表带上这些因子后，下面训练、回测各切一份。</p></div><div class="field wide"><label for="dataset">研究数据版本</label><select class="select" id="dataset"><option value="ds_canonical_market">从已发布因子加载…</option></select><p class="form-note">同一张宽表带上所选因子。下面训练、回测各切一份，过滤、日期和股票范围互相独立。不拿回测段调参。</p></div></div></section>
+            <section class="panel" data-panel-id="train"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>训练样本</h2><span class="tag">模块 2</span></div><div class="form"><div class="field"><label for="train-scope">股票范围</label><select class="select" id="train-scope"><option value="中国A股（SH/SZ）">中国 A 股（SH / SZ）</option><option value="沪市（SH）">沪市（SH）</option><option value="深市（SZ）">深市（SZ）</option></select></div><div class="field"><label for="train-from">训练区间</label><input class="input" id="train-from" value="2019-01-01 — 2019-12-31"></div><div class="field wide"><span class="field-legend">样本过滤</span><div id="train-filter-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-train-filter" class="btn" type="button">添加公式</button></div><p class="form-note">只作用于训练日期窗，在盘前过滤之后追加。要 MA200 请加一行，例如 hfq_close &gt; sma200。</p></div></div></section>
+            <section class="panel" data-panel-id="test"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>回测样本</h2><span class="tag">模块 3</span></div><div class="form"><div class="field"><label for="test-scope">股票范围</label><select class="select" id="test-scope"><option value="中国A股（SH/SZ）">中国 A 股（SH / SZ）</option><option value="沪市（SH）">沪市（SH）</option><option value="深市（SZ）">深市（SZ）</option></select></div><div class="field"><label for="test-from">回测区间</label><input class="input" id="test-from" value="2020-01-02 — 2020-12-31"></div><div class="field wide"><span class="field-legend">样本过滤</span><div id="test-filter-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-test-filter" class="btn" type="button">添加公式</button></div><p class="form-note">只作用于回测日期窗。树数量按设定训满，不要拿这段调参。</p></div><p id="test-usage-note" class="form-note">这段 test 尚未用于已完成回测。</p><label class="check-inline hidden" id="acknowledge-test-reuse-wrap"><input type="checkbox" id="acknowledge-test-reuse"> 确认再次使用这段 test</label></div></section>
+          </div>
+          <div class="layout-col">
+            <section class="panel" data-panel-id="model"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>模型与信号</h2><span class="tag">模块 4</span></div><div class="form"><div class="field wide" data-kinds="lightgbm_tree xgboost_tree random_forest ridge_linear lasso elastic_net ols huber factor_rank"><label for="model">模型选择</label><select class="select" id="model"><option value="">选择已发布模型…</option></select></div><div class="field wide" data-kinds="lightgbm_tree xgboost_tree random_forest"><label for="random-seed">随机种子</label><input class="input" id="random-seed" type="number" min="0" step="1" value="123"><p class="form-note">写入本次运行配置，便于复现。不要靠扫种子挑曲线。</p></div><div data-kinds="lightgbm_tree"><div class="field"><label for="bt-trees">树数量</label><input class="input" id="bt-trees" type="number" min="1" value="5"></div><div class="field"><label for="bt-bins">max_bins（分箱数）</label><input class="input" id="bt-bins" type="number" min="16" max="511" value="511"></div><div class="field"><label for="bt-leaves">叶节点</label><input class="input" id="bt-leaves" type="number" min="2" value="30"></div><div class="field"><label for="bt-min-samples">最小样本</label><input class="input" id="bt-min-samples" type="number" min="1" value="1000"></div><div class="field"><label for="bt-learning-rate">学习率</label><input class="input" id="bt-learning-rate" type="number" min="0.01" max="1" step="0.01" value="0.1"></div><div class="field"><label for="bt-ndcg-discount-base">NDCG discount_base（名次折扣）</label><input class="input" id="bt-ndcg-discount-base" type="number" min="1" step="0.1" value="1"></div></div><div class="hidden" data-kinds="xgboost_tree"><div class="field"><label for="bt-xgb-trees">树数量</label><input class="input" id="bt-xgb-trees" type="number" min="1" value="5"></div><div class="field"><label for="bt-xgb-bins">max_bins（分箱数）</label><input class="input" id="bt-xgb-bins" type="number" min="16" max="256" value="256"></div><div class="field"><label for="bt-xgb-max-depth">最大深度</label><input class="input" id="bt-xgb-max-depth" type="number" min="1" value="6"></div><div class="field"><label for="bt-xgb-min-samples">最小样本</label><input class="input" id="bt-xgb-min-samples" type="number" min="1" value="1"></div><div class="field"><label for="bt-xgb-learning-rate">学习率</label><input class="input" id="bt-xgb-learning-rate" type="number" min="0.01" max="1" step="0.01" value="0.1"></div></div><div class="field" data-kinds="lightgbm_tree xgboost_tree"><label for="bt-ndcg-metric">NDCG 评估</label><select class="select" id="bt-ndcg-metric"><option value="ndcg" selected>开启 NDCG</option><option value="none">关闭</option></select></div><div class="field" data-kinds="lightgbm_tree xgboost_tree"><label for="bt-label-gain">NDCG 增益</label><select class="select" id="bt-label-gain"><option value="linear_0_19" selected>线性 0–19</option><option value="exponential">指数默认</option></select></div><div class="field" data-kinds="lightgbm_tree xgboost_tree"><label for="bt-ndcg-eval-at">NDCG eval_at（评估只看前 N）</label><input class="input" id="bt-ndcg-eval-at" type="number" min="1" value="10"></div><div data-kinds="lightgbm_tree xgboost_tree random_forest ridge_linear lasso elastic_net ols huber"><div class="field"><label for="bt-walk-forward">训练方式</label><select class="select" id="bt-walk-forward"><option value="once" selected>一次训练</option><option value="rolling">定长回看</option></select></div><div id="bt-roll-fields" class="hidden"><div class="field"><label for="bt-train-period">回看月数</label><input class="input" id="bt-train-period" type="number" min="1" value="12"></div><div class="field"><label for="bt-test-period">回测周期（月）</label><input class="input" id="bt-test-period" type="number" min="1" value="3"></div><p class="form-note">回看月数是每折训练用最近多少个月。定长回看时，下一折训练窗按回测周期向前顺延，上一折的回测区间会进入下一折训练。训练区间起点是第一折训练开始，测试区间终点是滚动结束。回测周期不能长于回看。</p></div></div><div class="hidden" data-kinds="random_forest"><div class="field"><label for="bt-forest-trees">树数量</label><input class="input" id="bt-forest-trees" type="number" min="1" value="20"></div><div class="field"><label for="bt-max-depth">最大深度</label><input class="input" id="bt-max-depth" type="number" min="1" value="8"></div><div class="field"><label for="bt-forest-min-samples">最小样本</label><input class="input" id="bt-forest-min-samples" type="number" min="1" value="20"></div></div><div class="field hidden" data-kinds="ridge_linear lasso elastic_net huber"><label for="bt-alpha">正则强度 α</label><input class="input" id="bt-alpha" type="number" min="0" step="0.001" value="1"></div><div class="field hidden" data-kinds="elastic_net"><label for="bt-l1-ratio">L1 比例</label><input class="input" id="bt-l1-ratio" type="number" min="0" max="1" step="0.05" value="0.5"></div><div class="field hidden" data-kinds="huber"><label for="bt-epsilon">异常阈值 ε</label><input class="input" id="bt-epsilon" type="number" min="1" step="0.05" value="1.35"></div><div class="row hidden" data-kinds="ols"><span>打分方式</span><strong>普通线性回归，不加正则</strong></div><div class="row hidden" data-kinds="factor_rank"><span>打分方式</span><strong>按所选因子值排名，不训练</strong></div><div class="row hidden" data-kinds="lightgbm_tree xgboost_tree"><span>打分方式</span><strong>回测时按截面排序训练</strong></div><div class="row" data-kinds="lightgbm_tree xgboost_tree random_forest ridge_linear lasso elastic_net ols huber factor_rank"><span>信号</span><strong>按模型分数排名</strong></div><div class="row" data-kinds="lightgbm_tree xgboost_tree random_forest ridge_linear lasso elastic_net ols huber factor_rank"><span>缺失规则</span><strong class="check">估值、技术因子删除</strong></div></div></section>
+            <section class="panel" data-panel-id="position"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>仓位</h2><span class="tag">模块 5</span></div><div class="form"><div class="field"><label for="topN">每次持仓 Top N</label><input class="input" id="topN" type="number" value="10" min="1"></div><div class="field"><label for="weighting">仓位分配</label><select class="select" id="weighting"><option value="equal">Top 10 · 等权</option><option value="score">按分数权重</option></select></div><div class="field"><label for="rebalance">调仓间隔</label><input class="input" id="rebalance" type="number" value="2" min="1"></div></div></section>
+            <section class="panel" data-panel-id="pretrade"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>盘前过滤</h2><span class="tag">模块 6</span></div><div class="form"><p class="form-note">回测开始前对拼好的行情+因子表做一次，训练和回测共用。个股公式不通过的是该股票日；基准公式不通过的是整个交易日（那些天既不训练也不回测）。只想挡住开仓、仍用那些天训练时，请写到交易规则的开盘过滤。</p><div class="field wide"><span class="field-legend">个股公式</span><div id="pretrade-stock-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-pretrade-stock" class="btn" type="button">添加个股公式</button></div></div><div class="field wide"><span class="field-legend">基准公式</span><div id="pretrade-benchmark-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-pretrade-benchmark" class="btn" type="button">添加基准公式</button></div><p class="form-note">默认留空。指数门控例如 close &gt; sma200，对上方基准代码的指数日线求值。</p></div></div></section>
+            <section class="panel" data-panel-id="execution"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>交易规则</h2><span class="tag">模块 7</span></div><div class="form"><div class="field"><label for="buy">买入价格</label><select class="select" id="buy"><option value="open">未复权开盘价</option></select></div><div class="field"><label for="sell">卖出价格</label><select class="select" id="sell"><option value="close">未复权收盘价</option></select></div><div class="field"><label for="openLimit">开盘涨跌停</label><select class="select" id="openLimit"><option value="skip">不买</option><option value="fill">照常成交</option></select></div><div class="field wide"><span class="field-legend">开盘过滤公式</span><div id="open-filter-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-open-filter" class="btn" type="button">添加公式</button></div><p class="form-note">在成交时点评估，例如涨跌停不成交。不要把只想挡住开仓的指数门控写到盘前过滤。</p></div><div class="field"><label for="closeLimit">收盘跌停</label><select class="select" id="closeLimit"><option value="skip">不卖</option><option value="fill">照常成交</option></select></div><div class="field"><label for="benchmark">基准</label><input class="input" id="benchmark" value="000300.SH"></div><div class="field"><label for="buyFee">买入费率</label><input class="input" id="buyFee" value="0.0003"></div><div class="field"><label for="sellFee">卖出费率</label><input class="input" id="sellFee" value="0.0005"></div><div class="field"><label for="stampTax">印花税（卖出）</label><input class="input" id="stampTax" value="0.001"></div><div class="field"><label for="buyMin">买入最低费用</label><input class="input" id="buyMin" value="5"></div><div class="field"><label for="sellMin">卖出最低费用</label><input class="input" id="sellMin" value="5"></div><div class="field"><label for="slippage">滑点</label><input class="input" id="slippage" value="0.0005"></div></div></section>
+            <section class="panel" data-panel-id="actions"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>运行</h2><span class="tag">模块 8</span></div><p class="form-note">保存配置只创建可复制草稿；开始回测才提交运行。进度和日志在下方「运行状态」。</p><div class="actions"><a class="btn" href="/backtests/runs" draggable="false">结果档案</a><button id="save" class="btn" type="button">保存配置</button><button id="save-template" class="btn" type="button">保存为模板</button><button id="preview" class="btn" type="button">过滤预览</button><button id="start" class="btn primary" type="button">开始回测</button></div><div id="output-wrap" class="output-wrap hidden"><div class="output-toolbar"><button id="output-collapse" class="btn" type="button">缩小</button><button id="output-hide" class="btn" type="button">隐藏</button></div><pre id="output" class="config-block"></pre></div></section>
+            <section class="panel" data-panel-id="run-status"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>运行状态</h2><span id="status" class="status">● 尚未保存</span><span class="tag">模块 9</span></div><ol id="run-steps" class="run-steps"><li data-step="snapshot_validation" data-status="pending"><span>快照校验</span><span class="run-step-state">等待</span></li><li data-step="model_training" data-status="pending"><span>模型训练</span><span class="run-step-state">等待</span></li><li data-step="prediction" data-status="pending"><span>预测打分</span><span class="run-step-state">等待</span></li><li data-step="positions" data-status="pending"><span>生成仓位</span><span class="run-step-state">等待</span></li><li data-step="execution" data-status="pending"><span>撮合成交</span><span class="run-step-state">等待</span></li><li data-step="metrics" data-status="pending"><span>指标汇总</span><span class="run-step-state">等待</span></li></ol><pre id="run-log" class="run-log">尚未开始运行。</pre><a id="run-record-link" class="btn hidden" href="#">查看运行记录</a></section>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script>
+      const q = (id) => document.getElementById(id);
+      const draftQuery = new URLSearchParams(window.location.search).get("draft_id");
+      let openDraft = null;
+      let publishedFactors = [];
+      let publishedStrategies = [];
+      let modelVersions = [];
+      let factorCatalog = [];
+      let selectedFactors = [];
+      let factorMenuIndex = 0;
+      let submissionToken = crypto.randomUUID();
+      const DEFAULT_OPEN_LIMIT_EXPR = "open < up_limit AND open > down_limit";
+      const DEFAULT_STOCK_EXPRS = [
+        "st_status == 0",
+        "is_suspended == 0",
+        "close > low",
+        "close != up_limit AND close != down_limit",
+      ];
+      let datasetFields = ["open", "close", "low", "hfq_open", "hfq_close", "up_limit", "down_limit", "st_status", "is_suspended"];
+
+      function showError(error) {
+        q("status").textContent = "● 配置有误";
+        q("status").classList.add("status-error");
+        q("banner").classList.add("banner-error");
+        q("banner-text").textContent = error.message || "请求失败";
+      }
+
+      function showStatus(text, error = false) {
+        q("status").textContent = `● ${text}`;
+        q("status").classList.toggle("status-error", error);
+      }
+
+      function showBanner(text, error = false) {
+        q("banner-text").textContent = text;
+        q("banner").classList.toggle("banner-error", error);
+      }
+
+      function showOutput(text) {
+        const wrap = q("output-wrap");
+        const out = q("output");
+        const collapse = q("output-collapse");
+        out.textContent = text;
+        out.classList.remove("collapsed");
+        wrap?.classList.remove("hidden");
+        if (collapse) collapse.textContent = "缩小";
+      }
+
+      const RUN_STEP_LABELS = {
+        snapshot_validation: "快照校验",
+        model_training: "模型训练",
+        prediction: "预测打分",
+        positions: "生成仓位",
+        execution: "撮合成交",
+        metrics: "指标汇总",
+      };
+      const RUN_STEP_STATE = {
+        pending: "等待",
+        running: "进行中",
+        completed: "完成",
+        failed: "失败",
+        skipped: "跳过",
+      };
+      let runPollTimer = null;
+      let runLogKeys = new Set();
+      let activeRunId = null;
+
+      function logStamp() {
+        const now = new Date();
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+      }
+
+      function appendRunLog(text) {
+        const el = q("run-log");
+        if (!el) return;
+        const line = `${logStamp()}  ${text}`;
+        const prev = el.textContent.trim();
+        el.textContent = (!prev || prev === "尚未开始运行。") ? line : `${prev}\n${line}`;
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function logRunOnce(key, text) {
+        if (runLogKeys.has(key)) return;
+        runLogKeys.add(key);
+        appendRunLog(text);
+      }
+
+      function resetRunStatus(runId) {
+        runLogKeys = new Set();
+        activeRunId = runId;
+        document.querySelectorAll("#run-steps [data-step]").forEach((li) => {
+          li.dataset.status = "pending";
+          const state = li.querySelector(".run-step-state");
+          if (state) state.textContent = RUN_STEP_STATE.pending;
+        });
+        const link = q("run-record-link");
+        if (link) {
+          link.classList.add("hidden");
+          link.removeAttribute("href");
+        }
+        if (q("run-log")) q("run-log").textContent = "";
+        logRunOnce("submitted", `已提交运行 ${runId}，进入六步流程`);
+      }
+
+      function stopRunPoll() {
+        if (runPollTimer) {
+          clearInterval(runPollTimer);
+          runPollTimer = null;
+        }
+      }
+
+      function applyRunStatus(payload) {
+        const steps = payload.steps || [];
+        let runningLabel = "";
+        steps.forEach((step) => {
+          const name = step.step_name;
+          const status = step.status || "pending";
+          const label = RUN_STEP_LABELS[name] || name;
+          const li = document.querySelector(`#run-steps [data-step="${name}"]`);
+          if (li) {
+            const prev = li.dataset.status;
+            li.dataset.status = status;
+            const state = li.querySelector(".run-step-state");
+            if (state) state.textContent = RUN_STEP_STATE[status] || status;
+            if (prev !== status) {
+              if (status === "running") logRunOnce(`${name}:running`, `进入${label}`);
+              if (status === "completed") {
+                logRunOnce(`${name}:completed`, `${label}完成`);
+                if (name === "model_training") logRunOnce("enter-backtest", "训练完成，进入回测");
+              }
+              if (status === "failed") {
+                logRunOnce(`${name}:failed`, `${label}失败${step.error_message ? `：${step.error_message}` : ""}`);
+              }
+              if (status === "skipped") logRunOnce(`${name}:skipped`, `${label}已跳过`);
+            }
+          }
+          if (status === "running") runningLabel = label;
+        });
+        if (runningLabel) showStatus(`进行中：${runningLabel}`);
+        const runStatus = payload.status;
+        const runId = payload.run_id || activeRunId;
+        if (runStatus === "completed") {
+          logRunOnce("run-done", "运行完成");
+          showStatus("运行完成");
+          const link = q("run-record-link");
+          if (link && runId) {
+            link.href = `/backtests/runs/${encodeURIComponent(runId)}`;
+            link.classList.remove("hidden");
+          }
+        }
+        if (runStatus === "failed") {
+          logRunOnce("run-fail", payload.error_message || "运行失败");
+          showStatus("运行失败", true);
+        }
+      }
+
+      async function pollRunStatus(runId) {
+        try {
+          const payload = await request(`/api/backtests/${encodeURIComponent(runId)}/status`);
+          applyRunStatus(payload);
+          if (payload.status === "completed" || payload.status === "failed") stopRunPoll();
+        } catch (_error) {}
+      }
+
+      function startRunPoll(runId) {
+        stopRunPoll();
+        pollRunStatus(runId);
+        runPollTimer = setInterval(() => pollRunStatus(runId), 700);
+      }
+
+      function blockUntilPublished() {
+        ["start", "save", "preview", "save-template"].forEach((id) => {
+          q(id).disabled = true;
+        });
+      }
+
+      function readSelection(select) {
+        const option = select.selectedOptions[0];
+        if (!option || !option.value || !option.value.includes("::")) return null;
+        const [entity_id, version_id] = option.value.split("::");
+        return {entity_id, version_id};
+      }
+
+      function universeFilter(prefix) {
+        return {
+          st_status: 0,
+          suspended: false,
+          close_gt_low: true,
+          skip_limit_close: true,
+          expressions: collectExpressions(`${prefix}-filter-list`),
+        };
+      }
+
+      function filterFieldOptions() {
+        const extras = ["open", "close", "low", "high", "hfq_open", "hfq_close", "up_limit", "down_limit", "st_status", "is_suspended", "sma200"];
+        const skip = new Set(["date", "instrument", "trade_date", "ts_code"]);
+        const names = [];
+        extras.concat(datasetFields).concat(selectedFactors.map((item) => item.field)).forEach((name) => {
+          if (!name || skip.has(name) || names.includes(name)) return;
+          names.push(name);
+        });
+        return names;
+      }
+
+      function fillFieldSelect(select) {
+        const current = select.value;
+        select.replaceChildren();
+        const empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "选字段…";
+        select.append(empty);
+        filterFieldOptions().forEach((name) => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name === "sma200" ? "sma200（200日均线）" : name;
+          select.append(option);
+        });
+        if ([...select.options].some((option) => option.value === current)) select.value = current;
+      }
+
+      function refreshFilterFieldSelects() {
+        document.querySelectorAll(".filter-expr-fields").forEach(fillFieldSelect);
+      }
+
+      function insertAtCursor(input, text) {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? start;
+        const pad = start > 0 && !/\s$/.test(input.value.slice(0, start)) ? " " : "";
+        input.value = `${input.value.slice(0, start)}${pad}${text}${input.value.slice(end)}`;
+        const cursor = start + pad.length + text.length;
+        input.focus();
+        input.setSelectionRange(cursor, cursor);
+      }
+
+      function addFilterRow(listId, expr = "") {
+        const list = q(listId);
+        if (!list) return;
+        const row = document.createElement("div");
+        row.className = "filter-expr-row";
+        const input = document.createElement("input");
+        input.className = "input filter-expr-input";
+        input.type = "text";
+        input.placeholder = "例如 close > sma200";
+        input.value = expr;
+        input.spellcheck = false;
+        const picker = document.createElement("select");
+        picker.className = "select filter-expr-fields";
+        picker.setAttribute("aria-label", "插入表字段");
+        const insert = document.createElement("button");
+        insert.className = "btn";
+        insert.type = "button";
+        insert.textContent = "插入字段";
+        insert.onclick = () => {
+          if (picker.value) insertAtCursor(input, picker.value);
+        };
+        const remove = document.createElement("button");
+        remove.className = "btn";
+        remove.type = "button";
+        remove.textContent = "删除";
+        remove.onclick = () => row.remove();
+        row.append(input, picker, insert, remove);
+        list.append(row);
+        fillFieldSelect(picker);
+      }
+
+      function collectExpressions(listId) {
+        return [...document.querySelectorAll(`#${listId} .filter-expr-input`)]
+          .map((input) => input.value.trim())
+          .filter(Boolean);
+      }
+
+      function setExpressions(listId, items, fallback = []) {
+        const list = q(listId);
+        if (!list) return;
+        list.replaceChildren();
+        const exprs = Array.isArray(items) ? items.map((text) => String(text || "").trim()).filter(Boolean) : [];
+        const rows = exprs.length ? exprs : fallback;
+        if (!rows.length) addFilterRow(listId, "");
+        else rows.forEach((text) => addFilterRow(listId, String(text)));
+      }
+
+      function addOpenFilterRow(expr = "") {
+        addFilterRow("open-filter-list", expr);
+      }
+
+      function openFilterExpressions() {
+        return collectExpressions("open-filter-list");
+      }
+
+      function setOpenFilterExpressions(items) {
+        setExpressions("open-filter-list", items, [DEFAULT_OPEN_LIMIT_EXPR]);
+      }
+
+      function datasetOption(source) {
+        const option = document.createElement("option");
+        option.value = source ? `${source.dsId}::${source.dsVersion}` : "ds_canonical_market::current";
+        option.dataset.dsId = source?.dsId || "ds_canonical_market";
+        option.dataset.dsVersion = source?.dsVersion || "current";
+        option.textContent = source ? `${source.dsId} · ${source.dsVersion}（由因子锁定）` : "ds_canonical_market · current";
+        return option;
+      }
+
+      function fillDatasetSelect(select, source) {
+        if (!select) return;
+        const current = select.value;
+        select.replaceChildren(datasetOption(source));
+        if ([...select.options].some((option) => option.value === current)) select.value = current;
+      }
+
+      async function loadDatasetFields() {
+        const dataset = q("dataset")?.selectedOptions?.[0];
+        const dsId = dataset?.dataset?.dsId;
+        const dsVersion = dataset?.dataset?.dsVersion;
+        if (!dsId || !dsVersion) {
+          refreshFilterFieldSelects();
+          return;
+        }
+        try {
+          const payload = await request(`/api/datasets/${encodeURIComponent(dsId)}/versions/${encodeURIComponent(dsVersion)}`);
+          datasetFields = Array.isArray(payload.fields) ? payload.fields.map(String) : [];
+        } catch (_error) {
+          datasetFields = ["open", "close", "low", "hfq_open", "hfq_close", "up_limit", "down_limit", "st_status", "is_suspended"];
+        }
+        refreshFilterFieldSelects();
+      }
+
+      function parseRange(value, fallbackFrom, fallbackTo, stockScope, prefix) {
+        const match = String(value || "").match(/(\d{4}-\d{2}-\d{2})\D+(\d{4}-\d{2}-\d{2})/);
+        return {
+          date_from: match ? match[1] : fallbackFrom,
+          date_to: match ? match[2] : fallbackTo,
+          stock_scope: stockScope,
+          filter: universeFilter(prefix),
+        };
+      }
+
+      function selectedKind() {
+        return q("model")?.selectedOptions?.[0]?.dataset.kind || "lightgbm_tree";
+      }
+
+      function syncActionAvailability() {
+        const hasModels = [...(q("model")?.options || [])].some((option) => option.value);
+        const blocked = !hasModels;
+        ["start", "save", "preview", "save-template"].forEach((id) => {
+          if (q(id)) q(id).disabled = blocked;
+        });
+      }
+
+      function syncKindFields(kind) {
+        const current = kind || selectedKind();
+        document.querySelectorAll("[data-kinds]").forEach((node) => {
+          const kinds = String(node.dataset.kinds || "").split(/\s+/).filter(Boolean);
+          node.classList.toggle("hidden", !kinds.includes(current));
+        });
+        syncRollPeriodFields();
+      }
+
+      function syncRollPeriodFields() {
+        const wrap = q("bt-roll-fields");
+        if (!wrap) return;
+        const kind = selectedKind();
+        const mode = q("bt-walk-forward")?.value || "once";
+        wrap.classList.toggle("hidden", kind === "factor_rank" || mode !== "rolling");
+        clampTestPeriodToLookback();
+      }
+
+      function clampTestPeriodToLookback() {
+        const train = q("bt-train-period");
+        const test = q("bt-test-period");
+        if (!train || !test) return;
+        const lookback = Number(train.value || 12);
+        const period = Number(test.value || 3);
+        if (period > lookback) test.value = String(Math.max(1, lookback));
+      }
+
+      function backtestHyperparams() {
+        const kind = selectedKind();
+        const random_seed = Number(q("random-seed")?.value || 123);
+        if (kind === "ridge_linear" || kind === "lasso") return {alpha: Number(q("bt-alpha")?.value || 1), random_seed};
+        if (kind === "elastic_net") return {alpha: Number(q("bt-alpha")?.value || 0.001), l1_ratio: Number(q("bt-l1-ratio")?.value || 0.5), random_seed};
+        if (kind === "huber") return {alpha: Number(q("bt-alpha")?.value || 0.0001), epsilon: Number(q("bt-epsilon")?.value || 1.35), random_seed};
+        if (kind === "random_forest") return {
+          number_of_trees: Number(q("bt-forest-trees")?.value || 20),
+          max_depth: Number(q("bt-max-depth")?.value || 8),
+          min_child_samples: Number(q("bt-forest-min-samples")?.value || 20),
+          random_seed,
+        };
+        if (kind === "xgboost_tree") return {
+          number_of_trees: Number(q("bt-xgb-trees")?.value || 5),
+          max_bins: Number(q("bt-xgb-bins")?.value || 256),
+          max_depth: Number(q("bt-xgb-max-depth")?.value || 6),
+          min_child_samples: Number(q("bt-xgb-min-samples")?.value || 1),
+          learning_rate: Number(q("bt-xgb-learning-rate")?.value || 0.1),
+          label_gain: q("bt-label-gain")?.value || "linear_0_19",
+          metric: q("bt-ndcg-metric")?.value || "ndcg",
+          ndcg_eval_at: Number(q("bt-ndcg-eval-at")?.value || 10),
+          random_seed,
+        };
+        if (kind === "factor_rank" || kind === "ols") return {random_seed};
+        return {
+          number_of_trees: Number(q("bt-trees")?.value || 5),
+          max_bins: Number(q("bt-bins")?.value || 511),
+          num_leaves: Number(q("bt-leaves")?.value || 30),
+          min_child_samples: Number(q("bt-min-samples")?.value || 1000),
+          learning_rate: Number(q("bt-learning-rate")?.value || 0.1),
+          label_gain: q("bt-label-gain")?.value || "linear_0_19",
+          metric: q("bt-ndcg-metric")?.value || "ndcg",
+          ndcg_eval_at: Number(q("bt-ndcg-eval-at")?.value || 10),
+          ndcg_discount_base: Number(q("bt-ndcg-discount-base")?.value || 1),
+          random_seed,
+        };
+      }
+
+      function latestPublished(item) {
+        const published = (item.versions || []).filter((version) => version.status === "published");
+        return published.at(-1) || null;
+      }
+
+      function boundStrategyForModel(model) {
+        if (!model?.entity_id) return null;
+        const wanted = `${model.entity_id}::${model.version_id}`;
+        for (const item of publishedStrategies) {
+          const latest = latestPublished(item);
+          if (!latest) continue;
+          if (`${latest.model_entity_id}::${latest.model_version_id}` === wanted) {
+            return {entity_id: item.entity_id, version_id: latest.version_id};
+          }
+        }
+        const fallback = publishedStrategies.find((item) => item.entity_id === `strategy_${model.entity_id}`);
+        const latest = fallback ? latestPublished(fallback) : null;
+        return latest ? {entity_id: fallback.entity_id, version_id: latest.version_id} : null;
+      }
+
+      function configValue() {
+        const dataset = q("dataset")?.selectedOptions?.[0];
+        const model = readSelection(q("model"));
+        const strategy = boundStrategyForModel(model);
+        const first = selectedFactors[0];
+        const datasetId = dataset?.dataset?.dsId || first?.dsId || "";
+        const datasetVersion = dataset?.dataset?.dsVersion || first?.dsVersion || "";
+        const trainScope = q("train-scope").value;
+        const testScope = q("test-scope").value;
+        return {
+          submission_token: submissionToken,
+          name: q("name").value,
+          dataset_id: datasetId,
+          dataset_version_id: datasetVersion,
+          train_dataset_id: datasetId,
+          train_dataset_version_id: datasetVersion,
+          test_dataset_id: datasetId,
+          test_dataset_version_id: datasetVersion,
+          strategy_entity_id: strategy?.entity_id || "",
+          strategy_version_id: strategy?.version_id || "",
+          factor_versions: selectedFactorRefs(),
+          model: model || {},
+          kind: selectedKind(),
+          stock_scope: "中国A股（SH/SZ）",
+          train: parseRange(q("train-from")?.value, "2019-01-01", "2019-12-31", trainScope, "train"),
+          test: parseRange(q("test-from")?.value, "2020-01-02", "2020-12-31", testScope, "test"),
+          top_n: Number(q("topN").value),
+          weighting: q("weighting").value,
+          rebalance_every: Number(q("rebalance").value),
+          signal_time: "close",
+          buy_price: q("buy").value,
+          sell_price: q("sell").value,
+          buy_fee_rate: Number(q("buyFee").value),
+          buy_fee_minimum: Number(q("buyMin").value),
+          sell_fee_rate: Number(q("sellFee").value),
+          sell_fee_minimum: Number(q("sellMin").value),
+          stamp_tax_rate: Number(q("stampTax").value),
+          skip_open_limit: openFilterExpressions().some((text) => text.includes("up_limit") && text.includes("down_limit")),
+          skip_close_down_limit: q("closeLimit").value !== "fill",
+          trade_filters: { open: openFilterExpressions() },
+          open_when_benchmark_gt_ma200: Boolean(q("hs300-gt-ma200")?.checked),
+          slippage: Number(q("slippage")?.value || 0.0005),
+          lot_size: 100,
+          unfilled_policy: "keep_cash",
+          initial_capital: 1000000,
+          benchmark: q("benchmark").value,
+          missing_policy: {valuation: "drop", technical: "drop"},
+          walk_forward: selectedKind() === "factor_rank" ? "once" : (q("bt-walk-forward")?.value || "once"),
+          train_period_months: Number(q("bt-train-period")?.value || 12),
+          test_period_months: Number(q("bt-test-period")?.value || 3),
+          hyperparameters: backtestHyperparams(),
+          pretrade_filters: {
+            stock: collectExpressions("pretrade-stock-list"),
+            benchmark: collectExpressions("pretrade-benchmark-list"),
+          },
+          acknowledge_test_reuse: Boolean(q("acknowledge-test-reuse")?.checked),
+        };
+      }
+
+      function selectedFactorRefs() {
+        return selectedFactors.map((item) => ({
+          factor_id: item.factorId,
+          version_id: item.versionId || "v1",
+          field: item.field,
+        }));
+      }
+
+      function factorLabel(item) {
+        if (item.name && item.field && item.name !== item.field) return `${item.name}（${item.field}）`;
+        return item.field || item.name || "因子";
+      }
+
+      function catalogFromPublished() {
+        return publishedFactors
+          .filter((item) => item.status === "published")
+          .map((item) => {
+            const field = fieldName(item.factor_id || item.factor_entity_id);
+            return {
+              field,
+              factorId: item.factor_entity_id || `factor_${field}`,
+              versionId: item.factor_version_id || item.version_id || "v1",
+              name: item.name || field,
+              dsId: item.dataset_id,
+              dsVersion: item.dataset_version_id,
+            };
+          })
+          .filter((item) => item.field);
+      }
+
+      function matchCatalog(query) {
+        const text = String(query || "").trim().toLowerCase();
+        return factorCatalog.filter((item) => {
+          if (selectedFactors.some((row) => row.field === item.field)) return false;
+          if (!text) return true;
+          return [item.name, item.field, item.factorId].some((part) => String(part || "").toLowerCase().includes(text));
+        });
+      }
+
+      function parseManualFactor(raw) {
+        const text = String(raw || "").trim();
+        if (!text) return null;
+        const lower = text.toLowerCase();
+        const exact = factorCatalog.find((item) => [item.field, item.name, item.factorId].some((part) => String(part || "").toLowerCase() === lower));
+        if (exact) return exact;
+        const filtered = matchCatalog(text);
+        if (filtered.length === 1) return filtered[0];
+        const field = text.replace(/^factor_/, "").replace(/\s+/g, "_");
+        if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(field)) return null;
+        const dataset = q("dataset")?.selectedOptions?.[0];
+        return {
+          field,
+          factorId: `factor_${field}`,
+          versionId: "v1",
+          name: field,
+          dsId: dataset?.dataset?.dsId || "",
+          dsVersion: dataset?.dataset?.dsVersion || "",
+        };
+      }
+
+      function addFactor(item) {
+        if (!item?.field) return;
+        if (selectedFactors.some((row) => row.field === item.field)) return;
+        selectedFactors.push(item);
+        renderFactorCombo();
+        refreshFilterFieldSelects();
+      }
+
+      function removeFactor(field) {
+        selectedFactors = selectedFactors.filter((item) => item.field !== field);
+        renderFactorCombo();
+        refreshFilterFieldSelects();
+      }
+
+      function renderFactorCombo() {
+        const chips = q("factor-chips");
+        const menu = q("factor-menu");
+        const input = q("factor-search");
+        if (!chips || !menu) return;
+        chips.replaceChildren();
+        selectedFactors.forEach((item) => {
+          const chip = document.createElement("span");
+          chip.className = "factor-chip";
+          chip.append(document.createTextNode(factorLabel(item)));
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.setAttribute("aria-label", `移除 ${item.field}`);
+          remove.textContent = "×";
+          remove.addEventListener("click", (event) => {
+            event.stopPropagation();
+            removeFactor(item.field);
+            q("factor-search")?.focus();
+          });
+          chip.append(remove);
+          chips.append(chip);
+        });
+        const matches = matchCatalog(input?.value);
+        menu.replaceChildren();
+        if (!factorCatalog.length && !String(input?.value || "").trim()) {
+          const empty = document.createElement("div");
+          empty.className = "factor-combo-empty";
+          empty.textContent = "暂无已发布因子。也可以直接输入字段名后回车。";
+          menu.append(empty);
+        } else if (!matches.length) {
+          const empty = document.createElement("div");
+          empty.className = "factor-combo-empty";
+          empty.textContent = String(input?.value || "").trim() ? `回车后按字段「${input.value.trim()}」加入` : "没有更多可选项";
+          menu.append(empty);
+        } else {
+          matches.forEach((item, index) => {
+            const option = document.createElement("button");
+            option.type = "button";
+            option.className = "factor-combo-option" + (index === factorMenuIndex ? " active" : "");
+            option.textContent = `${item.name}（${item.field} · ${item.versionId}）`;
+            option.addEventListener("mousedown", (event) => {
+              event.preventDefault();
+              addFactor(item);
+              if (input) input.value = "";
+              factorMenuIndex = 0;
+              renderFactorCombo();
+            });
+            menu.append(option);
+          });
+        }
+      }
+
+      function bindFactorCombo() {
+        const combo = q("factors");
+        const input = q("factor-search");
+        const menu = q("factor-menu");
+        if (!combo || !input || !menu || combo.dataset.bound === "1") return;
+        combo.dataset.bound = "1";
+        const openMenu = () => menu.classList.remove("hidden");
+        const closeMenu = () => menu.classList.add("hidden");
+        combo.addEventListener("click", () => {
+          input.focus();
+          openMenu();
+          renderFactorCombo();
+        });
+        input.addEventListener("focus", () => {
+          openMenu();
+          renderFactorCombo();
+        });
+        input.addEventListener("input", () => {
+          factorMenuIndex = 0;
+          openMenu();
+          renderFactorCombo();
+        });
+        input.addEventListener("keydown", (event) => {
+          const matches = matchCatalog(input.value);
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            factorMenuIndex = Math.min(Math.max(matches.length - 1, 0), factorMenuIndex + 1);
+            openMenu();
+            renderFactorCombo();
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            factorMenuIndex = Math.max(0, factorMenuIndex - 1);
+            renderFactorCombo();
+          } else if (event.key === "Enter") {
+            event.preventDefault();
+            const picked = matches[factorMenuIndex] || parseManualFactor(input.value);
+            if (picked) {
+              addFactor(picked);
+              input.value = "";
+              factorMenuIndex = 0;
+              renderFactorCombo();
+            }
+          } else if (event.key === "Backspace" && !input.value && selectedFactors.length) {
+            selectedFactors.pop();
+            renderFactorCombo();
+          } else if (event.key === "Escape") {
+            closeMenu();
+          }
+        });
+        document.addEventListener("click", (event) => {
+          if (!combo.contains(event.target)) closeMenu();
+        });
+      }
+
+      function applyModelParams(params, kind) {
+        if (kind) syncKindFields(kind);
+        if (!params) return;
+        if (params.random_seed != null && q("random-seed")) q("random-seed").value = params.random_seed;
+        if (kind && kind !== "factor_rank" && q("bt-walk-forward")) {
+          if (params.walk_forward != null && String(params.walk_forward) !== "") {
+            const walk = String(params.walk_forward).toLowerCase();
+            q("bt-walk-forward").value = walk === "once" || walk === "" ? "once" : "rolling";
+          }
+          if (q("bt-train-period") && (params.train_lookback_months != null || params.train_period_months != null)) {
+            q("bt-train-period").value = params.train_lookback_months || params.train_period_months || 12;
+          }
+          if (q("bt-test-period") && params.test_period_months != null) {
+            q("bt-test-period").value = params.test_period_months;
+          }
+          clampTestPeriodToLookback();
+          syncRollPeriodFields();
+        }
+        if (kind === "lightgbm_tree") {
+          if (params.number_of_trees != null && q("bt-trees")) q("bt-trees").value = params.number_of_trees;
+          if (params.max_bins != null && q("bt-bins")) q("bt-bins").value = params.max_bins;
+          if (params.num_leaves != null && q("bt-leaves")) q("bt-leaves").value = params.num_leaves;
+          if (params.min_child_samples != null && q("bt-min-samples")) q("bt-min-samples").value = params.min_child_samples;
+          if (params.learning_rate != null && q("bt-learning-rate")) q("bt-learning-rate").value = params.learning_rate;
+          if (q("bt-label-gain")) q("bt-label-gain").value = params.label_gain || "linear_0_19";
+          if (q("bt-ndcg-metric")) q("bt-ndcg-metric").value = params.metric || "ndcg";
+          if (params.ndcg_eval_at != null && q("bt-ndcg-eval-at")) q("bt-ndcg-eval-at").value = params.ndcg_eval_at;
+          if (params.ndcg_discount_base != null && q("bt-ndcg-discount-base")) q("bt-ndcg-discount-base").value = params.ndcg_discount_base;
+          return;
+        }
+        if (kind === "xgboost_tree") {
+          if (params.number_of_trees != null && q("bt-xgb-trees")) q("bt-xgb-trees").value = params.number_of_trees;
+          if (params.max_bins != null && q("bt-xgb-bins")) q("bt-xgb-bins").value = params.max_bins;
+          if (params.max_depth != null && q("bt-xgb-max-depth")) q("bt-xgb-max-depth").value = params.max_depth;
+          if (params.min_child_samples != null && q("bt-xgb-min-samples")) q("bt-xgb-min-samples").value = params.min_child_samples;
+          if (params.learning_rate != null && q("bt-xgb-learning-rate")) q("bt-xgb-learning-rate").value = params.learning_rate;
+          if (q("bt-label-gain")) q("bt-label-gain").value = params.label_gain || "linear_0_19";
+          if (q("bt-ndcg-metric")) q("bt-ndcg-metric").value = params.metric || "ndcg";
+          if (params.ndcg_eval_at != null && q("bt-ndcg-eval-at")) q("bt-ndcg-eval-at").value = params.ndcg_eval_at;
+          return;
+        }
+        if (kind === "random_forest") {
+          if (params.number_of_trees != null && q("bt-forest-trees")) q("bt-forest-trees").value = params.number_of_trees;
+          if (params.max_depth != null && q("bt-max-depth")) q("bt-max-depth").value = params.max_depth;
+          if (params.min_child_samples != null && q("bt-forest-min-samples")) q("bt-forest-min-samples").value = params.min_child_samples;
+          return;
+        }
+        if (kind === "ridge_linear" || kind === "lasso" || kind === "elastic_net" || kind === "huber") {
+          if (params.alpha != null && q("bt-alpha")) q("bt-alpha").value = params.alpha;
+        }
+        if (kind === "elastic_net" && params.l1_ratio != null && q("bt-l1-ratio")) q("bt-l1-ratio").value = params.l1_ratio;
+        if (kind === "huber" && params.epsilon != null && q("bt-epsilon")) q("bt-epsilon").value = params.epsilon;
+      }
+
+      async function request(url, options = {}) {
+        const response = await fetch(url, options);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || payload.detail?.message || `HTTP ${response.status}`);
+        return payload;
+      }
+
+      function fieldName(entityId) {
+        return String(entityId || "").replace(/^factor_/, "");
+      }
+
+      function renderFactorOptions() {
+        bindFactorCombo();
+        factorCatalog = catalogFromPublished();
+        const source = factorCatalog[0];
+        fillDatasetSelect(q("dataset"), source);
+        renderFactorCombo();
+      }
+
+      function requestedModelValue(model) {
+        const search = new URLSearchParams(window.location.search);
+        const wanted = search.get("model");
+        const kindWanted = search.get("kind");
+        const options = [...model.options];
+        if (wanted) {
+          const exact = options.find((option) => option.value === wanted);
+          if (exact) return exact.value;
+          const entity = wanted.split("::")[0];
+          const byEntity = options.find((option) => option.value.split("::")[0] === entity);
+          if (byEntity) return byEntity.value;
+        }
+        if (kindWanted) {
+          const byKind = options.find((option) => option.dataset.kind === kindWanted);
+          if (byKind) return byKind.value;
+        }
+        return options[0]?.value || "";
+      }
+
+      function requestedHyperparams() {
+        const raw = new URLSearchParams(window.location.search).get("hp");
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+        } catch (_error) {
+          return null;
+        }
+      }
+
+      function renderModelOptions() {
+        const model = q("model");
+        model.replaceChildren();
+        publishedStrategies = publishedStrategies.filter((item) => item.status === "published" && (item.versions || []).some((version) => version.status === "published"));
+        modelVersions = modelVersions.filter((item) => item.status === "published" && (item.versions || []).some((version) => version.status === "published"));
+        if (!modelVersions.length) {
+          const modelEmpty = document.createElement("option");
+          modelEmpty.value = "";
+          modelEmpty.textContent = "暂无已发布模型版本";
+          model.append(modelEmpty);
+          blockUntilPublished();
+          showBanner("当前没有已发布的模型。请先在模型中心登记一种模型。", true);
+          syncActionAvailability();
+          return;
+        }
+        const seenKinds = new Set();
+        [...modelVersions].reverse().forEach((item) => {
+          const latest = latestPublished(item);
+          if (!latest) return;
+          const kind = latest.config?.kind || item.entity_id;
+          if (seenKinds.has(kind)) return;
+          seenKinds.add(kind);
+          const option = document.createElement("option");
+          option.value = `${item.entity_id}::${latest.version_id}`;
+          option.textContent = item.name;
+          option.dataset.params = JSON.stringify(latest.config?.hyperparameters || {});
+          option.dataset.factors = JSON.stringify(latest.factor_versions || []);
+          option.dataset.kind = kind;
+          model.append(option);
+        });
+        const search = new URLSearchParams(window.location.search);
+        model.value = requestedModelValue(model);
+        const applySelected = () => {
+          const selected = model.selectedOptions[0];
+          if (!selected?.value) return;
+          applyModelParams(JSON.parse(selected.dataset.params || "{}"), selected.dataset.kind);
+          showBanner("已选中模型。因子在本页选，参数可改；开始回测时才按这种模型处理。");
+        };
+        model.addEventListener("change", applySelected);
+        applySelected();
+        const hp = requestedHyperparams();
+        const selected = model.selectedOptions[0];
+        if (hp && selected?.value) {
+          applyModelParams(hp, selected.dataset.kind || search.get("kind"));
+        }
+        if (search.get("model") || search.get("kind")) {
+          showBanner("已载入模型种类。因子在本页「因子组合」里选，参数可改；开始回测时才按这种模型处理。");
+        }
+      }
+
+      async function refreshTestUsage() {
+        const note = q("test-usage-note");
+        const wrap = q("acknowledge-test-reuse-wrap");
+        const box = q("acknowledge-test-reuse");
+        if (!note) return;
+        try {
+          const payload = await request("/api/backtests/validate", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify(configValue()),
+          });
+          const count = Number(payload.test_usage_count || 0);
+          note.textContent = count >= 1
+            ? `这段 test 已用于 ${count} 次已完成回测`
+            : "这段 test 尚未用于已完成回测。";
+          if (wrap) wrap.classList.toggle("hidden", count < 1);
+          if (box && count < 1) box.checked = false;
+        } catch (_error) {
+          note.textContent = "这段 test 的使用次数将在提交时校验。";
+        }
+      }
+
+      function expressionsFromFilter(filter) {
+        const source = filter && typeof filter === "object" ? filter : {};
+        const exprs = Array.isArray(source.expressions) ? source.expressions.map((text) => String(text || "").trim()).filter(Boolean) : [];
+        if (source.close_gt_ma200) exprs.push("hfq_close > sma200");
+        if (source.close_lt_ma200) exprs.push("hfq_close < sma200");
+        return [...new Set(exprs)];
+      }
+
+      function applyConfig(configPayload) {
+        q("name").value = configPayload.name || "未命名回测";
+        selectedFactors = [];
+        (configPayload.factor_versions || []).forEach((factor) => {
+          const factorId = factor.factor_id || `factor_${factor.field || ""}`;
+          const field = fieldName(factor.field || factorId);
+          const found = factorCatalog.find((item) => item.field === field || item.factorId === factorId);
+          if (found) selectedFactors.push(found);
+          else if (field) selectedFactors.push({field, factorId, versionId: factor.version_id || "v1", name: field});
+        });
+        renderFactorCombo();
+        const datasetId = configPayload.dataset_id || configPayload.train_dataset_id;
+        const datasetVersion = configPayload.dataset_version_id || configPayload.train_dataset_version_id;
+        const datasetTarget = [...(q("dataset")?.options || [])].find((option) => option.dataset.dsId === datasetId && option.dataset.dsVersion === datasetVersion);
+        if (datasetTarget) q("dataset").value = datasetTarget.value;
+        q("train-scope").value = configPayload.train?.stock_scope || configPayload.stock_scope || q("train-scope").value;
+        q("test-scope").value = configPayload.test?.stock_scope || configPayload.stock_scope || q("test-scope").value;
+        q("topN").value = configPayload.top_n ?? q("topN").value;
+        q("weighting").value = configPayload.weighting || q("weighting").value;
+        q("rebalance").value = configPayload.rebalance_every ?? q("rebalance").value;
+        q("benchmark").value = configPayload.benchmark || q("benchmark").value;
+        q("buyFee").value = configPayload.buy_fee_rate ?? q("buyFee").value;
+        q("sellFee").value = configPayload.sell_fee_rate ?? q("sellFee").value;
+        q("buyMin").value = configPayload.buy_fee_minimum ?? q("buyMin").value;
+        q("sellMin").value = configPayload.sell_fee_minimum ?? q("sellMin").value;
+        if (q("slippage")) q("slippage").value = configPayload.slippage ?? q("slippage").value;
+        if (configPayload.stamp_tax_rate != null && Number(configPayload.stamp_tax_rate) > 0) {
+          q("stampTax").value = configPayload.stamp_tax_rate;
+        } else {
+          q("stampTax").value = 0.001;
+        }
+        const buyPrice = configPayload.buy_price === "hfq_open" ? "open" : (configPayload.buy_price || "open");
+        const sellPrice = configPayload.sell_price === "hfq_close" ? "close" : (configPayload.sell_price || "close");
+        if ([...q("buy").options].some((option) => option.value === buyPrice)) q("buy").value = buyPrice;
+        if ([...q("sell").options].some((option) => option.value === sellPrice)) q("sell").value = sellPrice;
+        const openFilters = configPayload.trade_filters && Array.isArray(configPayload.trade_filters.open)
+          ? configPayload.trade_filters.open
+          : (configPayload.skip_open_limit === false ? [] : [DEFAULT_OPEN_LIMIT_EXPR]);
+        setOpenFilterExpressions(openFilters);
+        loadDatasetFields();
+        q("closeLimit").value = configPayload.skip_close_down_limit === false ? "fill" : "skip";
+        if (q("hs300-gt-ma200")) {
+          q("hs300-gt-ma200").checked = Boolean(configPayload.open_when_benchmark_gt_ma200);
+        }
+        applyModelParams({
+          ...(configPayload.hyperparameters || {}),
+          walk_forward: configPayload.walk_forward || (configPayload.hyperparameters || {}).walk_forward || "once",
+          train_lookback_months: configPayload.train_lookback_months || (configPayload.hyperparameters || {}).train_lookback_months,
+          train_period_months: configPayload.train_period_months || (configPayload.hyperparameters || {}).train_period_months,
+          test_period_months: configPayload.test_period_months || (configPayload.hyperparameters || {}).test_period_months,
+        }, configPayload.kind);
+        if (configPayload.train?.date_from) {
+          const trainTo = configPayload.validation?.date_to || configPayload.train.date_to || configPayload.train.fit_date_to;
+          if (trainTo) q("train-from").value = `${configPayload.train.date_from} — ${trainTo}`;
+        }
+        if (configPayload.test?.date_from && configPayload.test?.date_to) {
+          q("test-from").value = `${configPayload.test.date_from} — ${configPayload.test.date_to}`;
+        }
+        const pretrade = configPayload.pretrade_filters && typeof configPayload.pretrade_filters === "object"
+          ? configPayload.pretrade_filters
+          : null;
+        setExpressions("pretrade-stock-list", pretrade ? pretrade.stock : DEFAULT_STOCK_EXPRS, DEFAULT_STOCK_EXPRS);
+        setExpressions("pretrade-benchmark-list", pretrade ? pretrade.benchmark : [], []);
+        setExpressions("train-filter-list", [
+          ...expressionsFromFilter(configPayload.train?.filter),
+          ...expressionsFromFilter(configPayload.validation?.filter),
+        ].filter((text, index, list) => text && list.indexOf(text) === index), []);
+        setExpressions("test-filter-list", expressionsFromFilter(configPayload.test?.filter), []);
+        if (q("acknowledge-test-reuse")) q("acknowledge-test-reuse").checked = Boolean(configPayload.acknowledge_test_reuse);
+        refreshTestUsage();
+        if (configPayload.model?.entity_id && configPayload.model?.version_id) {
+          const modelTarget = `${configPayload.model.entity_id}::${configPayload.model.version_id}`;
+          if ([...q("model").options].some((option) => option.value === modelTarget)) q("model").value = modelTarget;
+        }
+        syncKindFields(configPayload.kind || selectedKind());
+        syncActionAvailability();
+      }
+
+      async function saveCurrent() {
+        const payload = await request("/api/backtests/drafts", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({config: configValue(), draft_id: openDraft?.draft_id || null, expected_revision: openDraft?.revision || null})});
+        openDraft = {draft_id: payload.draft_id, revision: payload.revision};
+        q("run-id").textContent = `草稿 ID：${openDraft.draft_id}`;
+        showStatus("配置已保存为草稿，尚未生成运行 ID");
+        showBanner("配置草稿已保存，未创建 BacktestRun；开始回测才会生成正式运行 ID。");
+        showOutput(JSON.stringify(payload.config, null, 2));
+      }
+
+      async function boot() {
+        try {
+          const [factorsResponse, strategiesResponse, modelsResponse] = await Promise.all([
+            request("/api/factor-data/catalog"),
+            request("/api/strategies"),
+            request("/api/models"),
+          ]);
+          publishedFactors = factorsResponse;
+          publishedStrategies = strategiesResponse.items || [];
+          modelVersions = modelsResponse.items || [];
+          renderFactorOptions();
+          renderModelOptions();
+          if (draftQuery) {
+            const draft = await request(`/api/backtests/drafts/${encodeURIComponent(draftQuery)}`);
+            openDraft = {draft_id: draft.draft_id, revision: draft.revision};
+            if (draft.complete) applyConfig(draft.config);
+            else {
+              setOpenFilterExpressions([DEFAULT_OPEN_LIMIT_EXPR]);
+              setExpressions("pretrade-stock-list", DEFAULT_STOCK_EXPRS, DEFAULT_STOCK_EXPRS);
+              setExpressions("pretrade-benchmark-list", [], []);
+              setExpressions("train-filter-list", [], []);
+              setExpressions("test-filter-list", [], []);
+            }
+            showStatus(`已载入草稿 ${draft.draft_id}（rev ${draft.revision}）`);
+            showBanner("已从草稿载入配置；保存会继续更新同一草稿，开始回测才提交运行。");
+          } else {
+            setOpenFilterExpressions([DEFAULT_OPEN_LIMIT_EXPR]);
+            setExpressions("pretrade-stock-list", DEFAULT_STOCK_EXPRS, DEFAULT_STOCK_EXPRS);
+            setExpressions("pretrade-benchmark-list", [], []);
+            setExpressions("train-filter-list", [], []);
+            setExpressions("test-filter-list", [], []);
+            if (!selectedFactors.length) {
+              const preferred = factorCatalog.find((item) => item.field === "momentum_5") || factorCatalog[0];
+              if (preferred) addFactor(preferred);
+            }
+          }
+          await loadDatasetFields();
+          refreshTestUsage();
+        } catch (error) {
+          showError(error);
+        }
+      }
+
+      q("preview").onclick = async () => {
+        try {
+          const payload = await request("/api/backtests/preview", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(configValue())});
+          showOutput(JSON.stringify(payload, null, 2));
+          showStatus("过滤预览已完成");
+          q("status").classList.remove("status-error");
+          q("banner").classList.remove("banner-error");
+        } catch (error) { showError(error); }
+      };
+      q("save").onclick = async () => { try { await saveCurrent(); } catch (error) { showError(error); } };
+      q("save-template").onclick = async () => { try { await saveCurrent(); showStatus("草稿已另存/更新，可作为模板"); } catch (error) { showError(error); } };
+      q("output-collapse")?.addEventListener("click", () => {
+        const shrunk = q("output").classList.toggle("collapsed");
+        q("output-collapse").textContent = shrunk ? "展开" : "缩小";
+      });
+      q("output-hide")?.addEventListener("click", () => q("output-wrap").classList.add("hidden"));
+      q("start").onclick = async () => {
+        try {
+          const model = readSelection(q("model"));
+          if (!model) {
+            showBanner("请先选择一种模型。", true);
+            return;
+          }
+          if (!boundStrategyForModel(model)) {
+            showBanner("这个模型还没有默认交易规则。请到模型中心再保存一次默认参数。", true);
+            return;
+          }
+          if (!selectedFactors.length) {
+            showBanner("请至少选择一个因子。", true);
+            q("factor-search")?.focus();
+            return;
+          }
+          submissionToken = crypto.randomUUID();
+          q("start").disabled = true;
+          const payload = await request("/api/backtests", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(configValue())});
+          const runId = payload.run_id;
+          q("run-id").textContent = runId;
+          resetRunStatus(runId);
+          document.querySelector('[data-panel-id="run-status"]')?.scrollIntoView({behavior: "smooth", block: "nearest"});
+          showStatus(`已提交运行：${q("name").value}`);
+          showBanner("运行已提交。进度写在「运行状态」模块；完成后可打开运行记录，不会自动跳走。");
+          startRunPoll(runId);
+          try {
+            await request(`/api/backtests/${encodeURIComponent(runId)}/execute`, {method: "POST"});
+          } finally {
+            await pollRunStatus(runId);
+            stopRunPoll();
+          }
+        } catch (error) {
+          stopRunPoll();
+          if (activeRunId) await pollRunStatus(activeRunId);
+          showError(error);
+          appendRunLog(error.message || "运行失败");
+        } finally {
+          q("start").disabled = false;
+        }
+      };
+      q("edit-root").onclick = () => showBanner("结果目录由系统设置管理；此处显示当前只读目录。");
+      q("add-open-filter")?.addEventListener("click", () => addFilterRow("open-filter-list", ""));
+      q("add-pretrade-stock")?.addEventListener("click", () => addFilterRow("pretrade-stock-list", ""));
+      q("add-pretrade-benchmark")?.addEventListener("click", () => addFilterRow("pretrade-benchmark-list", ""));
+      q("add-train-filter")?.addEventListener("click", () => addFilterRow("train-filter-list", ""));
+      q("add-test-filter")?.addEventListener("click", () => addFilterRow("test-filter-list", ""));
+      q("dataset")?.addEventListener("change", () => loadDatasetFields());
+      q("test-from")?.addEventListener("change", () => refreshTestUsage());
+      q("bt-walk-forward")?.addEventListener("change", () => syncRollPeriodFields());
+      q("bt-train-period")?.addEventListener("input", () => clampTestPeriodToLookback());
+      q("bt-test-period")?.addEventListener("change", () => clampTestPeriodToLookback());
+
+      const PANEL_ORDER_KEY = "quantlab-backtest-panel-order";
+
+      function layoutColumns() {
+        return [...document.querySelectorAll(".layout-col")];
+      }
+
+      function panelOrder() {
+        return layoutColumns().map((col) => [...col.querySelectorAll(":scope > .panel")].map((panel) => panel.dataset.panelId).filter(Boolean));
+      }
+
+      function savePanelOrder() {
+        try { localStorage.setItem(PANEL_ORDER_KEY, JSON.stringify(panelOrder())); } catch (_error) {}
+        refreshPanelTags();
+      }
+
+      function refreshPanelTags() {
+        let index = 1;
+        document.querySelectorAll(".layout .panel").forEach((panel) => {
+          const tag = panel.querySelector(".head .tag");
+          if (!tag || panel.dataset.panelId === "identity") return;
+          tag.textContent = `模块 ${index++}`;
+        });
+      }
+
+      function applyPanelOrder() {
+        let saved;
+        try { saved = JSON.parse(localStorage.getItem(PANEL_ORDER_KEY) || "null"); } catch (_error) { saved = null; }
+        if (!Array.isArray(saved) || saved.length !== 2) return;
+        const columns = layoutColumns();
+        const panels = new Map([...document.querySelectorAll(".layout .panel")].map((panel) => [panel.dataset.panelId, panel]));
+        const used = new Set();
+        saved.forEach((ids, colIndex) => {
+          const col = columns[colIndex];
+          if (!col || !Array.isArray(ids)) return;
+          ids.forEach((id) => {
+            const panel = panels.get(id);
+            if (!panel || used.has(id)) return;
+            col.append(panel);
+            used.add(id);
+          });
+        });
+        [...panels.values()].filter((panel) => !used.has(panel.dataset.panelId)).forEach((panel) => panel.parentElement?.append(panel));
+        refreshPanelTags();
+      }
+
+      function bindWorkbenchPanelDrag() {
+        const columns = layoutColumns();
+        const place = (event, col) => {
+          event.preventDefault();
+          const dragging = document.querySelector(".layout .panel.dragging");
+          if (!dragging) return;
+          const others = [...col.querySelectorAll(":scope > .panel:not(.dragging)")];
+          const after = others.find((panel) => {
+            const rect = panel.getBoundingClientRect();
+            return event.clientY < rect.top + rect.height / 2;
+          });
+          col.insertBefore(dragging, after || null);
+        };
+        columns.forEach((col) => {
+          col.addEventListener("dragover", (event) => place(event, col));
+          col.addEventListener("drop", (event) => {
+            event.preventDefault();
+            savePanelOrder();
+          });
+        });
+        document.querySelectorAll(".layout .panel-drag-handle").forEach((handle) => {
+          handle.addEventListener("dragstart", (event) => {
+            const panel = handle.closest(".panel");
+            if (!panel) return;
+            panel.classList.add("dragging");
+            event.dataTransfer.setData("text/plain", panel.dataset.panelId || "");
+            event.dataTransfer.effectAllowed = "move";
+            try { event.dataTransfer.setDragImage(panel, 24, 16); } catch (_error) {}
+          });
+          handle.addEventListener("dragend", () => {
+            document.querySelectorAll(".layout .panel.dragging").forEach((panel) => panel.classList.remove("dragging"));
+            savePanelOrder();
+          });
+        });
+        applyPanelOrder();
+      }
+
+      bindWorkbenchPanelDrag();
+      window.configValue = configValue;
+      window.selectedKind = selectedKind;
+      window.applyRunStatus = applyRunStatus;
+      window.pollRunStatus = pollRunStatus;
+      boot();
+    </script>
+    <script src="/assets/nav.js?v=20260907a"></script>
+  </body>
+</html>

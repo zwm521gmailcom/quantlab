@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+build/
+dist/
+
+# Recovered module bytecode while source is missing
+*.pyc
+!quantlab/services/_recovered_pyc/
+!quantlab/services/_recovered_pyc/*.pyc
+
+# Local runtime and market data
+quantlab_runtime/
+/data/
+raw/
+
+# Scratch
+.tmp_*
+.recovered_ui/
+.recovered_ui_v2/
+.recovered_ui_v3/
+.DS_Store
+*.local
+
+# IDE
+.vscode/
+.idea/

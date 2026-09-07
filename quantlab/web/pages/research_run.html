@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 研究运行详情</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell"><aside><h1>QuantLab</h1><nav aria-label="主导航">
+      <a href="/">研究总览</a><a href="/data">数据中心</a><a href="/kline">标准行情宽表</a><a href="/data/factors">因子数据</a><a href="/research/factors" aria-current="page">因子研究</a><a href="/backtests/new">回测中心</a><a href="/backtests/runs">结果档案</a>
+    </nav></aside><main>
+      <div class="eyebrow">研究运行</div>
+      <h2 id="research-run-title">研究运行详情</h2>
+      <div id="research-run-loading" class="state">正在加载运行详情…</div>
+      <div id="research-run-error" class="state error hidden"></div>
+      <section id="research-run-content" class="hidden">
+        <div id="research-run-meta" class="research-detail-grid"></div>
+        <button id="research-copy-config" type="button">复制配置</button>
+        <section class="card"><h3>研究配置</h3><pre id="research-run-config" class="config-block"></pre></section>
+        <section class="card"><h3>结果摘要</h3><div id="research-run-summary" class="research-summary"></div></section>
+        <section class="card"><h3>中文 Artifact 清单</h3><div id="research-run-artifacts" class="research-artifacts"></div></section>
+      </section>
+    </main></div>
+    <script src="/assets/app.js?v=20260906x"></script>
+  <script src="/assets/nav.js?v=20260907a"></script></body>
+</html>

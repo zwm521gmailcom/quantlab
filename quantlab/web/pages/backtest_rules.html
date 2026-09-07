@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 规则回测</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260907a">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/">研究总览</a>
+          <a href="/data">数据中心</a>
+          <a href="/kline">标准行情宽表</a>
+          <a href="/research/factors">因子研究</a>
+          <a href="/models">模型中心</a>
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/rules" aria-current="page">规则回测</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main class="main">
+        <div class="top">
+          <div>
+            <div class="eyebrow">规则策略</div>
+            <div class="title">规则回测</div>
+            <div class="sub">选内置模板、填回测区间和账户参数。不训练模型，结果仍进结果档案。</div>
+          </div>
+          <div class="actions">
+            <a class="btn" href="/backtests/runs">结果档案</a>
+            <button id="start" class="btn primary" type="button">开始回测</button>
+          </div>
+        </div>
+        <div id="banner" class="banner">
+          <strong>配置状态：</strong>
+          <span id="banner-text">新建规则回测。保存只写草稿；开始回测才生成运行 ID。</span>
+        </div>
+        <div class="layout">
+          <div>
+            <section class="panel">
+              <div class="head"><h2>运行身份</h2><span class="tag">必填名称</span></div>
+              <div class="form">
+                <div class="field"><label for="name">回测名称</label><input class="input" id="name" value="Wiki 多指标趋势跟踪"></div>
+                <div class="field"><label for="run-id">运行 ID</label><div class="id-preview" id="run-id">开始回测后由系统生成</div></div>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="head"><h2>数据与区间</h2></div>
+              <div class="form">
+                <div class="field">
+                  <label for="dataset">研究数据版本</label>
+                  <select class="select" id="dataset">
+                    <option value="ds_canonical_market::current" data-ds-id="ds_canonical_market" data-ds-version="current">ds_canonical_market · current</option>
+                  </select>
+                </div>
+                <div class="field"><label for="date-from">回测开始</label><input class="input" id="date-from" type="date" value="2018-02-01"></div>
+                <div class="field"><label for="date-to">回测结束</label><input class="input" id="date-to" type="date" value="2026-09-07"></div>
+              </div>
+            </section>
+            <section class="panel">
+              <div class="head"><h2>策略模板</h2><span class="tag">内置</span></div>
+              <div class="form">
+                <div class="field">
+                  <label for="rule-strategy">策略</label>
+                  <select class="select" id="rule-strategy">
+                    <option value="wiki_trend_follow">Wiki 多指标趋势跟踪</option>
+                  </select>
+                </div>
+                <p class="form-note"><strong>Wiki 多指标趋势跟踪</strong>。股票池为当时已公布的沪深300 ∪ 中证500（月度成分快照，不使用未来一期）。按四条件打分取 Top N，收盘选股、下一交易日开盘成交，不做市场择时。缺成分快照或开始日早于成分数据时运行失败，请先到数据中心下载。</p>
+                <div class="field"><label for="rsi-low">rsi_low</label><input class="input" id="rsi-low" type="number" min="0" max="100" step="1" value="40"></div>
+                <div class="field"><label for="rsi-high">rsi_high</label><input class="input" id="rsi-high" type="number" min="0" max="100" step="1" value="72"></div>
+              </div>
+            </section>
+          </div>
+          <div>
+            <section class="panel">
+              <div class="head"><h2>仓位与交易规则</h2></div>
+              <div class="form">
+                <div class="field"><label for="topN">每次持仓 Top N</label><input class="input" id="topN" type="number" value="10" min="1"></div>
+                <div class="field"><label for="rebalance">调仓间隔</label><input class="input" id="rebalance" type="number" value="5" min="1"></div>
+                <div class="field"><label for="stop-loss">止损</label><input class="input" id="stop-loss" type="number" min="0" max="1" step="0.01" value="0.10"></div>
+                <div class="field"><label for="take-profit">止盈</label><input class="input" id="take-profit" type="number" min="0" max="1" step="0.01" value="0.25"></div>
+                <div class="field"><label for="max-hold-days">最长持有（交易日）</label><input class="input" id="max-hold-days" type="number" min="1" value="45"></div>
+                <div class="field"><label for="benchmark">基准</label><input class="input" id="benchmark" value="000300.SH"></div>
+                <div class="field"><label for="buyFee">买入费率</label><input class="input" id="buyFee" value="0.0003"></div>
+                <div class="field"><label for="sellFee">卖出费率</label><input class="input" id="sellFee" value="0.0005"></div>
+                <div class="field"><label for="stampTax">印花税（卖出）</label><input class="input" id="stampTax" value="0.001"></div>
+                <div class="field"><label for="buyMin">买入最低费用</label><input class="input" id="buyMin" value="5"></div>
+                <div class="field"><label for="sellMin">卖出最低费用</label><input class="input" id="sellMin" value="5"></div>
+                <div class="field"><label for="slippage">滑点</label><input class="input" id="slippage" value="0.0005"></div>
+              </div>
+            </section>
+          </div>
+        </div>
+        <section class="panel run-panel">
+          <div class="head">
+            <h2>运行前检查</h2>
+            <span class="status-label">运行状态：</span>
+            <span id="status" class="status">● 尚未保存</span>
+          </div>
+          <pre id="output" class="config-block hidden"></pre>
+          <div class="bottom">
+            <span class="sub">保存配置只创建可复制草稿；开始回测才提交运行。</span>
+            <div class="actions"><button id="save" class="btn" type="button">保存配置</button></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script>
+      const q = (id) => document.getElementById(id);
+      const draftQuery = new URLSearchParams(window.location.search).get("draft_id");
+      let openDraft = null;
+      let submissionToken = crypto.randomUUID();
+      const OPEN_LIMIT_EXPR = "open < up_limit AND open > down_limit";
+
+      function showError(error) {
+        q("status").textContent = "● 配置有误";
+        q("status").classList.add("status-error");
+        q("banner").classList.add("banner-error");
+        q("banner-text").textContent = error.message || "请求失败";
+      }
+
+      function showStatus(text) {
+        q("status").textContent = `● ${text}`;
+        q("status").classList.remove("status-error");
+      }
+
+      function showBanner(text, error = false) {
+        q("banner-text").textContent = text;
+        q("banner").classList.toggle("banner-error", error);
+      }
+
+      async function request(url, options = {}) {
+        const response = await fetch(url, options);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.message || payload.detail?.message || `HTTP ${response.status}`);
+        return payload;
+      }
+
+      function datasetIds() {
+        const option = q("dataset").selectedOptions[0];
+        return {
+          dataset_id: option?.dataset?.dsId || "ds_canonical_market",
+          dataset_version_id: option?.dataset?.dsVersion || "current",
+        };
+      }
+
+      function ensureDatasetOption(dsId, dsVersion) {
+        const select = q("dataset");
+        const value = `${dsId}::${dsVersion}`;
+        if (![...select.options].some((option) => option.value === value)) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.dataset.dsId = dsId;
+          option.dataset.dsVersion = dsVersion;
+          option.textContent = `${dsId} · ${dsVersion}`;
+          select.append(option);
+        }
+        select.value = value;
+      }
+
+      function strategyParams() {
+        return {
+          rsi_low: Number(q("rsi-low").value || 40),
+          rsi_high: Number(q("rsi-high").value || 72),
+          top_n: Number(q("topN").value || 10),
+        };
+      }
+
+      function dateWindow() {
+        const date_from = q("date-from").value || "2018-01-01";
+        const date_to = q("date-to").value || "2026-09-07";
+        return {
+          date_from,
+          date_to,
+          filter: {
+            st_status: 0,
+            suspended: false,
+            expressions: [
+              "st_status == 0",
+              "is_suspended == 0",
+              "close > low",
+              "close != up_limit AND close != down_limit",
+            ],
+          },
+        };
+      }
+
+      function configValue() {
+        const strategy_params = strategyParams();
+        const window = dateWindow();
+        const dataset = datasetIds();
+        return {
+          submission_token: submissionToken,
+          name: q("name").value,
+          dataset_id: dataset.dataset_id,
+          dataset_version_id: dataset.dataset_version_id,
+          strategy_entity_id: null,
+          strategy_version_id: null,
+          factor_versions: [],
+          model: {},
+          kind: "rule_signal",
+          rule_strategy_id: q("rule-strategy").value || "wiki_trend_follow",
+          account_mode: "target_weight_exits",
+          stock_scope: "中国A股（SH/SZ）",
+          train: window,
+          test: window,
+          top_n: Number(q("topN").value),
+          weighting: "equal",
+          rebalance_every: Number(q("rebalance").value),
+          signal_time: "close",
+          buy_price: "open",
+          sell_price: "close",
+          buy_fee_rate: Number(q("buyFee").value),
+          buy_fee_minimum: Number(q("buyMin").value),
+          sell_fee_rate: Number(q("sellFee").value),
+          sell_fee_minimum: Number(q("sellMin").value),
+          stamp_tax_rate: Number(q("stampTax").value),
+          skip_open_limit: true,
+          skip_close_down_limit: true,
+          trade_filters: {open: [OPEN_LIMIT_EXPR]},
+          open_when_benchmark_gt_ma200: false,
+          stop_loss: Number(q("stop-loss").value || 0.10),
+          take_profit: Number(q("take-profit").value || 0.25),
+          max_hold_days: Number(q("max-hold-days").value || 45),
+          strategy_params,
+          params: strategy_params,
+          slippage: Number(q("slippage").value || 0.0005),
+          lot_size: 100,
+          unfilled_policy: "keep_cash",
+          initial_capital: 1000000,
+          benchmark: q("benchmark").value,
+          missing_policy: {valuation: "drop", technical: "drop"},
+        };
+      }
+
+      function applyConfig(configPayload) {
+        q("name").value = configPayload.name || "Wiki 多指标趋势跟踪";
+        if (configPayload.dataset_id && configPayload.dataset_version_id) {
+          ensureDatasetOption(configPayload.dataset_id, configPayload.dataset_version_id);
+        }
+        const test = configPayload.test || {};
+        if (test.date_from) q("date-from").value = String(test.date_from).slice(0, 10);
+        if (test.date_to) q("date-to").value = String(test.date_to).slice(0, 10);
+        if (configPayload.rule_strategy_id) q("rule-strategy").value = configPayload.rule_strategy_id;
+        const params = configPayload.strategy_params || configPayload.params || {};
+        if (params.rsi_low != null) q("rsi-low").value = params.rsi_low;
+        if (params.rsi_high != null) q("rsi-high").value = params.rsi_high;
+        if (configPayload.top_n != null) q("topN").value = configPayload.top_n;
+        if (configPayload.rebalance_every != null) q("rebalance").value = configPayload.rebalance_every;
+        if (configPayload.stop_loss != null) q("stop-loss").value = configPayload.stop_loss;
+        if (configPayload.take_profit != null) q("take-profit").value = configPayload.take_profit;
+        if (configPayload.max_hold_days != null) q("max-hold-days").value = configPayload.max_hold_days;
+        if (configPayload.benchmark) q("benchmark").value = configPayload.benchmark;
+        if (configPayload.buy_fee_rate != null) q("buyFee").value = configPayload.buy_fee_rate;
+        if (configPayload.sell_fee_rate != null) q("sellFee").value = configPayload.sell_fee_rate;
+        if (configPayload.stamp_tax_rate != null) q("stampTax").value = configPayload.stamp_tax_rate;
+        if (configPayload.buy_fee_minimum != null) q("buyMin").value = configPayload.buy_fee_minimum;
+        if (configPayload.sell_fee_minimum != null) q("sellMin").value = configPayload.sell_fee_minimum;
+        if (configPayload.slippage != null) q("slippage").value = configPayload.slippage;
+      }
+
+      async function saveCurrent() {
+        const payload = await request("/api/backtests/drafts", {
+          method: "POST",
+          headers: {"content-type": "application/json"},
+          body: JSON.stringify({
+            config: configValue(),
+            draft_id: openDraft?.draft_id || null,
+            expected_revision: openDraft?.revision || null,
+          }),
+        });
+        openDraft = {draft_id: payload.draft_id, revision: payload.revision};
+        q("run-id").textContent = `草稿 ID：${openDraft.draft_id}`;
+        showStatus("配置已保存为草稿，尚未生成运行 ID");
+        showBanner("配置草稿已保存，未创建 BacktestRun；开始回测才会生成正式运行 ID。");
+        q("output").textContent = JSON.stringify(payload.config, null, 2);
+        q("output").classList.remove("hidden");
+      }
+
+      async function boot() {
+        try {
+          if (draftQuery) {
+            const draft = await request(`/api/backtests/drafts/${encodeURIComponent(draftQuery)}`);
+            openDraft = {draft_id: draft.draft_id, revision: draft.revision};
+            if (draft.complete) applyConfig(draft.config);
+            showStatus(`已载入草稿 ${draft.draft_id}（rev ${draft.revision}）`);
+            showBanner("已从草稿载入配置；保存会继续更新同一草稿，开始回测才提交运行。");
+          }
+        } catch (error) {
+          showError(error);
+        }
+      }
+
+      q("save").onclick = async () => {
+        try { await saveCurrent(); } catch (error) { showError(error); }
+      };
+      q("start").onclick = async () => {
+        try {
+          submissionToken = crypto.randomUUID();
+          q("start").disabled = true;
+          const payload = await request("/api/backtests", {
+            method: "POST",
+            headers: {"content-type": "application/json"},
+            body: JSON.stringify(configValue()),
+          });
+          const runId = payload.run_id;
+          q("run-id").textContent = runId;
+          showStatus(`已提交运行：${q("name").value}`);
+          showBanner("规则回测已提交，正在按信号表与账户规则执行。");
+          await request(`/api/backtests/${encodeURIComponent(runId)}/execute`, {method: "POST"});
+          window.location.assign(`/backtests/runs/${encodeURIComponent(runId)}`);
+        } catch (error) {
+          q("start").disabled = false;
+          showError(error);
+        }
+      };
+      window.configValue = configValue;
+      boot();
+    </script>
+    <script src="/assets/nav.js?v=20260907a"></script>
+  </body>
+</html>

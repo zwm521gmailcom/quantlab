@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 模型中心</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/">研究总览</a>
+          <a href="/data">数据中心</a>
+          <a href="/kline">标准行情宽表</a>
+          <a href="/data/factors">因子数据</a>
+          <a href="/factors">因子库</a>
+          <a href="/research/factors">因子研究</a>
+          <a href="/models" aria-current="page">模型中心</a>
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main>
+        <div class="eyebrow">模型登记</div>
+        <h2>模型中心</h2>
+        <p>这里只登记回测里能用的模型种类，不选因子、也不训练。因子组合和参数都在回测中心里设，开始回测时才训练。</p>
+        <div id="model-error" class="state error hidden"></div>
+        <div id="model-result" class="state hidden"></div>
+        <section class="card">
+          <h3>登记模型种类</h3>
+          <div class="data-toolbar">
+            <label>模型种类
+              <select id="model-kind">
+                <option value="lightgbm_tree">树模型（LightGBM）</option>
+              </select>
+            </label>
+            <label>显示名称 <input id="model-name" type="text" value="树模型（LightGBM）" autocomplete="off"></label>
+          </div>
+          <div class="data-toolbar" data-kinds="lightgbm_tree xgboost_tree random_forest ridge_linear lasso elastic_net ols huber">
+            <div class="param-field" data-param="walk_forward">
+              <label for="model-walk-forward">训练方式</label>
+              <select id="model-walk-forward">
+                <option value="once" selected>一次训练</option>
+                <option value="lookback">定长回看</option>
+              </select>
+            </div>
+            <div class="param-field" data-param="train_lookback_months" id="model-lookback-wrap">
+              <label for="model-lookback-months">回看月数</label>
+              <input id="model-lookback-months" type="number" min="1" value="12" disabled>
+            </div>
+          </div>
+          <p class="form-note" data-kinds="lightgbm_tree xgboost_tree random_forest ridge_linear lasso elastic_net ols huber">一次训练：整段只拟合一次。定长回看：每月用最近 N 个月重训。回测页选模型后会带出，改这一次不写回这里。</p>
+          <div class="data-toolbar" data-kinds="lightgbm_tree">
+            <div class="param-field" data-param="number_of_trees"><label for="model-trees">树数量</label><input id="model-trees" type="number" min="1" value="5"></div>
+            <div class="param-field" data-param="max_bins"><label for="model-bins">max_bins（分箱数）</label><input id="model-bins" type="number" min="16" max="511" value="511"></div>
+            <div class="param-field" data-param="num_leaves"><label for="model-leaves">叶节点</label><input id="model-leaves" type="number" min="2" value="30"></div>
+            <div class="param-field" data-param="min_child_samples"><label for="model-min-samples">最小样本</label><input id="model-min-samples" type="number" min="1" value="1000"></div>
+            <div class="param-field" data-param="learning_rate"><label for="model-learning-rate">学习率</label><input id="model-learning-rate" type="number" min="0.01" max="1" step="0.01" value="0.1"></div>
+            <div class="param-field" data-param="ndcg_discount_base"><label for="model-ndcg-discount-base">NDCG discount_base（名次折扣）</label><input id="model-ndcg-discount-base" type="number" min="1" step="0.1" value="1"></div>
+          </div>
+          <div class="data-toolbar hidden" data-kinds="xgboost_tree">
+            <div class="param-field" data-param="number_of_trees"><label for="model-xgb-trees">树数量</label><input id="model-xgb-trees" type="number" min="1" value="5"></div>
+            <div class="param-field" data-param="max_bins"><label for="model-xgb-bins">max_bins（分箱数）</label><input id="model-xgb-bins" type="number" min="16" max="256" value="256"></div>
+            <div class="param-field" data-param="max_depth"><label for="model-xgb-max-depth">最大深度</label><input id="model-xgb-max-depth" type="number" min="1" value="6"></div>
+            <div class="param-field" data-param="min_child_samples"><label for="model-xgb-min-samples">最小样本</label><input id="model-xgb-min-samples" type="number" min="1" value="1"></div>
+            <div class="param-field" data-param="learning_rate"><label for="model-xgb-learning-rate">学习率</label><input id="model-xgb-learning-rate" type="number" min="0.01" max="1" step="0.01" value="0.1"></div>
+          </div>
+          <div class="data-toolbar" data-kinds="lightgbm_tree xgboost_tree">
+            <div class="param-field" data-param="metric">
+              <label for="model-ndcg-metric">NDCG 评估</label>
+              <select id="model-ndcg-metric">
+                <option value="ndcg" selected>开启 NDCG</option>
+                <option value="none">关闭</option>
+              </select>
+            </div>
+            <div class="param-field" data-param="label_gain">
+              <label for="model-label-gain">NDCG 增益</label>
+              <select id="model-label-gain">
+                <option value="linear_0_19" selected>线性 0–19</option>
+                <option value="exponential">指数默认</option>
+              </select>
+            </div>
+            <div class="param-field" data-param="ndcg_eval_at"><label for="model-ndcg-eval-at">NDCG eval_at（评估只看前 N）</label><input id="model-ndcg-eval-at" type="number" min="1" value="10"></div>
+          </div>
+          <div class="data-toolbar hidden" data-kinds="random_forest">
+            <div class="param-field" data-param="number_of_trees"><label for="model-forest-trees">树数量</label><input id="model-forest-trees" type="number" min="1" value="20"></div>
+            <div class="param-field" data-param="max_depth"><label for="model-max-depth">最大深度</label><input id="model-max-depth" type="number" min="1" value="8"></div>
+            <div class="param-field" data-param="min_child_samples"><label for="model-forest-min-samples">最小样本</label><input id="model-forest-min-samples" type="number" min="1" value="20"></div>
+          </div>
+          <div class="data-toolbar hidden" data-kinds="ridge_linear lasso elastic_net huber">
+            <div class="param-field" data-param="alpha"><label for="model-alpha">正则强度 α</label><input id="model-alpha" type="number" min="0" step="0.001" value="1"></div>
+          </div>
+          <div class="data-toolbar hidden" data-kinds="elastic_net">
+            <div class="param-field" data-param="l1_ratio"><label for="model-l1-ratio">L1 比例</label><input id="model-l1-ratio" type="number" min="0" max="1" step="0.05" value="0.5"></div>
+          </div>
+          <div class="data-toolbar hidden" data-kinds="huber">
+            <div class="param-field" data-param="epsilon"><label for="model-epsilon">异常阈值 ε</label><input id="model-epsilon" type="number" min="1" step="0.05" value="1.35"></div>
+          </div>
+          <p class="form-note" data-kinds="lightgbm_tree">树模型：回测时按截面排序训练。NDCG 默认开启，增益默认线性 0–19。</p>
+          <p class="form-note hidden" data-kinds="xgboost_tree">树模型（XGBoost）：回测时按截面排序训练。NDCG 默认开启，增益默认线性 0–19。</p>
+          <p class="form-note hidden" data-kinds="random_forest">随机森林：多棵决策树投票打分，通常比单棵树更稳，训练会稍慢一点。</p>
+          <p class="form-note hidden" data-kinds="ridge_linear">线性 Ridge：用全部所选因子做回归，α 越大越平滑。</p>
+          <p class="form-note hidden" data-kinds="lasso">LASSO：会把弱因子系数压到 0，适合因子比较多的时候。</p>
+          <p class="form-note hidden" data-kinds="elastic_net">弹性网络：Ridge 和 LASSO 的折中，L1 比例越接近 1 越像 LASSO。</p>
+          <p class="form-note hidden" data-kinds="ols">普通线性回归：不加正则，回测时用全部所选因子直接拟合。</p>
+          <p class="form-note hidden" data-kinds="huber">稳健回归：对极端收益不那么敏感，适合有不少异常股票的时候。</p>
+          <p class="form-note hidden" data-kinds="factor_rank">单因子排名：不训练，回测时直接按所选因子值排序。</p>
+          <div class="factor-form-actions">
+            <button id="model-save" class="primary" type="button">保存默认参数</button>
+            <a class="button-link" id="model-to-backtest" href="/backtests/new">去回测中心</a>
+          </div>
+        </section>
+        <section id="models" class="card">
+          <h3>可在回测中使用</h3>
+          <p class="form-note">拖动卡片可调整顺序，下次打开仍按这个排。</p>
+          <p id="loading-state" class="state">正在加载模型…</p>
+          <p id="empty-state" class="state hidden">还没有登记任何模型种类。上面选一种后点「保存默认参数」。</p>
+          <p id="error-state" class="state error hidden">模型列表加载失败。</p>
+          <div id="model-list"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js?v=20260906x"></script>
+    <script src="/assets/nav.js?v=20260907a"></script>
+  </body>
+</html>

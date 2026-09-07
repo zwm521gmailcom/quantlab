@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 标准行情宽表</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/">研究总览</a>
+          <a href="/data">数据中心</a>
+          <a href="/kline" aria-current="page">标准行情宽表</a>
+          <a href="/research/factors">因子研究</a>
+          <a href="/models">模型中心</a>
+          
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main>
+        <div class="eyebrow">标准行情</div>
+        <h2>标准行情宽表</h2>
+        <section class="card kline-filter-card" aria-live="polite">
+          <div id="kline-error" class="state error hidden"></div>
+          <div class="data-toolbar kline-toolbar">
+            <label>标的 <input id="kline-symbol" type="search" value="000001.SZ" placeholder="000001.SZ，多个用逗号分隔（最多 50 只）" autocomplete="off"></label>
+            <label>开始日期 <input id="kline-date-from" type="date"></label>
+            <label>结束日期 <input id="kline-date-to" type="date"></label>
+            <label>口径 <select id="kline-mode"><option value="hfq" selected>后复权 hfq（正式口径）</option><option value="raw">原始 raw</option></select></label>
+            <button id="kline-query" class="primary" type="button">查询</button>
+            <button id="kline-export" type="button">受限 CSV 下载</button>
+            <span id="kline-read-note" class="kline-read-note">只读展示唯一标准行情宽表 data/canonical.parquet；正式复权口径为后复权 hfq，raw 字段保留原始值。</span>
+          </div>
+        </section>
+        <section class="card kline-chart-card">
+          <div class="kline-layout">
+            <div class="kline-chart-main">
+              <div id="kline-chart" class="kline-chart" role="img" aria-label="标准行情宽表 K 线图"></div>
+            </div>
+            <aside class="kline-quality-panel">
+              <h3>质量摘要</h3>
+              <div id="kline-quality" class="quality-summary"></div>
+            </aside>
+          </div>
+        </section>
+        <section class="card kline-table-card">
+          <div id="kline-table" class="kline-table" role="table" aria-label="标准行情宽表数据表"></div>
+          <div id="kline-empty" class="state hidden">当前条件没有数据。</div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/vendor/lightweight-charts.standalone.production.js"></script>
+    <script src="/assets/app.js?v=20260906x"></script>
+  <script src="/assets/nav.js?v=20260907a"></script></body>
+</html>

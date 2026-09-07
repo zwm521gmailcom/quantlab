@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>QuantLab · 因子计算任务</title><link rel="stylesheet" href="/assets/app.css?v=20260906ai"></head>
+  <body>
+    <div class="shell">
+      <aside><h1>QuantLab</h1><nav aria-label="主导航"><a href="/factors">因子研究</a></nav></aside>
+      <main>
+        <nav class="page-back" aria-label="返回路径"><a href="/factors">← 因子研究</a></nav>
+        <div class="eyebrow">计算任务</div>
+        <h2>因子计算任务</h2>
+        <p>自动挖掘跑完的公式先停在这里。勾选你要留下的，点「入库并计算分析」后会写进因子库，并马上按这套任务的日期和市场把 IC、覆盖率、分组这些数算完存下来。算完才能在因子数据页看到数字，而不是「未诊断」。</p>
+        <div id="factor-jobs-error" class="state error hidden"></div>
+        <div id="factor-jobs-result" class="state hidden"></div>
+        <section id="factor-jobs-list-view" class="card">
+          <h3>最近任务</h3>
+          <p class="form-note">点开下面的任务，才能看到公式清单并勾选启用。只看这一页会以为是空的。</p>
+          <div id="factor-jobs-empty" class="state hidden">还没有计算任务。先去<a href="/research/factor-mining">自动挖掘因子</a>跑一轮，结果会先出现在这里。</div>
+          <div id="factor-jobs-list" class="factor-job-table"></div>
+        </section>
+        <section id="factor-jobs-detail-view" class="card hidden">
+          <p><a id="factor-jobs-back" href="/research/factor-jobs">← 返回任务列表</a></p>
+          <h3 id="factor-jobs-detail-title">任务详情</h3>
+          <p id="factor-jobs-config" class="form-note"></p>
+          <div id="factor-jobs-items" class="factor-job-items"></div>
+          <div class="factor-form-actions">
+            <button id="factor-jobs-select-kept" type="button" class="secondary">勾选可入库项</button>
+            <button id="factor-jobs-enable" type="button">入库并计算分析</button>
+            <a class="button-link" href="/factors">查看因子数据</a>
+          </div>
+          <p class="form-note">入库后会立刻计算分析，可能要几十秒。请等按钮恢复，不要重复点。</p>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/app.js?v=20260906ae"></script>
+    <script src="/assets/nav.js?v=20260907a"></script>
+  </body>
+</html>

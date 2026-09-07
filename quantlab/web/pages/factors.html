@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 因子数据</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <h1>QuantLab</h1>
+        <nav aria-label="主导航">
+          <a href="/">研究总览</a>
+          <a href="/data">数据中心</a>
+          <a href="/kline">标准行情宽表</a>
+          <a href="/factors" aria-current="page">因子数据</a>
+          <a href="/research/factors">因子研究</a>
+          <a href="/models">模型中心</a>
+          
+          <a href="/backtests/new">回测中心</a>
+          <a href="/backtests/runs">结果档案</a>
+          <a href="/settings">设置</a>
+        </nav>
+      </aside>
+      <main>
+        <div class="eyebrow">因子数据</div>
+        <h2 id="factor-page-title">因子数据</h2>
+        <section class="card" aria-live="polite">
+          <div id="factor-error" class="state error hidden"></div>
+          <div id="factor-catalog-view">
+            <div class="data-toolbar">
+              <label>因子 <select id="factor-filter"><option value="">全部因子</option></select></label>
+              <label>名称/代码搜索 <input id="factor-name-search" type="search" placeholder="输入中文名或代码" autocomplete="off"></label>
+              <label>股票 <input id="factor-symbol" type="search" placeholder="000001.SZ" autocomplete="off"></label>
+              <label>开始日期 <input id="factor-date-from" type="date"></label>
+              <label>结束日期 <input id="factor-date-to" type="date"></label>
+            </div>
+            <p id="factor-note" class="state">因子定义与已计算任务统一管理；表格 IC 列展示所选计算任务结果，未运行时显示“未诊断”。行情来源为 data/canonical.parquet。</p>
+            <div id="factor-table" class="factor-table" role="table" aria-label="正式因子目录"></div>
+            <div id="factor-empty" class="state hidden">没有匹配的因子。</div>
+            <div class="factor-pagination"><button id="factor-page-prev" type="button">上一页</button><span id="factor-page-label">第 1 页</span><button id="factor-page-next" type="button">下一页</button></div>
+          </div>
+          <div id="factor-detail-view" class="hidden">
+            <div id="factor-detail"></div>
+            <div class="factor-top-grid">
+              <div id="factor-calculation-history" class="factor-calculation-history"></div>
+              <div id="factor-summary" class="factor-summary"></div>
+            </div>
+            <div id="factor-charts" class="factor-charts"></div>
+            <p class="state factor-sample-note">样本默认取自最近一次计算周期，仅展示 10 行。动量/窗口类因子需要此前 5 个有效交易日才能计算，所以数据集最前面的 5 个交易日显示“—”属于预期，不是缺数。</p>
+            <div id="factor-sample" class="factor-table" role="table" aria-label="因子样本"></div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/vendor/lightweight-charts.standalone.production.js"></script>
+    <script src="/assets/app.js?v=20260906x"></script>
+  <script src="/assets/nav.js?v=20260907a"></script></body>
+</html>
