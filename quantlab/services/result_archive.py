@@ -53,10 +53,101 @@ _PERCENT_METRICS = {
     "benchmark_return", "excess_return", "turnover", "capital_usage",
 }
 _INTEGER_METRICS = {"max_loss_streak"}
+_STEP_LABELS = {
+    "snapshot_validation": "快照校验",
+    "model_training": "模型训练",
+    "prediction": "预测打分",
+    "positions": "生成仓位",
+    "execution": "撮合成交",
+    "metrics": "指标汇总",
+}
+_STEP_STATUS_NAMES = {
+    "pending": "等待",
+    "running": "进行中",
+    "completed": "完成",
+    "failed": "失败",
+    "skipped": "跳过",
+}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _duration_ms(started_at: Any, finished_at: Any) -> int | None:
+    start = _parse_ts(started_at)
+    end = _parse_ts(finished_at)
+    if start is None or end is None:
+        return None
+    return max(0, int((end - start).total_seconds() * 1000))
+
+
+def _format_duration_ms(ms: int | None, *, status: str = "completed") -> str:
+    if status == "skipped":
+        return "跳过"
+    if status == "pending":
+        return "—"
+    if status == "running":
+        return "进行中"
+    if ms is None:
+        return "—"
+    if ms < 10:
+        return "<0.01 秒"
+    if ms < 60_000:
+        seconds = ms / 1000
+        if seconds < 10:
+            return f"{seconds:.2f} 秒"
+        return f"{seconds:.1f} 秒"
+    minutes, rest = divmod(ms, 60_000)
+    seconds = rest / 1000
+    if minutes < 60:
+        if rest < 10:
+            return f"{minutes} 分"
+        return f"{minutes} 分 {seconds:.1f} 秒"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} 小时 {minutes} 分"
+
+
+def _annotate_step_timing(step: dict[str, Any]) -> dict[str, Any]:
+    status = str(step.get("status") or "pending")
+    duration_ms = None
+    if status not in {"pending", "running", "skipped"}:
+        duration_ms = _duration_ms(step.get("started_at"), step.get("finished_at"))
+    step["step_label"] = _STEP_LABELS.get(str(step.get("step_name") or ""), step.get("step_name"))
+    step["status_name"] = _STEP_STATUS_NAMES.get(status, status)
+    step["duration_ms"] = duration_ms
+    step["duration_display"] = _format_duration_ms(duration_ms, status=status)
+    return step
+
+
+def _run_timing(created_at: Any, finished_at: Any, status: str) -> dict[str, Any]:
+    if status in {"queued", "running"}:
+        return {
+            "duration_ms": None,
+            "duration_display": "进行中" if status == "running" else "—",
+            "created_at": created_at,
+            "finished_at": finished_at,
+        }
+    duration_ms = _duration_ms(created_at, finished_at)
+    return {
+        "duration_ms": duration_ms,
+        "duration_display": _format_duration_ms(duration_ms, status="completed"),
+        "created_at": created_at,
+        "finished_at": finished_at,
+    }
 
 
 def _copy_redirect_path(config: dict[str, Any]) -> str:
@@ -186,6 +277,8 @@ class ResultArchiveService:
             for step in item["dag"]:
                 if step.get("error_message"):
                     step["error_message"] = _ERROR_ZH.get(step["error_message"], step["error_message"])
+                _annotate_step_timing(step)
+            item["timing"] = _run_timing(row["created_at"], row["finished_at"], row["status"])
             failed_step = next((step for step in item["dag"] if step["status"] == "failed"), None)
             item["failure"] = {
                 "reason": item["error_message"] or (failed_step["error_message"] if failed_step else None),

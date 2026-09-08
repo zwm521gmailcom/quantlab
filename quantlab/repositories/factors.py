@@ -378,6 +378,7 @@ class FactorRepository:
         *,
         require_published_dataset: bool,
         require_published_upstream: bool,
+        require_dataset_quality_passed: bool = True,
     ) -> None:
         leaked = sorted(set(definition["input_fields"]) & TARGET_ONLY_FIELDS)
         if leaked:
@@ -387,7 +388,11 @@ class FactorRepository:
             dataset["dataset_status"] != "published" or dataset["status"] != "published"
         ):
             raise ValueError("published dataset version is required")
-        if require_published_dataset and dataset["quality_status"] != "passed":
+        if (
+            require_published_dataset
+            and require_dataset_quality_passed
+            and dataset["quality_status"] != "passed"
+        ):
             raise ValueError("dataset quality gate failed")
         self._validate_lineage(definition, connection, require_published=require_published_upstream)
         if definition.get("generation_run_id"):
@@ -626,7 +631,14 @@ class FactorRepository:
             references.append(reference)
         return references
 
-    def _publish_in_transaction(self, entity_id: str, version_id: str, connection: sqlite3.Connection) -> dict[str, Any]:
+    def _publish_in_transaction(
+        self,
+        entity_id: str,
+        version_id: str,
+        connection: sqlite3.Connection,
+        *,
+        require_dataset_quality_passed: bool = True,
+    ) -> dict[str, Any]:
         row = self._row(entity_id, version_id, connection)
         if row is None:
             raise ValueError("FactorVersion not found")
@@ -639,6 +651,7 @@ class FactorRepository:
             connection,
             require_published_dataset=True,
             require_published_upstream=True,
+            require_dataset_quality_passed=require_dataset_quality_passed,
         )
         timestamp = _now()
         if row["status"] == "draft":
@@ -675,6 +688,15 @@ class FactorRepository:
 
     def publish(self, entity_id: str, version_id: str) -> dict[str, Any]:
         return self.publish_many([{"entity_id": entity_id, "version_id": version_id}])["items"][0]
+
+    def publish_verified_pack(self, entity_id: str, version_id: str) -> dict[str, Any]:
+        with self.database.transaction() as connection:
+            return self._publish_in_transaction(
+                entity_id,
+                version_id,
+                connection,
+                require_dataset_quality_passed=False,
+            )
 
     def publish_many(self, items: list[dict[str, Any]]) -> dict[str, Any]:
         references = self._action_items(items, "publish")

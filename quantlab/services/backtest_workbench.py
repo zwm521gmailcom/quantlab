@@ -12,6 +12,10 @@ exec(_code, globals())
 import json
 from typing import Any
 
+import pandas as pd
+import pyarrow.parquet as pq
+from pyarrow.lib import ArrowInvalid
+
 _original_validate = BacktestWorkbenchService.validate
 _original_submit = BacktestWorkbenchService.submit
 _DEFAULT_RANDOM_SEED = 123
@@ -219,12 +223,126 @@ def submit(self, raw):
         test.get("date_from"),
         test.get("date_to"),
     )
-    if count >= 1 and not config.get("acknowledge_test_reuse"):
-        raise ValueError(f"这段 test 已经用于 {count} 次已完成回测，请勾选确认再次使用")
     payload = dict(config)
     payload["test_usage_count"] = count
     return _original_submit(self, payload)
 
 
+_PREVIEW_COLUMNS = {
+    "date": ("date", "trade_date"),
+    "instrument": ("instrument", "ts_code"),
+    "st_status": ("st_status",),
+    "suspended": ("suspended", "is_suspended"),
+}
+
+
+def _source_column(available: set[str], aliases: tuple[str, ...]) -> str | None:
+    return next((name for name in aliases if name in available), None)
+
+
+def _expr_field_names(node: Any) -> set[str]:
+    names: set[str] = set()
+    if not isinstance(node, tuple) or not node:
+        return names
+    if node[0] == "name":
+        names.add(str(node[1]))
+        return names
+    for item in node[1:]:
+        names.update(_expr_field_names(item))
+    return names
+
+
+def preview(self, raw):
+    from quantlab.services.backtest_job import _FIELD_ALIASES, apply_expression_filters
+    from quantlab.services.trade_filters import needs_sma200, parse_expr
+
+    config = self.validate(raw if isinstance(raw, dict) else {})
+    with self.database.connect() as connection:
+        row = connection.execute(
+            "SELECT path FROM dataset_versions WHERE entity_id=? AND version_id=?",
+            (config.get("dataset_id"), config.get("dataset_version_id")),
+        ).fetchone()
+    if row is None:
+        raise ValueError("dataset is missing preview filter fields")
+    path = self.settings.require_read_path(Path(row["path"]))
+    available = set(pq.ParquetFile(path).schema_arrow.names)
+    mapping: dict[str, str] = {}
+    for logical, aliases in _PREVIEW_COLUMNS.items():
+        source = _source_column(available, aliases)
+        if source is None:
+            raise ValueError("dataset is missing preview filter fields")
+        mapping[logical] = source
+
+    expressions: list[str] = []
+    for name in ("train", "test"):
+        expressions.extend(_expr_list(_filter_dict(config.get(name)).get("expressions")))
+    extra_names: set[str] = set()
+    for text in expressions:
+        try:
+            extra_names.update(_expr_field_names(parse_expr(text)))
+        except Exception:
+            continue
+    if needs_sma200(expressions):
+        extra_names.update({"hfq_close", "close", "sma_200", "sma200"})
+
+    read_cols = list(dict.fromkeys(mapping.values()))
+    for name in extra_names:
+        column = _FIELD_ALIASES.get(name, name)
+        if column in available and column not in read_cols:
+            read_cols.append(column)
+        elif name in available and name not in read_cols:
+            read_cols.append(name)
+
+    try:
+        date_from = min(
+            _compact_date((config.get("train") or {}).get("date_from")),
+            _compact_date((config.get("test") or {}).get("date_from")),
+        )
+        date_to = max(
+            _compact_date((config.get("train") or {}).get("date_to")),
+            _compact_date((config.get("test") or {}).get("date_to")),
+        )
+        filters = None
+        if len(date_from) == 8 and len(date_to) == 8:
+            filters = [(mapping["date"], ">=", date_from), (mapping["date"], "<=", date_to)]
+        try:
+            frame = pd.read_parquet(path, columns=read_cols, filters=filters)
+        except (TypeError, ArrowInvalid):
+            frame = pd.read_parquet(path, columns=read_cols)
+    except (KeyError, ValueError, OSError) as error:
+        raise ValueError("dataset is missing preview filter fields") from error
+
+    frame = frame.copy()
+    for logical, source in mapping.items():
+        frame[logical] = frame[source]
+    frame["date"] = frame["date"].astype(str).str.replace("-", "", regex=False).str.slice(0, 8)
+    frame["instrument"] = frame["instrument"].astype(str)
+
+    scope = frame["instrument"].str.endswith((".SH", ".SZ"))
+    stages = [{"stage": "中国A股（SH/SZ）", "remaining_count": int(scope.sum())}]
+    current = frame.loc[scope]
+    for name in ("train", "test"):
+        section = config.get(name) if isinstance(config.get(name), dict) else {}
+        filt = _filter_dict(section)
+        date_from = _compact_date(section.get("date_from"))
+        date_to = _compact_date(section.get("date_to"))
+        selected = current.loc[(current["date"] >= date_from) & (current["date"] <= date_to)]
+        if filt.get("st_status") == 0 and "st_status" in selected.columns:
+            selected = selected.loc[selected["st_status"] == 0]
+        if filt.get("suspended") is False and "suspended" in selected.columns:
+            selected = selected.loc[selected["suspended"] == False]
+        exprs = _expr_list(filt.get("expressions"))
+        if exprs:
+            selected = apply_expression_filters(selected, exprs)
+        stages.append({"stage": name, "remaining_count": int(len(selected))})
+    return {
+        "config": config,
+        "stages": stages,
+        "estimated_train_rows": stages[1]["remaining_count"],
+        "estimated_test_rows": stages[2]["remaining_count"],
+    }
+
+
 BacktestWorkbenchService.validate = validate
 BacktestWorkbenchService.submit = submit
+BacktestWorkbenchService.preview = preview

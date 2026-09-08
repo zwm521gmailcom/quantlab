@@ -52,6 +52,7 @@
           icon: "▶",
           active: exact("/backtests/new"),
           children: [
+            { href: "/backtests/plan", label: "回测计划", active: exact("/backtests/plan") },
             { href: "/backtests/rules", label: "规则回测", active: exact("/backtests/rules") },
           ],
         },

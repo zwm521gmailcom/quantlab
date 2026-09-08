@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow.compute as pc
+import pyarrow.dataset as ds
+import pyarrow.parquet as pq
 
 from quantlab.services.index_membership import latest_members, load_index_weight, members_on
 from quantlab.services.rule_portfolio import run_target_weight_portfolio
@@ -39,6 +43,7 @@ _ACCOUNT_DEFAULTS: dict[str, Any] = {
 
 _MEMBERSHIP_ERROR = "缺少沪深300/中证500成分股数据，请先在数据中心下载指数成分和权重。"
 _ASOF_ERROR = "回测开始日没有沪深300或中证500成分快照，请把开始日调到成分数据覆盖之后，或在数据中心下载更早的指数成分和权重。"
+_INDICATOR_WARMUP_CALENDAR_DAYS = 504
 
 
 class RuleBacktestError(Exception):
@@ -116,15 +121,16 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
         raw_root = Path(job_service.settings.raw_root)
         date_from = _norm_yyyymmdd(config["test"]["date_from"])
         date_to = _norm_yyyymmdd(config["test"]["date_to"])
+        job_service._step(run_id, 1, "running")
         membership_error = _membership_error(raw_root, date_from=date_from)
         if membership_error:
             raise RuleBacktestError(membership_error)
-
         job_service._step(run_id, 1, "completed")
         job_service._step(run_id, 2, "skipped")
         job_service._step(run_id, 3, "skipped")
 
-        frame = _read_frame(path)
+        job_service._step(run_id, 4, "running")
+        frame = _read_frame(path, date_from=date_from, date_to=date_to)
         history = _upto(frame, date_to)
         market = _window(frame, date_from, date_to)
         weights = load_index_weight(raw_root)
@@ -133,9 +139,11 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
         window_signals = _window(signals, date_from, date_to) if signals is not None else signals
         job_service._step(run_id, 4, "completed")
 
+        job_service._step(run_id, 5, "running")
         trades, equity = run_target_weight_portfolio(market, window_signals, config)
         job_service._step(run_id, 5, "completed")
 
+        job_service._step(run_id, 6, "running")
         metrics = _performance_metrics(
             trades, config, market, equity_curve=equity, raw_root=raw_root
         )
@@ -197,14 +205,67 @@ def _signal_params(config: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
-def _read_frame(path: Path) -> pd.DataFrame:
-    frame = pd.read_parquet(path)
+def _read_frame(
+    path: Path,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    warmup_calendar_days: int = _INDICATOR_WARMUP_CALENDAR_DAYS,
+) -> pd.DataFrame:
+    frame = _load_parquet_window(path, date_from, date_to, warmup_calendar_days)
     if frame.empty:
         raise RuleBacktestError("研究行情文件是空的。")
     try:
         return normalize_rule_frame(frame)
     except ValueError as error:
         raise RuleBacktestError(str(error)) from error
+
+
+def _load_parquet_window(
+    path: Path,
+    date_from: str | None,
+    date_to: str | None,
+    warmup_calendar_days: int,
+) -> pd.DataFrame:
+    names = pq.ParquetFile(path).schema_arrow.names
+    date_field = "trade_date" if "trade_date" in names else "date"
+    end = _norm_yyyymmdd(date_to) if date_to else None
+    start = _norm_yyyymmdd(date_from) if date_from else None
+    if start and warmup_calendar_days:
+        start = (datetime.strptime(start, "%Y%m%d") - timedelta(days=int(warmup_calendar_days))).strftime(
+            "%Y%m%d"
+        )
+    dataset = ds.dataset(str(path), format="parquet")
+    expression = None
+    if start and end:
+        expression = (pc.field(date_field) >= start) & (pc.field(date_field) <= end)
+    elif end:
+        expression = pc.field(date_field) <= end
+    elif start:
+        expression = pc.field(date_field) >= start
+    try:
+        table = dataset.to_table(filter=expression) if expression is not None else dataset.to_table()
+    except Exception:
+        table = dataset.to_table()
+    frame = table.to_pandas()
+    return _pandas_date_slice(frame, date_field, start, end)
+
+
+def _pandas_date_slice(
+    frame: pd.DataFrame,
+    date_field: str,
+    start: str | None,
+    end: str | None,
+) -> pd.DataFrame:
+    if frame.empty or (not start and not end):
+        return frame
+    field = date_field if date_field in frame.columns else ("trade_date" if "trade_date" in frame.columns else "date")
+    keys = frame[field].map(_norm_yyyymmdd)
+    mask = pd.Series(True, index=frame.index)
+    if start:
+        mask &= keys >= start
+    if end:
+        mask &= keys <= end
+    return frame.loc[mask].copy()
 
 
 def _norm_yyyymmdd(value: Any) -> str:

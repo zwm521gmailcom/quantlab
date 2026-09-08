@@ -9,8 +9,9 @@ if _code is None:
     raise ImportError(f"无法从字节码恢复：{_pyc}")
 exec(_code, globals())
 
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any
+from os import cpu_count
 
 import pandas as pd
 
@@ -19,6 +20,7 @@ _fit_lgb_impl = fit_lgb
 _fit_xgb_impl = fit_xgb
 _fit_estimator_impl = fit_estimator
 _PLATFORM_DEFAULT_SEED = 123
+_BOOSTER_THREAD_LIMIT: int | None = None
 
 
 def _norm_label_date(value) -> str:
@@ -97,22 +99,58 @@ def attach_label(frame, holding_days=None):
     if "_raw" not in labeled.columns or "date" not in labeled.columns:
         return labeled
     labeled = labeled.copy()
-    parts = []
-    for _, group in labeled.groupby(labeled["date"].map(_norm_label_date), sort=False):
-        updated = group.copy()
-        updated["_target"] = _bin_future_return(updated["_raw"], LIGHTGBM_LABEL_BINS)
-        parts.append(updated)
-    return pd.concat(parts).sort_index()
+    date_key = labeled["date"].map(_norm_label_date)
+    labeled["_target"] = labeled.groupby(date_key, sort=False)["_raw"].transform(
+        lambda values: _bin_future_return(values, LIGHTGBM_LABEL_BINS)
+    )
+    return labeled
+
+
+def booster_thread_count(workers: int, cpu_fn: Callable[[], int | None] | None = None) -> int | None:
+    if int(workers) <= 1:
+        return None
+    count = (cpu_fn or cpu_count)() or 1
+    return max(1, int(count) // max(1, int(workers)))
+
+
+@contextmanager
+def booster_thread_limit(workers: int, cpu_fn: Callable[[], int | None] | None = None):
+    global _BOOSTER_THREAD_LIMIT
+    previous = _BOOSTER_THREAD_LIMIT
+    _BOOSTER_THREAD_LIMIT = booster_thread_count(workers, cpu_fn)
+    try:
+        yield _BOOSTER_THREAD_LIMIT
+    finally:
+        _BOOSTER_THREAD_LIMIT = previous
+
+
+def _call_with_capped_train(module_name: str, param_key: str, impl, *args):
+    threads = _BOOSTER_THREAD_LIMIT
+    if not threads:
+        return impl(*args)
+    module = __import__(module_name)
+    original = module.train
+
+    def wrapped(params_map, *rest, **kwargs):
+        spec = dict(params_map)
+        spec[param_key] = int(threads)
+        return original(spec, *rest, **kwargs)
+
+    module.train = wrapped
+    try:
+        return impl(*args)
+    finally:
+        module.train = original
 
 
 def fit_lgb(features, target, params, dates=None):
     with _temporary_ranker_seed(params):
-        return _fit_lgb_impl(features, target, params, dates)
+        return _call_with_capped_train("lightgbm", "num_threads", _fit_lgb_impl, features, target, params, dates)
 
 
 def fit_xgb(features, target, params, dates=None):
     with _temporary_ranker_seed(params):
-        return _fit_xgb_impl(features, target, params, dates)
+        return _call_with_capped_train("xgboost", "nthread", _fit_xgb_impl, features, target, params, dates)
 
 
 def fit_estimator(kind, features, target, params, dates=None):
@@ -128,7 +166,7 @@ def fit_estimator(kind, features, target, params, dates=None):
             n_estimators=int(params.get("number_of_trees") or 20),
             max_depth=int(params.get("max_depth") or 8),
             min_samples_leaf=max(1, leaf),
-            n_jobs=-1,
+            n_jobs=_BOOSTER_THREAD_LIMIT or -1,
             random_state=seed,
         )
         return model.fit(features.to_numpy(dtype=float), target.to_numpy(dtype=float))

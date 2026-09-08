@@ -9,14 +9,20 @@ if _code is None:
     raise ImportError(f"无法从字节码恢复：{_pyc}")
 exec(_code, globals())
 
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from operator import eq, ge, gt, le, lt, ne
+from os import cpu_count
 from typing import Any, Iterator
 
 import pandas as pd
 
-from quantlab.services.ranking_metrics import attach_ranking_metrics, capture_predictions
+from quantlab.services.ranking_metrics import attach_ranking_metrics, capture_predictions, peek_captured
+from quantlab.services.bucket_equity import attach_segment_curves
+from quantlab.services.model_training import booster_thread_limit
+from quantlab.services.settings import resolve_worker_count
 from quantlab.services.trade_filters import FIELD_ALIASES, needs_sma200, parse_expr
 
 _attach_label = attach_label
@@ -90,13 +96,20 @@ _compute_performance_metrics = _performance_metrics
 
 def run_portfolio(frame, predictions, config):
     capture_predictions(frame, predictions)
-    return _run_portfolio(frame, predictions, config)
+    try:
+        return _run_portfolio(frame, predictions, config)
+    finally:
+        if frame is not None:
+            frame.attrs.pop("_quantlab_day_index", None)
 
 
 def _performance_metrics(trades, config, frame, equity_curve=None, raw_root=None):
     metrics = _compute_performance_metrics(
         trades, config, frame, equity_curve=equity_curve, raw_root=raw_root
     )
+    captured_frame, predictions = peek_captured()
+    source = captured_frame if captured_frame is not None else frame
+    metrics = attach_segment_curves(metrics, source, predictions, config)
     metrics = attach_ranking_metrics(metrics, frame, config)
     return _attach_extra_performance_metrics(metrics, equity_curve)
 
@@ -469,3 +482,133 @@ def execute(self, run_id: str):
 
 
 BacktestJobService.execute = execute
+
+_original_rolling_predictions = BacktestJobService._rolling_predictions
+
+
+def fold_worker_count(fold_count: int) -> int:
+    return resolve_worker_count("QUANTLAB_FOLD_WORKERS", "fold_workers", fold_count, cpu_count)
+
+
+def _rolling_predictions(
+    self,
+    *,
+    frame,
+    train,
+    test,
+    config,
+    kind,
+    params,
+    feature_fields,
+    holding_days,
+    filter_notes,
+):
+    history = {
+        "date_from": config["train"]["date_from"],
+        "date_to": config["test"]["date_to"],
+        "filter": config["train"].get("filter") or {},
+    }
+    eligible = self._filter(frame, history, filter_notes)
+    if getattr(eligible, "empty", True):
+        eligible = pd.concat([train, test], ignore_index=True)
+    calendar = unique_dates(frame["date"] if "date" in frame.columns else eligible["date"])
+    folds = period_train_folds(
+        roll_start=config["train"]["date_from"],
+        roll_end=config["test"]["date_to"],
+        calendar=calendar,
+        holding_days=holding_days,
+        train_period_months=train_period_months(config),
+        test_period_months=normalize_test_period_months(config),
+    )
+    if not folds:
+        raise ValueError("定长回看没有可用的切分。")
+    target_col = rank_label_column(kind)
+    label_fields = feature_fields + [target_col]
+
+    def run_fold(fold):
+        predict_from = fold["predict_from"]
+        train_start = fold.get("train_start")
+        if train_start:
+            slice_frame = eligible.loc[(eligible["date"] > train_start) & (eligible["date"] <= predict_from)]
+        else:
+            slice_frame = eligible.loc[eligible["date"] <= predict_from]
+        labeled = attach_label(slice_frame, holding_days=holding_days)
+        if target_col not in labeled.columns:
+            raise ValueError("训练标签没有算出来。")
+        cutoff = fold.get("label_cutoff") or fold["train_end"]
+        usable = labeled.loc[labeled["date"] <= cutoff].dropna(subset=label_fields)
+        if fold.get("train_start"):
+            usable = usable.loc[usable["date"] > fold["train_start"]]
+        if len(usable) < MIN_TRAIN_ROWS:
+            raise ValueError(
+                f"{fold['month']} 训练样本不足（{len(usable)} 行，至少 {MIN_TRAIN_ROWS} 行）。"
+            )
+        dates = usable["date"] if "date" in usable.columns else None
+        booster = fit_estimator(kind, usable[feature_fields], usable[target_col], params, dates=dates)
+        if booster is None:
+            raise ValueError("模型没有训练出来。")
+        pred_slice = (
+            test.loc[test["date"].isin(fold["predict_dates"])]
+            .dropna(subset=feature_fields)
+            .copy()
+        )
+        fold_row = {
+            "month": fold["month"],
+            "train_start": fold.get("train_start"),
+            "train_end": fold["train_end"],
+            "label_cutoff": fold.get("label_cutoff"),
+            "predict_from": fold["predict_from"],
+            "predict_to": fold["predict_to"],
+            "train_rows": int(len(usable)),
+        }
+        if pred_slice.empty:
+            return None, fold_row, labeled
+        pred_slice["score"] = predict_estimator(kind, booster, pred_slice[feature_fields])
+        return pred_slice[["date", "instrument", "score"]], fold_row, labeled
+
+    workers = fold_worker_count(len(folds))
+    with booster_thread_limit(workers):
+        if workers <= 1:
+            results = [run_fold(fold) for fold in folds]
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = [pool.submit(run_fold, fold) for fold in folds]
+                results = [future.result() for future in futures]
+
+    chunks = []
+    fold_rows = []
+    labeled = eligible
+    for chunk, fold_row, labeled in results:
+        fold_rows.append(fold_row)
+        if chunk is not None:
+            chunks.append(chunk)
+    if not chunks:
+        raise ValueError("滚动预测没有打出分数。")
+    return pd.concat(chunks, ignore_index=True), labeled, fold_rows
+
+
+BacktestJobService._rolling_predictions = _rolling_predictions
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _step(self, run_id: str, ordinal: int, status: str, error=None) -> None:
+    timestamp = _now()
+    with self.database.transaction() as connection:
+        if status == "running":
+            connection.execute(
+                "UPDATE backtest_steps SET status=?, started_at=COALESCE(started_at, ?), error_message=? "
+                "WHERE run_id=? AND ordinal=?",
+                (status, timestamp, error, run_id, ordinal),
+            )
+            return
+        connection.execute(
+            "UPDATE backtest_steps SET status=?, started_at=COALESCE(started_at, ?), finished_at=?, error_message=? "
+            "WHERE run_id=? AND ordinal=?",
+            (status, timestamp, timestamp, error, run_id, ordinal),
+        )
+
+
+BacktestJobService._step = _step

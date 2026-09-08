@@ -27,10 +27,13 @@ from quantlab.services.factor_detail import FactorDetailService
 from quantlab.services.factor_manual import ManualFactorService
 from quantlab.services.factor_mining import FactorMiningService
 from quantlab.services.factor_calculation import FactorCalculationService
+from quantlab.services.canonical_factor_pack import CanonicalFactorPackService
 from quantlab.services.strategy_center import StrategyCenterService
 from quantlab.services.model_training import ModelTrainingService
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
 from quantlab.services.backtest_job import BacktestJobService
+from quantlab.services.backtest_plan import BacktestPlanService
+from quantlab.services.backtest_control import run_isolated, stop_run
 from quantlab.services.result_archive import ResultArchiveService
 from quantlab.services.settings import SettingsService
 from quantlab.services.tushare_download import TushareDownloadService
@@ -144,12 +147,16 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     factor_manual_service = ManualFactorService(resolved_settings, resolved_database, factors)
     factor_mining_service = FactorMiningService(resolved_settings, resolved_database, factors)
     factor_calculation = FactorCalculationService(resolved_settings, resolved_database)
+    factor_pack_service = CanonicalFactorPackService(
+        resolved_settings, resolved_database, factors, factor_calculation
+    )
     strategy_center = StrategyCenterService(resolved_settings, resolved_database, factors)
     model_training = ModelTrainingService(
         resolved_settings, resolved_database, factors, factor_calculation, strategy_center
     )
     backtest_workbench = BacktestWorkbenchService(resolved_settings, resolved_database)
     backtest_job = BacktestJobService(resolved_settings, resolved_database)
+    backtest_plan = BacktestPlanService(resolved_settings, resolved_database, backtest_workbench, backtest_job)
     result_archive = ResultArchiveService(resolved_settings, resolved_database)
     settings_service = SettingsService(resolved_settings)
     tushare_download = TushareDownloadService(resolved_settings)
@@ -163,9 +170,11 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.state.factor_manual_service = factor_manual_service
     app.state.factor_mining_service = factor_mining_service
     app.state.factor_calculation_service = factor_calculation
+    app.state.factor_pack_service = factor_pack_service
     app.state.strategy_center_service = strategy_center
     app.state.backtest_workbench_service = backtest_workbench
     app.state.backtest_job_service = backtest_job
+    app.state.backtest_plan_service = backtest_plan
     app.state.result_archive_service = result_archive
     app.state.research_run_repository = research_runs
     app.state.settings_service = settings_service
@@ -712,6 +721,26 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             _raise_factor_library_error(error, status_code=404 if "not found" in str(error) else 400)
         raise AssertionError("unreachable")
 
+    @app.get("/api/factor-packs/canonical")
+    def factor_pack_canonical() -> dict[str, object]:
+        return factor_pack_service.catalog()
+
+    @app.post("/api/factor-packs/canonical/ingest")
+    async def factor_pack_ingest(request: Request) -> dict[str, object]:
+        body = await _json_body(request)
+        if not isinstance(body, dict):
+            body = {}
+        try:
+            field = body.get("field")
+            return factor_pack_service.ingest(
+                dataset_id=str(body.get("dataset_id") or "ds_canonical_market"),
+                dataset_version_id=str(body.get("dataset_version_id") or "current"),
+                field=None if field in (None, "") else str(field),
+            )
+        except ValueError as error:
+            _raise_factor_library_error(error)
+        raise AssertionError("unreachable")
+
     @app.post("/api/factor-drafts/preview")
     async def factor_draft_preview(request: Request) -> dict[str, object]:
         body = await _json_body(request)
@@ -1078,6 +1107,100 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         except ValueError as error:
             _raise_factor_library_error(error, status_code=404)
 
+    def _plan_error(error: Exception, plan_id: str | None = None) -> None:
+        message = str(error)
+        if isinstance(error, RuntimeError) and message == "busy":
+            raise HTTPException(
+                status_code=409,
+                detail=_error_payload("BACKTEST_PLAN_BUSY", "回测计划正在运行，请等当前批次结束或先停止。", entity_id=plan_id),
+            ) from error
+        if isinstance(error, ValueError) and message == "empty":
+            raise HTTPException(
+                status_code=400,
+                detail=_error_payload("BACKTEST_PLAN_EMPTY", "没有可运行的任务。已完成的不会重跑，请勾选待运行项。", entity_id=plan_id),
+            ) from error
+        missing = "not found" in message.lower() or "找不到" in message
+        status_code = 404 if missing else 400
+        code = "BACKTEST_PLAN_NOT_FOUND" if missing else "BACKTEST_PLAN_INVALID"
+        raise HTTPException(status_code=status_code, detail=_error_payload(code, message, entity_id=plan_id)) from error
+
+    @app.get("/api/backtest-plans")
+    def backtest_plan_list() -> dict[str, object]:
+        return backtest_plan.list_plans()
+
+    @app.post("/api/backtest-plans", status_code=201)
+    async def backtest_plan_create(request: Request) -> dict[str, object]:
+        try:
+            body = await _json_body(request)
+            if not isinstance(body, dict):
+                raise ValueError("plan body is required")
+            return backtest_plan.create(body)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error)
+        raise AssertionError("unreachable")
+
+    @app.get("/api/backtest-plans/{plan_id}")
+    def backtest_plan_detail(plan_id: str) -> dict[str, object]:
+        try:
+            return backtest_plan.get(plan_id)
+        except ValueError as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.post("/api/backtest-plans/{plan_id}/items", status_code=201)
+    async def backtest_plan_add_item(plan_id: str, request: Request) -> dict[str, object]:
+        try:
+            body = await _json_body(request)
+            if not isinstance(body, dict):
+                raise ValueError("item body is required")
+            return backtest_plan.add_item(plan_id, body)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.patch("/api/backtest-plans/{plan_id}/items")
+    async def backtest_plan_select_items(plan_id: str, request: Request) -> dict[str, object]:
+        try:
+            body = await _json_body(request)
+            if not isinstance(body, dict) or not isinstance(body.get("selected"), dict):
+                raise ValueError("selected is required")
+            return backtest_plan.set_selected(plan_id, body["selected"])
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.delete("/api/backtest-plans/{plan_id}/items/{item_id}")
+    def backtest_plan_delete_item(plan_id: str, item_id: str) -> dict[str, object]:
+        try:
+            return backtest_plan.delete_item(plan_id, item_id)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.post("/api/backtest-plans/{plan_id}/start", status_code=202)
+    async def backtest_plan_start(plan_id: str, request: Request) -> dict[str, object]:
+        body: object = {}
+        try:
+            body = await _json_body(request)
+        except Exception:
+            body = {}
+        try:
+            item_ids = body.get("item_ids") if isinstance(body, dict) else None
+            if item_ids is not None and not isinstance(item_ids, list):
+                raise ValueError("item_ids must be a list")
+            return backtest_plan.start(plan_id, item_ids=item_ids)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.post("/api/backtest-plans/{plan_id}/stop")
+    def backtest_plan_stop(plan_id: str) -> dict[str, object]:
+        try:
+            return backtest_plan.stop(plan_id)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
     @app.post("/api/backtests/validate")
     async def backtest_validate(request: Request) -> dict[str, object]:
         try:
@@ -1183,12 +1306,23 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     @app.post("/api/backtests/{run_id}/execute")
     def backtest_execute(run_id: str) -> dict[str, object]:
         try:
-            result = backtest_job.execute(run_id)
+            result = run_isolated(resolved_settings, backtest_job, run_id)
         except ValueError as error:
             raise HTTPException(status_code=400, detail=_error_payload("BACKTEST_EXECUTION_INVALID", str(error), entity_id=run_id)) from error
         if result is None:
             raise HTTPException(status_code=404, detail=_error_payload("BACKTEST_NOT_FOUND", "backtest run not found", entity_id=run_id))
         return result
+
+    @app.post("/api/backtests/{run_id}/stop")
+    def backtest_stop(run_id: str) -> dict[str, object]:
+        try:
+            return stop_run(backtest_job, run_id)
+        except ValueError as error:
+            message = str(error)
+            missing = "not found" in message.lower() or "找不到" in message
+            status_code = 404 if missing else 400
+            code = "BACKTEST_NOT_FOUND" if missing else "BACKTEST_STOP_INVALID"
+            raise HTTPException(status_code=status_code, detail=_error_payload(code, message, entity_id=run_id)) from error
 
     @app.get("/api/backtests/{run_id}/status")
     def backtest_status(run_id: str) -> dict[str, object]:
@@ -1397,6 +1531,10 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     def backtest_workbench_page() -> FileResponse:
         return FileResponse(pages / "backtest_workbench_formal.html")
 
+    @app.get("/backtests/plan")
+    def backtest_plan_page() -> FileResponse:
+        return FileResponse(pages / "backtest_plan.html")
+
     @app.get("/backtests/rules")
     def backtest_rules_page() -> FileResponse:
         return FileResponse(pages / "backtest_rules.html")
@@ -1407,7 +1545,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
 
     @app.get("/backtests/runs/{run_id}")
     def backtest_archive_run_page(run_id: str) -> FileResponse:
-        return FileResponse(pages / "backtest_run_record.html")
+        return FileResponse(pages / "backtest_run_record.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/strategies/{strategy_id}/versions/{version_id}")
     def strategy_version_page(strategy_id: str, version_id: str) -> RedirectResponse:

@@ -32,7 +32,7 @@ def test_backtest_new_uses_formal_workbench_structure() -> None:
         "回测名称", "股票范围", "中国A股（SH/SZ）", "沪市（SH）", "深市（SZ）", "因子组合", "模型选择",
         "训练样本", "回测样本", "盘前过滤", "训练区间", "回测区间", "Top N", "等权", "调仓间隔",
         "未复权开盘价", "未复权收盘价", "买入费率", "卖出费率", "印花税", "最低费用", "滑点",
-        "基准", "保存配置", "运行状态", "保存为模板", "开始回测", "结果档案",
+        "基准", "保存配置", "运行状态", "开始回测", "回测强行停止", "结果档案",
     ):
         assert label in html
     assert "运行前检查" not in html
@@ -45,7 +45,9 @@ def test_backtest_new_uses_formal_workbench_structure() -> None:
     assert 'id="pretrade-benchmark-list"' in html
     assert 'id="open-filter-list"' in html
     assert 'id="random-seed"' in html
-    assert 'id="acknowledge-test-reuse"' in html
+    assert 'id="test-usage-note"' in html
+    assert 'id="acknowledge-test-reuse"' not in html
+    assert "确认再次使用这段 test" not in html
     assert 'id="train-close-gt-ma200"' not in html
     assert 'id="val-close-gt-ma200"' not in html
     assert 'id="test-close-gt-ma200"' not in html
@@ -57,6 +59,24 @@ def test_narrow_pages_constrain_wide_content_inside_the_viewport() -> None:
     assert "main, .card { min-width: 0; }" in css
     assert ".factor-table, .factor-library-table { max-width: 100%; }" in css
     assert ".config-block { max-width: 100%; }" in css
+
+
+def test_plan_grid_keeps_checkbox_column_narrow() -> None:
+    css = Path("quantlab/web/assets/app.css").read_text()
+    assert ".archive-grid.plan-grid th:nth-child(1)" in css
+    assert "width: 40px; min-width: 40px; max-width: 40px;" in css
+    html = _page("backtest_plan.html")
+    assert "app.css?v=20260909plan7" in html
+    assert 'class="main plan-page"' in html
+    assert ".main.plan-page" in css
+    assert "max-width: none" in css
+    assert 'id="plan-state"' in html
+    assert 'table.className = "archive-grid plan-grid"' in html
+    assert 'factorList.className = "plan-factors"' in html
+    assert "model.children[1].textContent" in html
+    assert "lightgbm_tree ·" not in html
+    assert ".plan-factors { display: flex; flex-wrap: wrap;" in css
+    assert ".plan-factors span" in css
 
 
 def test_factor_jobs_list_renders_basic_fields_as_a_table() -> None:
@@ -84,6 +104,7 @@ def test_research_and_settings_pages_share_the_complete_primary_navigation() -> 
         ("/research/factor-jobs", "因子计算任务"),
         ("/models", "模型中心"),
         ("/backtests/new", "回测中心"),
+        ("/backtests/plan", "回测计划"),
         ("/backtests/rules", "规则回测"),
         ("/backtests/runs", "结果档案"),
         ("/settings", "设置"),
@@ -102,8 +123,11 @@ def test_settings_form_has_responsive_layout_hooks() -> None:
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="settings-form"' in html
     assert 'class="settings-actions"' in html
+    assert 'id="compute-form"' in html
+    assert 'id="bucket-workers"' in html
     assert "#settings-form" in css
     assert ".settings-actions" in css
+    assert ".settings-help" in css
     assert "minmax(0, 1fr)" in css
 
 
@@ -145,7 +169,7 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     html = _page("backtest_workbench_formal.html")
     for marker in (
         'class="top"', 'class="root"', 'class="banner"', 'class="layout"',
-        'data-panel-id="actions"', 'id="start"', 'id="save"', 'id="preview"',
+        'data-panel-id="actions"', 'id="start"', 'id="stop-backtest"', 'id="save"', 'id="preview"',
         "运行身份", "因子组合", "训练样本", "回测样本", "盘前过滤", "模型与信号", "仓位", "交易规则",
         "开始回测", "保存配置", "运行 ID",
     ):
@@ -154,6 +178,8 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     assert "运行前检查" not in html
     top = html.split('class="top"', 1)[1].split('class="root"', 1)[0]
     assert 'id="start"' not in top
+    assert 'id="save-template"' not in html
+    assert "保存为模板" not in html
     assert 'id="save-template"' not in top
     assert 'href="/backtests/runs">结果档案' not in top
     model_panel = html.split("模型与信号", 1)[1].split("仓位", 1)[0]
@@ -175,6 +201,16 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     css = Path("quantlab/web/assets/app.css").read_text()
     assert "display: contents" in css
     assert "#bt-roll-fields:not(.hidden)" in css
+
+
+def test_backtest_workbench_save_keeps_draft_id_in_url() -> None:
+    html = _page("backtest_workbench_formal.html")
+    assert "function rememberDraft" in html
+    assert 'searchParams.set("draft_id"' in html
+    assert "history.replaceState" in html
+    assert "quantlab-backtest-last-draft-id" in html
+    assert "showOutput(JSON.stringify(payload.config" not in html
+    assert 'showStatus("配置已保存为草稿，尚未生成运行 ID")' in html
 
 
 def test_backtest_workbench_panels_can_be_dragged_to_reorder() -> None:
@@ -241,6 +277,10 @@ def test_factor_workflow_pages_share_back_path_and_step_state() -> None:
         assert 'href="/factors"' in html
         assert 'class="workflow-steps"' in html
     assert 'id="manual-factor-steps"' in manual
+    assert 'id="canonical-factor-pack"' in manual
+    assert "计算验证并入库" in manual
+    assert 'id="canonical-factor-pack-list"' in manual
+    assert "function loadCanonicalFactorPack" in app
     assert 'id="factor-mining-steps"' in mining
     assert "function setWorkflowStep" in app
     for heading in ("基本信息", "公式与数据", "计算口径", "点时约束"):
@@ -348,6 +388,11 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     app = Path("quantlab/web/assets/app.js").read_text()
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="factor-calculation-history"' in html
+    assert 'id="factor-page-size"' in html
+    assert "每页最大显示数量" in html
+    assert 'function factorCatalogPageSize' in app
+    assert "FACTOR_PAGE_SIZES = [50, 100, 200, 500]" in app
+    assert ".factor-page-size" in css
     assert "factor-column-header" in app
     assert "function openFactorInfoPopover" in app
     assert "factor-formula-expression" in app
@@ -392,23 +437,44 @@ def test_model_run_page_lists_fold_and_train_window() -> None:
     assert 'window.location.pathname.startsWith("/models/runs/")' in js
 
 
-def test_backtest_run_record_shows_training_folds_table() -> None:
+def test_backtest_run_record_omits_training_folds_table() -> None:
     html = _page("backtest_run_record.html")
-    assert 'id="train-folds"' in html
+    assert 'id="train-folds"' not in html
+    assert "训练折" not in html
+    assert "哪一折" not in html
     assert 'id="monthly-ranking"' in html
     assert "每月 Rank IC" in html
-    assert "训练折" in html
-    assert "哪一折" in html
-    assert "训练行数" in html
     assert "训练方式" in html
+    assert "按流通市值分层" in html
+    assert "按换手分层" in html
+    assert 'id="cap-equity-chart"' in html
+    assert 'id="turn-equity-chart"' in html
+    assert "function renderSegmentCurves" in html
+    assert "function bindChartLegend" in html
+    assert "equity-legend-toggle" in html
+    assert 'aria-pressed' in html
 
 
-def test_run_record_reads_nested_walk_forward_folds() -> None:
+def test_backtest_run_record_lists_module_durations() -> None:
+    html = _page("backtest_run_record.html")
+    assert "模块耗时" in html
+    assert 'id="step-timing"' in html
+    assert 'id="timing-total"' in html
+    assert "function renderStepTiming" in html
+    assert "duration_display" in html
+    assert "<thead><tr><th>模块</th><th>耗时</th></tr></thead>" in html
+    assert "<th>开始</th>" not in html
+    assert "<th>结束</th>" not in html
+    assert "formatClock" not in html
+
+
+def test_run_record_keeps_walk_forward_in_config_snapshot() -> None:
     html = _page("backtest_run_record.html")
     app = Path("quantlab/web/assets/app.js").read_text()
-    assert "model.walk_forward && model.walk_forward.folds" in html
     assert "train_period_months" in html
     assert "回测周期" in html
+    assert "function walkForwardLabel" in html
+    assert "model.walk_forward && model.walk_forward.folds" not in html
     assert "model.walk_forward && model.walk_forward.folds" in app
     assert "train_period_months" in app
 
@@ -450,6 +516,7 @@ def test_result_archive_filters_use_model_not_strategy_labels() -> None:
 
 def test_nav_exposes_rule_backtest_page() -> None:
     nav = Path("quantlab/web/assets/nav.js").read_text()
+    assert '{ href: "/backtests/plan", label: "回测计划", active:' in nav
     assert '{ href: "/backtests/rules", label: "规则回测", active: exact("/backtests/rules") }' in nav
     assert "规则回测" in nav
 
@@ -492,6 +559,8 @@ def test_backtest_rules_page_emits_required_fields() -> None:
     assert 'id="rsi-low"' in html
     assert 'id="rsi-high"' in html
     assert 'id="date-from"' in html
+    assert 'id="stop-backtest"' in html
+    assert "回测强行停止" in html
     assert 'id="date-to"' in html
     assert 'id="sellFee"' in html
     assert 'value="0.0005"' in html

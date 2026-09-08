@@ -23,6 +23,10 @@ def take_captured() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
     return frame, predictions
 
 
+def peek_captured() -> tuple[pd.DataFrame | None, pd.DataFrame | None]:
+    return _CAPTURE.get("frame"), _CAPTURE.get("predictions")
+
+
 def _month_key(value: Any) -> str:
     text = str(value or "").replace("-", "")
     return text[:6] if len(text) >= 6 else text

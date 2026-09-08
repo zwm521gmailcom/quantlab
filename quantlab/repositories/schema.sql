@@ -246,6 +246,30 @@ CREATE TABLE IF NOT EXISTS backtest_drafts (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS backtest_plans (
+    plan_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('draft', 'running', 'completed', 'stopped')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS backtest_plan_items (
+    item_id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL,
+    sort_order INTEGER NOT NULL,
+    selected INTEGER NOT NULL DEFAULT 1 CHECK (selected IN (0, 1)),
+    name TEXT NOT NULL,
+    config_json TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'queued', 'running', 'completed', 'failed', 'skipped')),
+    run_id TEXT,
+    error_message TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (plan_id) REFERENCES backtest_plans(plan_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS backtest_plan_items_plan_idx ON backtest_plan_items(plan_id, sort_order);
 CREATE TABLE IF NOT EXISTS backtest_model_versions (
     backtest_run_id TEXT NOT NULL,
     fold_index INTEGER NOT NULL,

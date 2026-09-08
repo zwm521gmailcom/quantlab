@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuantLab · 回测计划</title>
+  <link rel="stylesheet" href="/assets/app.css?v=20260909plan7">
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <h1>QuantLab</h1>
+    <nav aria-label="主导航">
+      <a href="/">研究总览</a>
+      <a href="/data">数据中心</a>
+      <a href="/kline">标准行情宽表</a>
+      <a href="/research/factors">因子研究</a>
+      <a href="/models">模型中心</a>
+      <a href="/backtests/new">回测中心</a>
+      <a href="/backtests/plan" aria-current="page">回测计划</a>
+      <a href="/backtests/runs">结果档案</a>
+      <a href="/settings">设置</a>
+    </nav>
+  </aside>
+  <main class="main plan-page">
+    <div class="top">
+      <div>
+        <div class="eyebrow">回测工作台</div>
+        <div class="title">回测计划</div>
+        <div class="sub">先把要跑的回测写进清单。全选后点开始，系统一笔接一笔跑，前一笔完成或失败后再跑下一笔。</div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/backtests/new">新建回测</a>
+        <a class="btn" href="/backtests/runs">结果档案</a>
+        <button id="select-all" class="btn" type="button">全选</button>
+        <button id="start" class="btn primary" type="button">开始</button>
+        <button id="stop" class="btn danger" type="button" disabled>停止计划</button>
+      </div>
+    </div>
+    <div id="banner" class="banner"><strong>计划状态：</strong><span id="banner-text">还没有回测计划。可从回测中心点「加入计划」，或等写入任务后再全选开始。</span></div>
+    <label class="plan-pick">当前计划
+      <select id="plan-select" class="select"></select>
+    </label>
+    <div id="plan-state" class="state">正在加载…</div>
+    <div class="archive-table plan-table" id="plan-table"></div>
+  </main>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const STATUS = {
+  draft: "未开始",
+  running: "运行中",
+  completed: "已完成",
+  stopped: "已停止",
+  pending: "待运行",
+  queued: "排队",
+  failed: "失败",
+  skipped: "已跳过",
+};
+let plans = [];
+let current = null;
+let pollTimer = 0;
+
+async function request(url, options = {}) {
+  const response = await fetch(url, options);
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.message || payload.detail?.message || `HTTP ${response.status}`);
+  return payload;
+}
+
+function setBanner(text, error = false) {
+  $("banner-text").textContent = text;
+  $("banner").classList.toggle("banner-error", error);
+}
+
+function syncButtons() {
+  const running = current?.status === "running";
+  $("start").disabled = !current || running || !(current.items || []).some((item) => item.selected && ["pending", "failed", "skipped"].includes(item.status));
+  $("stop").disabled = !running;
+  $("select-all").disabled = !current || running;
+}
+
+function renderSelect() {
+  const select = $("plan-select");
+  select.replaceChildren();
+  if (!plans.length) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "暂无计划";
+    select.append(option);
+    return;
+  }
+  plans.forEach((plan) => {
+    const option = document.createElement("option");
+    option.value = plan.plan_id;
+    option.textContent = `${plan.name}（${STATUS[plan.status] || plan.status} · ${plan.items.length} 笔）`;
+    select.append(option);
+  });
+  if (current) select.value = current.plan_id;
+}
+
+function renderTable() {
+  const wrap = $("plan-table");
+  wrap.replaceChildren();
+  if (!current) {
+    $("plan-state").textContent = "还没有回测计划。";
+    syncButtons();
+    return;
+  }
+  const running = current.items.filter((item) => item.status === "running").length;
+  const pending = current.items.filter((item) => item.status === "pending").length;
+  const done = current.items.filter((item) => item.status === "completed").length;
+  $("plan-state").textContent = `${current.name} · ${STATUS[current.status] || current.status} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${running ? "，正在跑 1 笔" : ""}`;
+  const table = document.createElement("table");
+  table.className = "archive-grid plan-grid";
+  table.innerHTML = "<thead><tr><th></th><th>任务</th><th>因子</th><th>训练 / 回测</th><th>模型</th><th>状态</th><th>运行</th></tr></thead>";
+  const body = document.createElement("tbody");
+  current.items.forEach((item) => {
+    const row = document.createElement("tr");
+    const check = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = Boolean(item.selected);
+    input.disabled = current.status === "running";
+    input.setAttribute("aria-label", `选择 ${item.name}`);
+    input.addEventListener("change", async () => {
+      try {
+        current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/items`, {
+          method: "PATCH",
+          headers: {"content-type": "application/json"},
+          body: JSON.stringify({selected: {[item.item_id]: input.checked}}),
+        });
+        render();
+      } catch (error) {
+        setBanner(error.message, true);
+      }
+    });
+    check.append(input);
+    const name = document.createElement("td");
+    name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><span class="archive-meta"></span></div>`;
+    name.querySelector(".archive-name").textContent = item.name;
+    name.querySelector(".archive-meta").textContent = item.item_id;
+    const factors = document.createElement("td");
+    const factorList = document.createElement("div");
+    factorList.className = "plan-factors";
+    const fields = item.summary?.factors || [];
+    if (!fields.length) {
+      factorList.textContent = "—";
+    } else {
+      fields.forEach((field) => {
+        const chip = document.createElement("span");
+        chip.textContent = field;
+        factorList.append(chip);
+      });
+    }
+    factors.append(factorList);
+    const windowCell = document.createElement("td");
+    windowCell.className = "archive-window";
+    windowCell.innerHTML = `<div></div><div></div>`;
+    windowCell.children[0].textContent = item.summary?.train || "—";
+    windowCell.children[1].textContent = item.summary?.test || "—";
+    const model = document.createElement("td");
+    model.className = "archive-window";
+    model.innerHTML = `<div></div><div></div>`;
+    model.children[0].textContent = item.summary?.kind || "—";
+    model.children[1].textContent = item.summary?.walk_forward === "rolling" ? "定长回看" : "一次训练";
+    const status = document.createElement("td");
+    const mark = document.createElement("span");
+    mark.className = `archive-status status-${item.status}`;
+    mark.textContent = STATUS[item.status] || item.status;
+    status.append(mark);
+    if (item.error_message) {
+      const err = document.createElement("div");
+      err.className = "archive-meta";
+      err.textContent = item.error_message;
+      status.append(err);
+    }
+    const run = document.createElement("td");
+    if (item.run_id) {
+      const link = document.createElement("a");
+      link.href = `/backtests/runs/${encodeURIComponent(item.run_id)}`;
+      link.textContent = item.run_id;
+      run.append(link);
+    } else {
+      run.textContent = "尚未运行";
+    }
+    row.append(check, name, factors, windowCell, model, status, run);
+    body.append(row);
+  });
+  table.append(body);
+  wrap.append(table);
+  setBanner(
+    current.status === "running"
+      ? "正在按勾选顺序串行运行。可以离开这个页面，运算仍会继续。"
+      : current.status === "completed"
+        ? "这份计划已跑完。结果在结果档案里，看完再叫我就行。"
+        : "勾选要跑的任务，点全选再点开始。不会并行开多笔回测。",
+    false
+  );
+  syncButtons();
+}
+
+function render() {
+  renderSelect();
+  renderTable();
+}
+
+function stopPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = 0;
+  }
+}
+
+function startPoll() {
+  stopPoll();
+  pollTimer = window.setInterval(async () => {
+    if (!current) return;
+    try {
+      current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}`);
+      const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
+      if (index >= 0) plans[index] = current;
+      render();
+      if (current.status !== "running") stopPoll();
+    } catch (error) {
+      setBanner(error.message, true);
+    }
+  }, 2000);
+}
+
+async function load() {
+  try {
+    const payload = await request("/api/backtest-plans");
+    plans = payload.items || [];
+    const wanted = new URLSearchParams(window.location.search).get("plan_id") || current?.plan_id;
+    current = plans.find((plan) => plan.plan_id === wanted) || plans[0] || null;
+    render();
+    if (current?.status === "running") startPoll();
+  } catch (error) {
+    $("plan-state").textContent = error.message;
+    setBanner(error.message, true);
+  }
+}
+
+$("plan-select").addEventListener("change", () => {
+  current = plans.find((plan) => plan.plan_id === $("plan-select").value) || null;
+  const url = new URL(window.location.href);
+  if (current) url.searchParams.set("plan_id", current.plan_id);
+  else url.searchParams.delete("plan_id");
+  history.replaceState(history.state, "", `${url.pathname}${url.search}`);
+  render();
+  if (current?.status === "running") startPoll();
+  else stopPoll();
+});
+
+$("select-all").addEventListener("click", async () => {
+  if (!current) return;
+  const selected = {};
+  current.items.forEach((item) => { selected[item.item_id] = true; });
+  try {
+    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/items`, {
+      method: "PATCH",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({selected}),
+    });
+    render();
+    setBanner("已全选。点开始后按清单顺序一笔接一笔跑。");
+  } catch (error) {
+    setBanner(error.message, true);
+  }
+});
+
+$("start").addEventListener("click", async () => {
+  if (!current) return;
+  const itemIds = current.items.filter((item) => item.selected).map((item) => item.item_id);
+  $("start").disabled = true;
+  try {
+    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/start`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({item_ids: itemIds}),
+    });
+    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
+    if (index >= 0) plans[index] = current;
+    render();
+    startPoll();
+  } catch (error) {
+    setBanner(error.message, true);
+    syncButtons();
+  }
+});
+
+$("stop").addEventListener("click", async () => {
+  if (!current) return;
+  $("stop").disabled = true;
+  try {
+    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/stop`, {method: "POST"});
+    render();
+    startPoll();
+  } catch (error) {
+    setBanner(error.message, true);
+    syncButtons();
+  }
+});
+
+load();
+</script>
+<script src="/assets/nav.js?v=20260909plan"></script>
+</body>
+</html>

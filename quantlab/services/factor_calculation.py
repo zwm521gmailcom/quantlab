@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
 from quantlab.services.factor_data import FEATURE_FIELDS, TARGET_ONLY_FIELDS
-from quantlab.services.factor_manual import ExpressionError, _eval, grouped_rolling, parse_expression
+from quantlab.services.factor_manual import ExpressionError, _eval, finite_factor_values, grouped_rolling, parse_expression
 from quantlab.services.index_membership import apply_pit_index_universe, filter_listed_universe
 
 
@@ -569,14 +569,16 @@ class FactorCalculationService:
             return None
         if parsed is not None:
             try:
-                frame["factor_value"] = pd.Series(_eval(parsed.tree, frame), index=frame.index)
+                frame["factor_value"] = finite_factor_values(
+                    pd.Series(_eval(parsed.tree, frame), index=frame.index)
+                )
             except (ExpressionError, KeyError, TypeError, ValueError) as error:
                 raise ValueError(f"公式算不出来：{error}") from error
         else:
             column = next((item for item in (factor_id, self._logical_id(factor_id), "factor_value") if item in frame.columns), None)
             if column is None:
                 raise ValueError("数据集缺少因子值或未来收益字段")
-            frame["factor_value"] = frame[column]
+            frame["factor_value"] = finite_factor_values(frame[column])
         frame = self._attach_label(frame)
         return self._crop(frame, binding["calc_from"], binding["calc_to"])
 

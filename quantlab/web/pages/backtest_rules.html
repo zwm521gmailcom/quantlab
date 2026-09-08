@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 规则回测</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260907a">
+    <link rel="stylesheet" href="/assets/app.css?v=20260909stop">
   </head>
   <body>
     <div class="shell">
@@ -32,6 +32,7 @@
           <div class="actions">
             <a class="btn" href="/backtests/runs">结果档案</a>
             <button id="start" class="btn primary" type="button">开始回测</button>
+            <button id="stop-backtest" class="btn danger" type="button" disabled>回测强行停止</button>
           </div>
         </div>
         <div id="banner" class="banner">
@@ -115,6 +116,14 @@
       let openDraft = null;
       let submissionToken = crypto.randomUUID();
       const OPEN_LIMIT_EXPR = "open < up_limit AND open > down_limit";
+
+      function rememberDraft(draftId) {
+        const id = String(draftId || "").trim();
+        if (!id) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set("draft_id", id);
+        history.replaceState(history.state, "", `${url.pathname}${url.search}${url.hash}`);
+      }
 
       function showError(error) {
         q("status").textContent = "● 配置有误";
@@ -274,6 +283,7 @@
           }),
         });
         openDraft = {draft_id: payload.draft_id, revision: payload.revision};
+        rememberDraft(openDraft.draft_id);
         q("run-id").textContent = `草稿 ID：${openDraft.draft_id}`;
         showStatus("配置已保存为草稿，尚未生成运行 ID");
         showBanner("配置草稿已保存，未创建 BacktestRun；开始回测才会生成正式运行 ID。");
@@ -309,12 +319,38 @@
           });
           const runId = payload.run_id;
           q("run-id").textContent = runId;
+          q("stop-backtest").disabled = false;
           showStatus(`已提交运行：${q("name").value}`);
           showBanner("规则回测已提交，正在按信号表与账户规则执行。");
-          await request(`/api/backtests/${encodeURIComponent(runId)}/execute`, {method: "POST"});
+          try {
+            const executed = await request(`/api/backtests/${encodeURIComponent(runId)}/execute`, {method: "POST"});
+            if (executed.status === "failed" && String(executed.error_message || "").includes("强行停止")) {
+              showBanner("已强行停止运算，页面服务未停。");
+              return;
+            }
+          } finally {
+            q("stop-backtest").disabled = true;
+          }
           window.location.assign(`/backtests/runs/${encodeURIComponent(runId)}`);
         } catch (error) {
           q("start").disabled = false;
+          q("stop-backtest").disabled = true;
+          showError(error);
+        }
+      };
+      q("stop-backtest").onclick = async () => {
+        const runId = (q("run-id").textContent || "").trim();
+        if (!runId || runId.includes("开始回测")) {
+          showBanner("还没有正在运行的回测。", true);
+          return;
+        }
+        q("stop-backtest").disabled = true;
+        try {
+          await request(`/api/backtests/${encodeURIComponent(runId)}/stop`, {method: "POST"});
+          showBanner("已强行停止运算，页面服务未停。");
+          showStatus("已强行停止");
+        } catch (error) {
+          q("stop-backtest").disabled = false;
           showError(error);
         }
       };

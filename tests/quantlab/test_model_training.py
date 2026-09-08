@@ -140,6 +140,21 @@ def test_fit_lgb_uses_random_seed_from_params(monkeypatch) -> None:
     assert captured["seed"] == 99
 
 
+def test_fit_lgb_caps_num_threads_when_parallel_folds(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_train(spec, *args, **kwargs):
+        captured["spec"] = spec
+        return object()
+
+    monkeypatch.setattr("lightgbm.train", fake_train)
+    features, target, dates, params = _fit_frame()
+    params = {**params, "random_seed": 7, "num_leaves": 8, "number_of_trees": 5}
+    with mt.booster_thread_limit(8, cpu_fn=lambda: 10):
+        mt.fit_lgb(features, target, params, dates)
+    assert captured["spec"]["num_threads"] == 1
+
+
 def test_fit_lgb_does_not_call_early_stopping(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

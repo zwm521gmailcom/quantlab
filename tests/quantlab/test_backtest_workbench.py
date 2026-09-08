@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+import multiprocessing
+import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
@@ -143,6 +145,37 @@ def test_preview_reports_stages_and_submit_is_idempotent(tmp_path):
         assert c.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()[0] == 1
 
 
+def test_preview_accepts_canonical_column_names(tmp_path):
+    s, db = setup_env(tmp_path)
+    path = s.data_root / "features.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "trade_date": ["20200101", "20200102", "20200103", "20200104"],
+                "ts_code": ["600000.SH", "000001.SZ", "000001.SZ", "000001.SZ"],
+                "st_status": [1, 0, 0, 0],
+                "is_suspended": [0, 0, 0, 0],
+                "close": [19.0, 10.0, 12.0, 14.0],
+                "low": [18.0, 9.0, 11.0, 13.0],
+                "up_limit": [21.0, 11.0, 11.0, 15.0],
+                "down_limit": [19.0, 9.0, 9.0, 5.0],
+            }
+        ),
+        path,
+    )
+    preview = BacktestWorkbenchService(s, db).preview(
+        {
+            **config(),
+            "pretrade_filters": {
+                "stock": ["st_status == 0", "is_suspended == 0", "close > low"],
+                "benchmark": [],
+            },
+        }
+    )
+    assert preview["stages"][0]["remaining_count"] == 3
+    assert preview["stages"][-1]["remaining_count"] == 2
+
+
 def test_save_draft_persists_config_without_creating_a_run(tmp_path):
     s, db = setup_env(tmp_path)
     svc = BacktestWorkbenchService(s, db)
@@ -231,6 +264,48 @@ def test_api_executes_and_status_is_queryable(tmp_path):
     assert len(status.json()["steps"]) == 6
 
 
+def test_api_force_stop_kills_worker_and_keeps_health_up(tmp_path):
+    from quantlab.services import backtest_control
+
+    s, db = setup_env(tmp_path)
+    client = TestClient(create_app(s, db))
+    created = client.post("/api/backtests", json=config())
+    run_id = created.json()["run_id"]
+    with db.transaction() as connection:
+        connection.execute("UPDATE backtest_runs SET status='running' WHERE run_id=?", (run_id,))
+        connection.execute(
+            "UPDATE backtest_steps SET status='running' WHERE run_id=? AND ordinal=1",
+            (run_id,),
+        )
+    ctx = multiprocessing.get_context("spawn")
+    proc = ctx.Process(target=time.sleep, args=(30,))
+    proc.start()
+    backtest_control.register_worker(run_id, proc)
+    try:
+        stopped = client.post(f"/api/backtests/{run_id}/stop")
+        assert stopped.status_code == 200
+        body = stopped.json()
+        assert body["status"] == "failed"
+        assert "强行停止" in str(body.get("error_message") or body.get("error") or "")
+        proc.join(timeout=2)
+        assert not proc.is_alive()
+        assert client.get("/api/health").status_code == 200
+        status = client.get(f"/api/backtests/{run_id}/status")
+        assert status.json()["status"] == "failed"
+    finally:
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=1)
+
+
+def test_api_force_stop_missing_run_is_404(tmp_path):
+    s, db = setup_env(tmp_path)
+    client = TestClient(create_app(s, db))
+    response = client.post("/api/backtests/20260909-010000-0001/stop")
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "BACKTEST_NOT_FOUND"
+
+
 def test_execute_runs_ordered_dag_and_keeps_artifacts(tmp_path):
     s, db = setup_env(tmp_path)
     svc = BacktestWorkbenchService(s, db)
@@ -309,7 +384,7 @@ def test_limit_block_is_recorded_as_unfilled_or_cancelled(tmp_path):
     assert result["trades"][0]["status"] == "unfilled"
     assert result["metrics"]["unfilled_count"] == 1
 
-    raw_cancel = {**raw, "submission_token": "cancel-token", "unfilled_policy": "cancel", "acknowledge_test_reuse": True}
+    raw_cancel = {**raw, "submission_token": "cancel-token", "unfilled_policy": "cancel"}
     cancel_run = svc.submit(raw_cancel)
     cancelled = BacktestJobService(s, db).execute(cancel_run["run_id"])
     assert cancelled["trades"] == []
@@ -471,14 +546,12 @@ def test_validate_defaults_random_seed_into_hyperparameters(tmp_path):
     assert out["hyperparameters"]["random_seed"] == 99
 
 
-def test_submit_requires_ack_when_same_test_window_already_completed(tmp_path):
+def test_submit_records_test_usage_without_requiring_ack(tmp_path):
     s, db = setup_env(tmp_path)
     svc = BacktestWorkbenchService(s, db)
     first = svc.submit(config("tok-a"))
     BacktestJobService(s, db).execute(first["run_id"])
-    with pytest.raises(ValueError, match="test"):
-        svc.submit(config("tok-b"))
-    reused = svc.submit({**config("tok-c"), "acknowledge_test_reuse": True})
+    reused = svc.submit(config("tok-b"))
     assert reused["run_id"] != first["run_id"]
     assert reused["config"]["test_usage_count"] >= 1
 

@@ -161,6 +161,72 @@ def _passes_four_conditions(row: pd.Series, params: dict[str, Any]) -> bool:
     return True
 
 
+def _truthy_series(values: pd.Series) -> pd.Series:
+    if pd.api.types.is_bool_dtype(values):
+        return values.fillna(False)
+    numeric = pd.to_numeric(values, errors="coerce")
+    if not numeric.isna().all():
+        flagged = numeric.fillna(0).ne(0)
+        text = values.astype(str).str.strip().str.lower()
+        return flagged | text.isin({"1", "true", "t", "yes", "y"})
+    text = values.astype(str).str.strip().str.lower()
+    return text.isin({"1", "true", "t", "yes", "y"})
+
+
+def _normalize_date_series(values: pd.Series) -> pd.Series:
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return values.dt.normalize()
+    text = values.astype(str).str.strip()
+    empty = text.eq("") | text.str.lower().isin({"nan", "none", "nat"})
+    parsed = pd.to_datetime(text.str.slice(0, 8), format="%Y%m%d", errors="coerce")
+    hyphen = text.str.contains("-", regex=False)
+    parsed = parsed.where(~hyphen, pd.to_datetime(text, errors="coerce"))
+    return parsed.where(~empty)
+
+
+def _passes_stock_filters_mask(pool: pd.DataFrame, trade_date: pd.Timestamp, params: dict[str, Any]) -> pd.Series:
+    mask = pd.Series(True, index=pool.index)
+    if "st_status" in pool.columns:
+        st_status = pd.to_numeric(pool["st_status"], errors="coerce")
+        mask &= st_status.isna() | st_status.eq(0)
+    has_suspend_column = False
+    suspended = pd.Series(False, index=pool.index)
+    for key in ("is_suspended", "suspended"):
+        if key in pool.columns:
+            has_suspend_column = True
+            suspended = suspended | _truthy_series(pool[key])
+    if not has_suspend_column:
+        mask &= False
+    else:
+        mask &= ~suspended
+    if "delist_date" in pool.columns:
+        delist = _normalize_date_series(pool["delist_date"])
+        mask &= delist.isna() | (trade_date < delist)
+    if "list_date" in pool.columns:
+        listed = _normalize_date_series(pool["list_date"])
+        list_days = (trade_date - listed).dt.days
+        mask &= listed.notna() & (list_days > params["min_list_days"])
+    else:
+        mask &= False
+    mask &= pool["instrument"].map(is_main_sme_chinext)
+    if "amount" in pool.columns:
+        amount = pd.to_numeric(pool["amount"], errors="coerce")
+        mask &= amount.isna() | (amount > params["min_amount_yuan"])
+    return mask.fillna(False)
+
+
+def _passes_four_conditions_mask(pool: pd.DataFrame, params: dict[str, Any]) -> pd.Series:
+    mask = pool["ema_20"].notna() & pool["ema_60"].notna()
+    mask &= pool["ema_20"] > pool["ema_60"]
+    mask &= pool["macd_dif"].notna() & pool["macd_dea"].notna() & pool["macd_hist"].notna()
+    mask &= (pool["macd_dif"] > pool["macd_dea"]) & (pool["macd_hist"] > 0)
+    mask &= pool["rsi"].notna()
+    mask &= (pool["rsi"] >= params["rsi_low"]) & (pool["rsi"] <= params["rsi_high"])
+    mask &= pool["boll_mid"].notna()
+    mask &= pool["hfq_close"] > pool["boll_mid"]
+    return mask.fillna(False)
+
+
 def _rank_candidates(candidates: pd.DataFrame) -> pd.DataFrame:
     ranked = candidates.copy()
     ranked["rank_score"] = (
@@ -207,22 +273,20 @@ def generate_signals(
         if pool.empty:
             continue
 
-        mask = pool.apply(lambda row: _passes_stock_filters(row, trade_date, cfg), axis=1)
-        pool = pool.loc[mask]
-        mask = pool.apply(lambda row: _passes_four_conditions(row, cfg), axis=1)
-        pool = pool.loc[mask]
+        pool = pool.loc[_passes_stock_filters_mask(pool, trade_date, cfg)]
+        pool = pool.loc[_passes_four_conditions_mask(pool, cfg)]
         if pool.empty:
             continue
 
         ranked = _rank_candidates(pool)
         picks = ranked.head(int(cfg["top_n"]))
-        for _, row in picks.iterrows():
+        for row in picks.itertuples(index=False):
             output_rows.append(
                 {
                     "date": trade_date,
-                    "instrument": row["instrument"],
+                    "instrument": row.instrument,
                     "weight": float(cfg["target_weight"]),
-                    "rank_score": float(row["rank_score"]),
+                    "rank_score": float(row.rank_score),
                 }
             )
 

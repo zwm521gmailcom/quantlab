@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>QuantLab · 运行记录</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20260906ai">
+  <link rel="stylesheet" href="/assets/app.css?v=20260908leg">
 </head>
 <body>
 <div class="shell">
@@ -18,19 +18,34 @@
       <div id="summary" aria-live="polite">加载中…</div>
     </section>
     <section class="panel">
+      <h3>模块耗时</h3>
+      <p class="muted" id="timing-total">总耗时：—</p>
+      <div id="step-timing"></div>
+    </section>
+    <section class="panel">
       <div class="equity-head">
         <h3>权益曲线</h3>
-        <div id="equity-legend" class="equity-legend" hidden>
-          <span><i class="swatch swatch-strategy"></i>组合</span>
-          <span><i class="swatch swatch-bench"></i><span id="equity-bench-name">基准</span></span>
-        </div>
+        <div id="equity-legend" class="equity-legend" hidden></div>
       </div>
       <div id="equity-chart" class="equity-chart" role="img" aria-label="组合权益与基准曲线"></div>
     </section>
     <section class="panel">
-      <h3>训练折</h3>
-      <p class="muted" id="train-protocol">训练方式：—</p>
-      <div id="train-folds"></div>
+      <div class="equity-head">
+        <h3>按流通市值分层</h3>
+        <div id="cap-equity-legend" class="equity-legend" hidden></div>
+      </div>
+      <p class="muted">每个交易日按流通市值分成五档，档内用同一套分数做同样的 Top N。旧运行没有这项。</p>
+      <div id="cap-equity-chart" class="equity-chart segment-chart" role="img" aria-label="流通市值分层权益曲线"></div>
+      <div id="cap-equity-table"></div>
+    </section>
+    <section class="panel">
+      <div class="equity-head">
+        <h3>按换手分层</h3>
+        <div id="turn-equity-legend" class="equity-legend" hidden></div>
+      </div>
+      <p class="muted">每个交易日按换手率分成五档，档内同样 Top N。旧运行没有这项。</p>
+      <div id="turn-equity-chart" class="equity-chart segment-chart" role="img" aria-label="换手分层权益曲线"></div>
+      <div id="turn-equity-table"></div>
     </section>
     <section class="panel">
       <h3>每月 Rank IC / NDCG@10</h3>
@@ -143,6 +158,38 @@ function addLine(chart, color) {
   return chart.addSeries(window.LightweightCharts.LineSeries, {color, lineWidth: 2});
 }
 
+function bindChartLegend(legend, entries) {
+  if (!legend) return;
+  legend.replaceChildren();
+  if (!entries.length) {
+    legend.hidden = true;
+    return;
+  }
+  legend.hidden = false;
+  entries.forEach((entry) => {
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "equity-legend-toggle";
+    toggle.setAttribute("aria-pressed", "true");
+    toggle.setAttribute("aria-label", "隐藏 " + entry.label);
+    toggle.title = "点击隐藏";
+    const swatch = document.createElement("i");
+    swatch.className = "swatch";
+    swatch.style.background = entry.color;
+    toggle.append(swatch, document.createTextNode(entry.label));
+    toggle.addEventListener("click", () => {
+      const visible = toggle.getAttribute("aria-pressed") !== "false";
+      if (entry.series && typeof entry.series.setData === "function") {
+        entry.series.setData(visible ? [] : entry.points);
+      }
+      toggle.setAttribute("aria-pressed", String(!visible));
+      toggle.setAttribute("aria-label", (visible ? "显示 " : "隐藏 ") + entry.label);
+      toggle.title = visible ? "点击显示" : "点击隐藏";
+    });
+    legend.append(toggle);
+  });
+}
+
 function chartTheme() {
   return (window.qlTheme || {chartColors: () => ({bg: "#f3f4f0", text: "#1e2a24", grid: "#d2d7cf", border: "#c3c9c0"})}).chartColors();
 }
@@ -183,19 +230,109 @@ function renderEquity(raw, benchmarkLabel) {
       timeScale: {borderColor: next.border},
     });
   });
-  addLine(chart, "#c4622d").setData(curve.map((row) => ({time: chartTime(row.date), value: Number(row.equity)})));
+  const strategy = addLine(chart, "#c4622d");
+  const strategyPoints = curve.map((row) => ({time: chartTime(row.date), value: Number(row.equity)}));
+  strategy.setData(strategyPoints);
+  const legendEntries = [{series: strategy, points: strategyPoints, label: "组合", color: "#c4622d"}];
   const bench = (raw && raw.benchmark_curve) || [];
   if (bench.length) {
-    addLine(chart, "#2f6a4a").setData(bench.map((row) => ({time: chartTime(row.date), value: Number(row.equity)})));
-    if (legend) {
-      legend.hidden = false;
-      const name = q("equity-bench-name");
-      if (name) name.textContent = benchmarkLabel || "基准";
-    }
-  } else if (legend) {
-    legend.hidden = true;
+    const benchSeries = addLine(chart, "#2f6a4a");
+    const benchPoints = bench.map((row) => ({time: chartTime(row.date), value: Number(row.equity)}));
+    benchSeries.setData(benchPoints);
+    legendEntries.push({series: benchSeries, points: benchPoints, label: benchmarkLabel || "基准", color: "#2f6a4a"});
   }
+  bindChartLegend(legend, legendEntries);
   chart.timeScale().fitContent();
+}
+
+const SEGMENT_COLORS = ["#6b4c9a", "#3d7ea6", "#4d8f6a", "#c4a035", "#c4622d"];
+
+function formatSegmentReturn(value) {
+  if (value == null || value === "") return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return (number * 100).toFixed(2) + "%";
+}
+
+function renderSegmentDimension(raw, key, chartId, legendId, tableId, emptyText) {
+  const el = q(chartId);
+  const legend = q(legendId);
+  const tableHost = q(tableId);
+  if (!el) return;
+  const dimension = raw && raw.segment_curves && raw.segment_curves[key];
+  const buckets = (dimension && dimension.buckets) || [];
+  const ready = dimension && dimension.status === "available" && buckets.some((item) => (item.equity_curve || []).length);
+  if (!ready || typeof window.LightweightCharts === "undefined") {
+    el.textContent = emptyText;
+    if (legend) legend.hidden = true;
+    if (tableHost) tableHost.replaceChildren();
+    return;
+  }
+  el.textContent = "";
+  const colors = chartTheme();
+  const chart = window.LightweightCharts.createChart(el, {
+    autoSize: true,
+    height: 260,
+    layout: {
+      background: {type: window.LightweightCharts.ColorType.Solid, color: colors.bg},
+      textColor: colors.text,
+      fontSize: 12,
+    },
+    grid: {vertLines: {color: colors.grid}, horzLines: {color: colors.grid}},
+    rightPriceScale: {borderColor: colors.border, scaleMargins: {top: 0.08, bottom: 0.08}},
+    timeScale: {borderColor: colors.border, timeVisible: false, secondsVisible: false},
+    localization: {locale: "zh-CN", dateFormat: "yyyy-MM-dd"},
+    handleScroll: false,
+    handleScale: false,
+  });
+  const legendEntries = [];
+  buckets.forEach((item, index) => {
+    const curve = item.equity_curve || [];
+    if (!curve.length) return;
+    const color = SEGMENT_COLORS[index % SEGMENT_COLORS.length];
+    const series = addLine(chart, color);
+    const points = curve.map((row) => ({time: chartTime(row.date), value: Number(row.equity)}));
+    series.setData(points);
+    legendEntries.push({series, points, label: item.label || ("Q" + (index + 1)), color});
+  });
+  bindChartLegend(legend, legendEntries);
+  chart.timeScale().fitContent();
+  if (tableHost) {
+    const table = document.createElement("table");
+    table.className = "fold-table";
+    table.innerHTML = "<thead><tr><th>分档</th><th>累计收益</th><th>成交笔数</th></tr></thead>";
+    const body = document.createElement("tbody");
+    buckets.forEach((item) => {
+      const tr = document.createElement("tr");
+      [item.label || "—", formatSegmentReturn(item.total_return), item.trade_count == null ? "—" : String(item.trade_count)].forEach((value) => {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.append(td);
+      });
+      body.append(tr);
+    });
+    table.append(body);
+    tableHost.replaceChildren(table);
+  }
+}
+
+function renderSegmentCurves(raw) {
+  renderSegmentDimension(
+    raw,
+    "by_float_market_cap",
+    "cap-equity-chart",
+    "cap-equity-legend",
+    "cap-equity-table",
+    "这次没有市值分层净值。新回测会按当天流通市值分成五档，档内用同样的 Top N。",
+  );
+  renderSegmentDimension(
+    raw,
+    "by_turn",
+    "turn-equity-chart",
+    "turn-equity-legend",
+    "turn-equity-table",
+    "这次没有换手分层净值。新回测会按当天换手分成五档，档内用同样的 Top N。",
+  );
 }
 
 function traceHtml(list) {
@@ -249,73 +386,6 @@ function ruleStrategyLabel(id) {
   return id || "—";
 }
 
-function formatTrainWindow(start, end) {
-  if (!start && !end) return "—";
-  return (start || "—") + " 至 " + (end || "—");
-}
-
-function collectTrainFolds(d, c) {
-  const metrics = d.metrics_raw || {};
-  const model = metrics.model || {};
-  const nested = model.walk_forward && model.walk_forward.folds;
-  const folds = metrics.folds || c.folds || nested || model.folds || [];
-  if (Array.isArray(folds) && folds.length) return folds;
-  const train = c.train || {};
-  const start = model.train_start || train.date_from;
-  const end = model.train_end || train.date_to;
-  const rows = model.train_rows;
-  if (start || end || rows != null) {
-    return [{month: "1", train_start: start, train_end: end, train_rows: rows, predict_from: c.test && c.test.date_from, predict_to: c.test && c.test.date_to}];
-  }
-  return [];
-}
-
-function renderTrainFolds(d, c) {
-  if (isRuleSignal(c)) {
-    q("train-protocol").textContent = "训练方式：规则信号（不训练）";
-    const target = q("train-folds");
-    target.replaceChildren();
-    target.textContent = "规则策略直接生成信号，不经模型训练折次。";
-    return;
-  }
-  const metrics = d.metrics_raw || {};
-  const model = metrics.model || {};
-  const walkMeta = model.walk_forward || {};
-  const hp = c.hyperparameters || {};
-  const walk = c.walk_forward || hp.walk_forward || walkMeta.mode || "once";
-  const lookback = c.train_lookback_months || c.train_period_months || hp.train_lookback_months || hp.train_period_months || walkMeta.train_period_months;
-  const testPeriod = c.test_period_months || hp.test_period_months || walkMeta.test_period_months;
-  const rolling = walk === "lookback" || walk === "rolling" || walk === "monthly";
-  q("train-protocol").textContent = "训练方式：" + walkForwardLabel(walk) + (rolling ? (" · 回看 " + (lookback || "—") + " 个月 · 回测周期 " + (testPeriod || "—") + " 个月") : "");
-  const target = q("train-folds");
-  const folds = collectTrainFolds(d, c);
-  target.replaceChildren();
-  if (!folds.length) {
-    target.textContent = "这次没有记下折次。一次训练会在整段训练集上拟合；定长回看会按月列出每一折。";
-    return;
-  }
-  const table = document.createElement("table");
-  table.className = "fold-table";
-  table.innerHTML = "<thead><tr><th>哪一折</th><th>训练区间</th><th>训练行数</th><th>预测区间</th></tr></thead>";
-  const body = document.createElement("tbody");
-  folds.forEach((fold, index) => {
-    const tr = document.createElement("tr");
-    [
-      fold.month || fold.fold || String(index + 1),
-      formatTrainWindow(fold.train_start, fold.train_end),
-      fold.train_rows == null || fold.train_rows === "" ? "—" : String(fold.train_rows),
-      formatTrainWindow(fold.predict_from, fold.predict_to),
-    ].forEach((value) => {
-      const td = document.createElement("td");
-      td.textContent = value;
-      tr.append(td);
-    });
-    body.append(tr);
-  });
-  table.append(body);
-  target.append(table);
-}
-
 function formatRankMetric(value) {
   if (value == null || value === "") return "—";
   const number = Number(value);
@@ -356,6 +426,46 @@ function formatYearMetric(value, percent) {
   return percent ? (number * 100).toFixed(2) + "%" : number.toFixed(4);
 }
 
+const STEP_LABELS = {
+  snapshot_validation: "快照校验",
+  model_training: "模型训练",
+  prediction: "预测打分",
+  positions: "生成仓位",
+  execution: "撮合成交",
+  metrics: "指标汇总",
+};
+function renderStepTiming(d) {
+  const total = q("timing-total");
+  const target = q("step-timing");
+  if (!target) return;
+  const timing = d.timing || {};
+  if (total) total.textContent = "总耗时：" + (timing.duration_display || "—");
+  const rows = d.dag || [];
+  target.replaceChildren();
+  if (!rows.length) {
+    target.textContent = "这次没有记下各模块时间。";
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "fold-table";
+  table.innerHTML = "<thead><tr><th>模块</th><th>耗时</th></tr></thead>";
+  const body = document.createElement("tbody");
+  rows.forEach((step) => {
+    const tr = document.createElement("tr");
+    [
+      step.step_label || STEP_LABELS[step.step_name] || step.step_name || "—",
+      step.duration_display || "—",
+    ].forEach((value) => {
+      const td = document.createElement("td");
+      td.textContent = value;
+      tr.append(td);
+    });
+    body.append(tr);
+  });
+  table.append(body);
+  target.append(table);
+}
+
 function renderAnnualSummary(d) {
   const target = q("annual-summary");
   if (!target) return;
@@ -392,7 +502,8 @@ async function load() {
   }
   q("title").textContent = d.name + " · 运行记录";
   const fail = d.status === "failed" ? ((d.failure && d.failure.reason) || d.error_message || "回测没有跑完") : "";
-  q("identity").textContent = d.run_id + " · " + d.status_name + " · 创建 " + d.created_at + (d.finished_at ? " · 完成 " + d.finished_at : "");
+  const totalText = d.timing && d.timing.duration_display && d.timing.duration_display !== "—" ? " · 总耗时 " + d.timing.duration_display : "";
+  q("identity").textContent = d.run_id + " · " + d.status_name + " · 创建 " + d.created_at + (d.finished_at ? " · 完成 " + d.finished_at : "") + totalText;
   const c = d.configuration || {};
   q("summary").innerHTML = (fail ? `<p class="state error">${esc(fail)}</p>` : "")
     + Object.entries(d.metrics).map(([k, v]) => `<span class="metric"><b>${esc(metricLabels[k] || k)}</b> ${esc(v.display)}</span>`).join("")
@@ -402,6 +513,14 @@ async function load() {
     renderEquity(d.metrics_raw, d.benchmark);
   } catch (error) {
     q("equity-chart").textContent = "未生成曲线";
+  }
+  try {
+    renderSegmentCurves(d.metrics_raw);
+  } catch (error) {
+    const cap = q("cap-equity-chart");
+    const turn = q("turn-equity-chart");
+    if (cap) cap.textContent = "这次没有市值分层净值。";
+    if (turn) turn.textContent = "这次没有换手分层净值。";
   }
   const isRule = isRuleSignal(c);
   const snapshot = [
@@ -446,9 +565,9 @@ async function load() {
   if (raw.flat_days != null) snapshot.push(["完全空仓天数", String(raw.flat_days)]);
   if (raw.membership_asof != null) snapshot.push(["成分 as-of", formatRuleRawMetric("membership_asof", raw.membership_asof)]);
   q("config-snapshot").innerHTML = traceHtml(snapshot.map(([label, value]) => [true, label, value]));
-  renderTrainFolds(d, c);
   renderMonthlyRanking(d);
   renderAnnualSummary(d);
+  renderStepTiming(d);
   const folds = q("config-folds");
   folds.replaceChildren();
   appendJsonFold(folds, "运行配置", d.configuration, "configuration");

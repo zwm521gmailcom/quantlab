@@ -64,6 +64,12 @@ def _ungroup(result: pd.Series) -> pd.Series:
     return result
 
 
+def finite_factor_values(values: Any) -> pd.Series:
+    series = values if isinstance(values, pd.Series) else pd.Series(values, dtype="float64")
+    series = pd.to_numeric(series, errors="coerce")
+    return series.mask(~series.replace([float("inf"), float("-inf")], pd.NA).notna())
+
+
 def grouped_rolling(source: pd.Series, keys: Any, window: int, how: str) -> pd.Series:
     values = pd.to_numeric(source, errors="coerce").to_numpy(dtype=float, copy=False)
     out = np.full(len(values), np.nan)
@@ -412,8 +418,7 @@ class ManualFactorService:
             request.get("date_to"),
             markets=request.get("markets") or None,
         )
-        value = pd.Series(_eval(parsed.tree, frame), index=frame.index, dtype="float64")
-        value = value.mask(~value.replace([float("inf"), float("-inf")], pd.NA).notna())
+        value = finite_factor_values(_eval(parsed.tree, frame))
         result = pd.DataFrame(
             {
                 "date": frame.get("date", frame.get("trade_date")),

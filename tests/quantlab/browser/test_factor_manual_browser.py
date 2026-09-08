@@ -10,4 +10,6 @@ def test_manual_factor_page_exposes_safe_authoring_controls(browser_server: str,
     assert page.locator("#manual-factor-form").is_visible()
     assert page.get_by_role("button", name="校验并预览").is_visible()
     assert page.get_by_role("button", name="保存草稿").is_visible()
+    assert page.get_by_role("button", name="计算验证并入库").is_visible()
+    page.locator("#canonical-factor-pack-list").get_by_text("20 日动量").wait_for()
     assert "eval(" not in page.content()

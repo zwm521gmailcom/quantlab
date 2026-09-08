@@ -8,7 +8,8 @@ def test_backtest_new_shows_pretrade_formulas_and_seed(browser_server: str, page
     expect(page.locator("#pretrade-benchmark-list")).to_be_visible()
     expect(page.locator("#open-filter-list")).to_be_visible()
     expect(page.locator("#random-seed")).to_have_value("123")
-    expect(page.locator("#acknowledge-test-reuse")).to_have_count(1)
+    expect(page.locator("#test-usage-note")).to_be_visible()
+    expect(page.locator("#acknowledge-test-reuse")).to_have_count(0)
     expect(page.locator("#train-close-gt-ma200")).to_have_count(0)
     stock_exprs = page.locator("#pretrade-stock-list .filter-expr-input").evaluate_all(
         "nodes => nodes.map(node => node.value)"

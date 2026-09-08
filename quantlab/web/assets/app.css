@@ -347,10 +347,13 @@ main, .card { min-width: 0; }
 .factor-calculation-row .factor-header span { font-weight: 700; }
 .factor-storage { color: var(--color-text-secondary); font-size: 13px; }
 .config-block { max-width: 100%; }
-#settings-form { display: grid; gap: 16px; min-width: 0; }
+#settings-form, #compute-form { display: grid; gap: 16px; min-width: 0; }
 .settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
 .settings-fields label { display: grid; gap: 6px; min-width: 0; color: var(--color-text-secondary); font-size: 13px; }
-.settings-fields input { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); }
+.settings-fields input, .settings-fields select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); }
+.settings-fields .field-help { color: var(--color-text-muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
+.settings-fields .field-help code { font-size: 11px; }
+.settings-help, .card > p.muted { margin: 0 0 14px; color: var(--color-text-muted); font-size: 12px; line-height: 1.65; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 @media (max-width: 560px) { .settings-fields { grid-template-columns: 1fr; } .settings-actions button { flex: 1 1 160px; } }
 
@@ -425,6 +428,7 @@ main, .card { min-width: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: 9px; }
 .btn { display: inline-block; min-height: 36px; padding: 9px 13px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); font-weight: 600; text-decoration: none; cursor: pointer; }
 .btn.primary { border-color: var(--color-primary); background: var(--color-primary); color: var(--color-text-inverse); }
+.btn.danger { border-color: var(--color-danger); background: var(--color-danger-bg); color: var(--color-danger); }
 .root { display: flex; align-items: center; gap: 11px; margin-bottom: 15px; padding: 13px 15px; border-radius: var(--radius-md); background: var(--color-sidebar-bg); color: var(--color-sidebar-text); }
 .root b { color: var(--color-text-inverse); font-size: 12px; }
 .root code { overflow: hidden; color: var(--color-sidebar-muted); font: 11px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
@@ -559,6 +563,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 .factor-pagination { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--color-text-muted); font-size: 12px; }
 .factor-pagination button { min-height: 30px; padding: 4px 10px; }
+.factor-page-size { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--color-text-muted); }
+.factor-page-size select { min-height: 30px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); font: inherit; }
 
 .factor-category { color: var(--color-text-secondary); font-size: 12px; }
 
@@ -817,10 +823,30 @@ main .archive-pagination button:not([class]):disabled { color: var(--color-text-
 .equity-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
 .equity-head h3 { margin: 0; }
 .equity-chart { height: 280px; }
-.equity-legend { display: flex; flex-wrap: wrap; gap: 14px; color: var(--color-text-secondary); font-size: 12px; }
+.equity-legend { display: flex; flex-wrap: wrap; gap: 8px; color: var(--color-text-secondary); font-size: 12px; }
+.equity-legend[hidden] { display: none; }
+.equity-legend-toggle {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 4px;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  line-height: 1.25;
+}
+.equity-legend-toggle:hover { border-color: var(--color-primary); color: var(--color-text); }
+.equity-legend-toggle[aria-pressed="false"] { opacity: .42; text-decoration: line-through; }
+.equity-legend-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
+.equity-legend-toggle .swatch { margin-right: 0; }
 .swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 1px; vertical-align: -1px; }
 .swatch-strategy { background: var(--color-primary); }
 .swatch-bench { background: var(--color-ok); }
+.segment-chart { height: 260px; }
+.segment-swatch { display: inline-block; width: 10px; height: 10px; margin-right: 6px; border-radius: 1px; vertical-align: -1px; }
 
 html.dark .card, html.dark .panel, html.dark .model-card, html.dark .factor-job-card,
 html.dark .factor-form-section {
@@ -840,6 +866,7 @@ html.dark button.primary,
 html.dark button.factor-run-analysis {
   background: var(--color-primary); color: var(--color-text-inverse); border-color: var(--color-primary);
 }
+html.dark .btn.danger { background: var(--color-danger-bg); color: var(--color-danger); border-color: var(--color-danger); }
 html.dark main button:not([class]) {
   background: var(--color-bg-card); color: var(--color-text); border-color: var(--color-border);
 }
@@ -882,3 +909,58 @@ html.dark .field-picker legend { color: var(--color-text-muted); }
 html.dark .field-picker label { color: var(--color-text); }
 html.dark .state { background: var(--color-bg-input); color: var(--color-text-secondary); }
 html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--color-border-lighter, var(--color-border)); }
+
+.plan-pick { display: grid; gap: 6px; margin: 16px 0 8px; max-width: min(480px, 100%); color: var(--color-text-secondary); font-size: 13px; }
+.plan-pick select, .plan-pick .select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); }
+.plan-table { margin-top: 8px; max-width: 100%; }
+#plan-state.state { margin: 8px 0 4px; padding: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; }
+.main.plan-page {
+  max-width: none;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.plan-page .top { flex-wrap: wrap; gap: 12px 18px; }
+.plan-page .top > div:first-child { min-width: 0; flex: 1 1 280px; }
+.plan-page .sub { max-width: 46em; }
+.plan-page .archive-name { overflow-wrap: break-word; }
+.archive-grid.plan-grid {
+  width: 100%;
+  min-width: 900px;
+  table-layout: auto;
+}
+.archive-grid.plan-grid th:nth-child(n),
+.archive-grid.plan-grid td:nth-child(n) { width: auto; }
+.archive-grid.plan-grid th:nth-child(1),
+.archive-grid.plan-grid td:nth-child(1) {
+  width: 40px; min-width: 40px; max-width: 40px;
+  padding-right: 8px; text-align: center; vertical-align: middle;
+}
+.archive-grid.plan-grid td:nth-child(2) { min-width: 148px; }
+.archive-grid.plan-grid td:nth-child(3) { width: 42%; min-width: 180px; }
+.archive-grid.plan-grid th:nth-child(n+4),
+.archive-grid.plan-grid td:nth-child(n+4) { text-align: left; }
+.archive-grid.plan-grid td:nth-child(4) { min-width: 168px; }
+.archive-grid.plan-grid td:nth-child(5) { min-width: 108px; }
+.archive-grid.plan-grid td:nth-child(6) { min-width: 64px; }
+.archive-grid.plan-grid td:nth-child(7) { min-width: 72px; }
+.archive-grid.plan-grid th:nth-child(4),
+.archive-grid.plan-grid td:nth-child(4),
+.archive-grid.plan-grid th:nth-child(5),
+.archive-grid.plan-grid td:nth-child(5),
+.archive-grid.plan-grid th:nth-child(7),
+.archive-grid.plan-grid td:nth-child(7) { white-space: nowrap; }
+.archive-grid.plan-grid th:last-child,
+.archive-grid.plan-grid td:last-child { text-align: left; }
+.archive-grid.plan-grid .archive-window div { white-space: nowrap; }
+.plan-factors { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.plan-factors span {
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.35; white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+@media (max-width: 960px) {
+  .plan-page { padding: 24px 18px 32px; }
+  .plan-page .top { flex-direction: column; align-items: stretch; }
+  .plan-page .actions { width: 100%; }
+  .plan-pick { max-width: none; }
+}

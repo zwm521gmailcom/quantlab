@@ -958,7 +958,13 @@ function factorHeaderCell(label, explanationLines) {
 
 let factorCatalogAll = [];
 let factorCatalogPage = 1;
-const FACTOR_PAGE_SIZE = 10;
+const FACTOR_PAGE_SIZES = [50, 100, 200, 500];
+
+function factorCatalogPageSize() {
+  const select = document.getElementById("factor-page-size");
+  const value = Number(select && select.value);
+  return FACTOR_PAGE_SIZES.includes(value) ? value : 50;
+}
 
 function renderFactorCatalog(items) {
   factorCatalogAll = items;
@@ -969,9 +975,10 @@ function renderFactorCatalog(items) {
     ? items.filter((item) => String(item.name || "").toLowerCase().includes(query) || String(item.factor_id || "").toLowerCase().includes(query))
     : items;
   const totalFiltered = filtered.length;
-  const pages = Math.max(1, Math.ceil(totalFiltered / FACTOR_PAGE_SIZE));
+  const pageSize = factorCatalogPageSize();
+  const pages = Math.max(1, Math.ceil(totalFiltered / pageSize));
   factorCatalogPage = Math.min(factorCatalogPage, pages);
-  items = filtered.slice((factorCatalogPage - 1) * FACTOR_PAGE_SIZE, factorCatalogPage * FACTOR_PAGE_SIZE);
+  items = filtered.slice((factorCatalogPage - 1) * pageSize, factorCatalogPage * pageSize);
   const prev = document.getElementById("factor-page-prev");
   const next = document.getElementById("factor-page-next");
   const label = document.getElementById("factor-page-label");
@@ -1045,6 +1052,7 @@ async function loadFactors() {
     document.getElementById("factor-name-search")?.addEventListener("input", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-prev")?.addEventListener("click", () => { factorCatalogPage = Math.max(1, factorCatalogPage - 1); renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-next")?.addEventListener("click", () => { factorCatalogPage += 1; renderFactorCatalog(factorCatalogAll); });
+    document.getElementById("factor-page-size")?.addEventListener("change", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
   } catch (errorValue) {
     error.textContent = `因子目录加载失败：${errorValue.message}`;
     error.classList.remove("hidden");
@@ -2316,6 +2324,7 @@ function loadManualFactorPage() {
   let draft = null;
   bindMarketMultiSelect("manual-factor-market");
   alignDatasetVersionInput("manual-factor-dataset", "manual-factor-dataset-version");
+  loadCanonicalFactorPack();
   document.getElementById("manual-factor-load-fields").addEventListener("click", async () => {
     try { const body = manualFactorBody(); const payload = await manualFactorRequest(`/api/factor-drafts/fields?dataset_id=${encodeURIComponent(body.dataset_id)}&dataset_version_id=${encodeURIComponent(body.dataset_version_id)}`, "GET"); document.getElementById("manual-factor-field-list").textContent = `登记字段：${payload.fields.join("，")}`; }
     catch (errorValue) { error.textContent = `字段加载失败：${errorValue.message}`; error.classList.remove("hidden"); }
@@ -2331,6 +2340,73 @@ function loadManualFactorPage() {
   });
   document.getElementById("manual-factor-diagnose").addEventListener("click", async () => { try { setWorkflowStep("manual-factor-steps", "diagnose"); const payload = await manualFactorRequest(`/api/factor-drafts/${encodeURIComponent(draft.factor_entity_id)}/${encodeURIComponent(draft.factor_version_id)}/diagnose`, "POST"); previewOutput.textContent = JSON.stringify(payload.preview, null, 2); result.textContent = `诊断完成：质量状态 ${payload.quality_status}`; result.classList.remove("hidden"); } catch (errorValue) { error.textContent = `诊断失败：${errorValue.message}`; error.classList.remove("hidden"); } });
   document.getElementById("manual-factor-publish").addEventListener("click", async () => { try { await manualFactorRequest(`/api/factor-drafts/${encodeURIComponent(draft.factor_entity_id)}/${encodeURIComponent(draft.factor_version_id)}/publish`, "POST"); result.textContent = "因子版本已发布。"; result.classList.remove("hidden"); setWorkflowStep("manual-factor-steps", "publish"); } catch (errorValue) { error.textContent = `发布失败：${errorValue.message}`; error.classList.remove("hidden"); } });
+}
+
+function packStatusLabel(status) {
+  if (status === "published") return "已发布";
+  if (status === "draft") return "草稿";
+  if (status === "validated") return "已验证";
+  return "未入库";
+}
+
+function renderCanonicalFactorPack(items) {
+  const list = document.getElementById("canonical-factor-pack-list");
+  if (!list) return;
+  list.textContent = "";
+  (items || []).forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "form-note";
+    row.textContent = `${item.name} · ${item.field} · ${item.formula} · ${packStatusLabel(item.status)}`;
+    list.append(row);
+  });
+}
+
+async function loadCanonicalFactorPack() {
+  const list = document.getElementById("canonical-factor-pack-list");
+  const result = document.getElementById("canonical-factor-pack-result");
+  const button = document.getElementById("canonical-factor-pack-ingest");
+  if (!list || !button) return;
+  const datasetId = document.getElementById("manual-factor-dataset")?.value?.trim() || "ds_canonical_market";
+  const datasetVersionId = document.getElementById("manual-factor-dataset-version")?.value?.trim() || "current";
+  try {
+    const payload = await manualFactorRequest("/api/factor-packs/canonical", "GET");
+    renderCanonicalFactorPack(payload.items);
+  } catch (errorValue) {
+    list.textContent = `公式包清单加载失败：${errorValue.message}`;
+  }
+  if (button.dataset.bound === "1") return;
+  button.dataset.bound = "1";
+  button.addEventListener("click", async () => {
+    try {
+      button.disabled = true;
+      result.classList.remove("hidden");
+      const listed = await manualFactorRequest("/api/factor-packs/canonical", "GET");
+      const items = listed.items || [];
+      let published = 0;
+      let skipped = 0;
+      let failed = 0;
+      for (let index = 0; index < items.length; index += 1) {
+        const item = items[index];
+        result.textContent = `正在计算验证 ${index + 1}/${items.length}：${item.name}`;
+        const payload = await manualFactorRequest("/api/factor-packs/canonical/ingest", "POST", {
+          field: item.field,
+          dataset_id: datasetId,
+          dataset_version_id: datasetVersionId,
+        });
+        const row = (payload.items || [])[0] || {};
+        if (row.status === "published") published += 1;
+        else if (row.status === "skipped") skipped += 1;
+        else failed += 1;
+      }
+      const refreshed = await manualFactorRequest("/api/factor-packs/canonical", "GET");
+      renderCanonicalFactorPack(refreshed.items);
+      result.textContent = `完成：新发布 ${published}，跳过 ${skipped}，失败 ${failed}。可在因子数据页查看 IC。`;
+    } catch (errorValue) {
+      result.textContent = `入库失败：${errorValue.message}`;
+    } finally {
+      button.disabled = false;
+    }
+  });
 }
 
 function miningBody() {
