@@ -279,9 +279,9 @@ button.factor-run-analysis {
 .kline-header > span { background: transparent; border-bottom: 1px solid var(--color-border); color: var(--color-text-secondary); font-family: var(--font-display); }
 .quality-summary { display: grid; gap: 5px; color: var(--color-text-secondary); }
 .quality-summary strong { color: var(--color-ok); }
-.factor-table { overflow-x: auto; margin-top: 18px; }
-.factor-row { display: grid; grid-template-columns: 1.05fr 1.2fr .8fr .8fr .8fr .8fr .8fr .8fr 1.45fr .8fr; min-width: 1360px; gap: 10px; align-items: center; padding: 12px 8px; border-bottom: 1px solid var(--color-border-light); }
-.factor-row span, .factor-row a { color: var(--color-text-secondary); font-size: 13px; }
+.factor-table { overflow-x: auto; margin-top: 18px; max-width: 100%; }
+.factor-row { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) minmax(0, .75fr) minmax(0, .7fr) minmax(0, .8fr) minmax(0, .8fr) minmax(0, .9fr) minmax(0, .8fr) minmax(0, 1.4fr) minmax(0, .7fr); width: 100%; min-width: 760px; gap: 8px; align-items: center; padding: 12px 8px; border-bottom: 1px solid var(--color-border-light); }
+.factor-row span, .factor-row a { min-width: 0; color: var(--color-text-secondary); font-size: 13px; }
 .factor-row a { color: var(--color-primary); text-decoration: none; }
 .factor-code { color: var(--color-text-secondary); font-family: ui-monospace, monospace; font-size: 12px !important; }
 .factor-name-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -561,10 +561,25 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .factor-histogram-bar { flex: 1 0 4px; min-width: 2px; border-radius: 2px 2px 0 0; background: var(--color-primary); }
 .factor-histogram-bar:hover { background: var(--color-primary-hover); }
 
-.factor-pagination { display: flex; align-items: center; gap: 10px; margin-top: 14px; color: var(--color-text-muted); font-size: 12px; }
+.factor-pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; color: var(--color-text-muted); font-size: 12px; }
 .factor-pagination button { min-height: 30px; padding: 4px 10px; }
-.factor-page-size { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--color-text-muted); }
-.factor-page-size select { min-height: 30px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); font: inherit; }
+.factor-page-size { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; color: var(--color-text); white-space: nowrap; }
+.factor-page-size select { min-height: 30px; min-width: 72px; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); font: inherit; }
+.shell > main { min-width: 0; }
+.factor-data-page {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 32px clamp(16px, 2.4vw, 36px) 40px;
+}
+.factor-data-page .card { min-width: 0; }
+.factor-data-page .data-toolbar label { min-width: 0; flex: 1 1 160px; }
+.factor-data-page .data-toolbar .factor-page-size { flex: 0 1 220px; }
+.factor-data-page .data-toolbar input,
+.factor-data-page .data-toolbar select { width: 100%; min-width: 0; box-sizing: border-box; }
+@media (max-width: 960px) {
+  .factor-data-page { padding: 24px 16px 32px; }
+}
 
 .factor-category { color: var(--color-text-secondary); font-size: 12px; }
 
@@ -910,8 +925,10 @@ html.dark .field-picker label { color: var(--color-text); }
 html.dark .state { background: var(--color-bg-input); color: var(--color-text-secondary); }
 html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--color-border-lighter, var(--color-border)); }
 
-.plan-pick { display: grid; gap: 6px; margin: 16px 0 8px; max-width: min(480px, 100%); color: var(--color-text-secondary); font-size: 13px; }
-.plan-pick select, .plan-pick .select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); }
+.plan-pick { display: grid; gap: 6px; margin: 16px 0 8px; max-width: min(640px, 100%); color: var(--color-text-secondary); font-size: 13px; }
+.plan-pick-row { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.plan-pick-row .btn { flex: 0 0 auto; }
+.plan-pick select, .plan-pick .select { flex: 1 1 auto; width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); }
 .plan-table { margin-top: 8px; max-width: 100%; }
 #plan-state.state { margin: 8px 0 4px; padding: 0; background: transparent; color: var(--color-text-secondary); font-size: 13px; }
 .main.plan-page {
@@ -958,9 +975,7 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
   font-family: var(--font-mono); font-size: 12px; line-height: 1.35; white-space: nowrap;
   color: var(--color-text-secondary);
 }
-@media (max-width: 960px) {
-  .plan-page { padding: 24px 18px 32px; }
-  .plan-page .top { flex-direction: column; align-items: stretch; }
-  .plan-page .actions { width: 100%; }
-  .plan-pick { max-width: none; }
-}
+.plan-dialog { width: min(420px, calc(100vw - 30px)); display: grid; gap: 12px; }
+.plan-dialog label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 13px; }
+.plan-dialog .input { width: 100%; min-width: 0; }
+.plan-dialog .form-note { margin: 0; color: var(--color-text-muted); font-size: 12px; }

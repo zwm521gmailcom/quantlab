@@ -250,6 +250,7 @@ CREATE TABLE IF NOT EXISTS backtest_plans (
     plan_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('draft', 'running', 'completed', 'stopped')),
+    closed INTEGER NOT NULL DEFAULT 0 CHECK (closed IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

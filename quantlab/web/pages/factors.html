@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 因子数据</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909page">
+    <link rel="stylesheet" href="/assets/app.css?v=20260909page3">
   </head>
   <body>
     <div class="shell">
@@ -23,7 +23,7 @@
           <a href="/settings">设置</a>
         </nav>
       </aside>
-      <main>
+      <main class="factor-data-page">
         <div class="eyebrow">因子数据</div>
         <h2 id="factor-page-title">因子数据</h2>
         <section class="card" aria-live="polite">
@@ -35,11 +35,31 @@
               <label>股票 <input id="factor-symbol" type="search" placeholder="000001.SZ" autocomplete="off"></label>
               <label>开始日期 <input id="factor-date-from" type="date"></label>
               <label>结束日期 <input id="factor-date-to" type="date"></label>
+              <label class="factor-page-size">每页最大显示数量
+                <select id="factor-page-size" data-factor-page-size="1" aria-label="每页最大显示数量">
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                </select>
+              </label>
             </div>
             <p id="factor-note" class="state">因子定义与已计算任务统一管理；表格 IC 列展示所选计算任务结果，未运行时显示“未诊断”。行情来源为 data/canonical.parquet。</p>
             <div id="factor-table" class="factor-table" role="table" aria-label="正式因子目录"></div>
             <div id="factor-empty" class="state hidden">没有匹配的因子。</div>
-            <div class="factor-pagination"><button id="factor-page-prev" type="button">上一页</button><span id="factor-page-label">第 1 页</span><button id="factor-page-next" type="button">下一页</button><label class="factor-page-size">每页 <select id="factor-page-size" aria-label="每页最大显示数量"><option value="50" selected>50</option><option value="100">100</option><option value="200">200</option><option value="500">500</option></select></label></div>
+            <div class="factor-pagination">
+              <button id="factor-page-prev" type="button">上一页</button>
+              <span id="factor-page-label">第 1 页</span>
+              <button id="factor-page-next" type="button">下一页</button>
+              <label class="factor-page-size">每页最大显示数量
+                <select data-factor-page-size="1" aria-label="每页最大显示数量">
+                  <option value="50" selected>50</option>
+                  <option value="100">100</option>
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                </select>
+              </label>
+            </div>
           </div>
           <div id="factor-detail-view" class="hidden">
             <div id="factor-detail"></div>
@@ -55,6 +75,6 @@
       </main>
     </div>
     <script src="/assets/vendor/lightweight-charts.standalone.production.js"></script>
-    <script src="/assets/app.js?v=20260909page"></script>
+    <script src="/assets/app.js?v=20260909page3"></script>
   <script src="/assets/nav.js?v=20260907a"></script></body>
 </html>

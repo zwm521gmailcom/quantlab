@@ -99,11 +99,13 @@ class BacktestPlanService:
         self.workbench = workbench
         self.job = job
 
-    def list_plans(self) -> dict[str, Any]:
+    def list_plans(self, open_only: bool = False) -> dict[str, Any]:
+        sql = "SELECT plan_id FROM backtest_plans"
+        if open_only:
+            sql += " WHERE closed=0"
+        sql += " ORDER BY updated_at DESC, plan_id DESC"
         with self.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT * FROM backtest_plans ORDER BY updated_at DESC, plan_id DESC"
-            ).fetchall()
+            rows = connection.execute(sql).fetchall()
         return {"items": [self.get(row["plan_id"]) for row in rows]}
 
     def get(self, plan_id: str) -> dict[str, Any]:
@@ -121,20 +123,23 @@ class BacktestPlanService:
             "plan_id": row["plan_id"],
             "name": row["name"],
             "status": row["status"],
+            "closed": bool(row["closed"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "items": [_item_view(item) for item in items],
         }
 
     def create(self, raw: dict[str, Any]) -> dict[str, Any]:
-        name = str(raw.get("name") or "").strip() or "未命名回测计划"
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            raise ValueError("计划名称不能为空")
         items = raw.get("items") if isinstance(raw.get("items"), list) else []
         plan_id = _new_id("plan")
         stamp = _now()
         with self.database.transaction() as connection:
             connection.execute(
-                "INSERT INTO backtest_plans(plan_id, name, status, created_at, updated_at) VALUES (?,?,?,?,?)",
-                (plan_id, name, "draft", stamp, stamp),
+                "INSERT INTO backtest_plans(plan_id, name, status, closed, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                (plan_id, name, "draft", 0, stamp, stamp),
             )
         for item in items:
             if not isinstance(item, dict):
@@ -142,10 +147,43 @@ class BacktestPlanService:
             self.add_item(plan_id, item)
         return self.get(plan_id)
 
-    def add_item(self, plan_id: str, raw: dict[str, Any]) -> dict[str, Any]:
+    def _require_open(self, plan: dict[str, Any], *, allow_running: bool = False) -> None:
+        if plan["closed"]:
+            raise ValueError("closed")
+        if not allow_running and plan["status"] == "running":
+            raise ValueError("回测计划正在运行，不能改任务清单。")
+
+    def close(self, plan_id: str) -> dict[str, Any]:
         plan = self.get(plan_id)
         if plan["status"] == "running":
-            raise ValueError("回测计划正在运行，不能改任务清单。")
+            raise ValueError("计划正在运行，不能完结。")
+        if plan["closed"]:
+            raise ValueError("closed")
+        stamp = _now()
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE backtest_plans SET closed=1, updated_at=? WHERE plan_id=?",
+                (stamp, plan_id),
+            )
+        return self.get(plan_id)
+
+    def delete(self, plan_id: str) -> dict[str, Any]:
+        plan = self.get(plan_id)
+        if plan["items"]:
+            raise ValueError("not_empty")
+        if plan["status"] == "running":
+            raise ValueError("回测计划正在运行，不能删除。")
+        with self.database.transaction() as connection:
+            deleted = connection.execute(
+                "DELETE FROM backtest_plans WHERE plan_id=?", (plan_id,)
+            ).rowcount
+        if not deleted:
+            raise ValueError("backtest plan not found")
+        return {"deleted": True, "plan_id": plan_id}
+
+    def add_item(self, plan_id: str, raw: dict[str, Any]) -> dict[str, Any]:
+        plan = self.get(plan_id)
+        self._require_open(plan)
         config_raw = raw.get("config")
         if not isinstance(config_raw, dict):
             raise ValueError("config is required")
@@ -187,7 +225,7 @@ class BacktestPlanService:
         return self.get(plan_id)
 
     def set_selected(self, plan_id: str, selected: dict[str, Any]) -> dict[str, Any]:
-        self.get(plan_id)
+        self._require_open(self.get(plan_id))
         if not isinstance(selected, dict) or not selected:
             raise ValueError("selected is required")
         stamp = _now()
@@ -203,8 +241,36 @@ class BacktestPlanService:
             )
         return self.get(plan_id)
 
+    def delete_items(self, plan_id: str, item_ids: list[str] | None = None) -> dict[str, Any]:
+        plan = self.get(plan_id)
+        self._require_open(plan)
+        if plan["status"] == "running":
+            raise ValueError("回测计划正在运行，不能删任务。")
+        if item_ids is None:
+            wanted = {item["item_id"] for item in plan["items"] if item["selected"]}
+        else:
+            wanted = {str(item_id) for item_id in item_ids}
+        if not wanted:
+            raise ValueError("not_selected")
+        known = {item["item_id"] for item in plan["items"]}
+        if not wanted.issubset(known):
+            raise ValueError("backtest plan item not found")
+        stamp = _now()
+        with self.database.transaction() as connection:
+            placeholders = ",".join("?" for _ in wanted)
+            connection.execute(
+                f"DELETE FROM backtest_plan_items WHERE plan_id=? AND item_id IN ({placeholders})",
+                (plan_id, *wanted),
+            )
+            connection.execute(
+                "UPDATE backtest_plans SET updated_at=? WHERE plan_id=?",
+                (stamp, plan_id),
+            )
+        return self.get(plan_id)
+
     def delete_item(self, plan_id: str, item_id: str) -> dict[str, Any]:
         plan = self.get(plan_id)
+        self._require_open(plan)
         if plan["status"] == "running":
             raise ValueError("回测计划正在运行，不能删任务。")
         stamp = _now()
@@ -223,6 +289,7 @@ class BacktestPlanService:
 
     def start(self, plan_id: str, item_ids: list[str] | None = None) -> dict[str, Any]:
         plan = self.get(plan_id)
+        self._require_open(plan, allow_running=True)
         if plan["status"] == "running":
             raise RuntimeError("busy")
         wanted = {str(item) for item in (item_ids or [])}
