@@ -137,6 +137,118 @@ def test_second_start_is_rejected_while_plan_is_running(tmp_path: Path, monkeypa
     _wait_plan(client, plan_id, timeout=15)
 
 
+def test_create_rejects_blank_plan_name(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    created = client.post("/api/backtest-plans", json={"name": "  "})
+    assert created.status_code == 400
+    assert created.json()["error_code"] == "BACKTEST_PLAN_INVALID"
+
+
+def test_close_hides_plan_from_open_list(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    created = client.post("/api/backtest-plans", json={"name": "可算因子第一批"}).json()
+    plan_id = created["plan_id"]
+    assert created["closed"] is False
+    with database.connect() as connection:
+        info = connection.execute("PRAGMA table_info(backtest_plans)").fetchall()
+        names = {row[1] for row in info}
+        pk = {row[1] for row in info if row[5]}
+        assert "plan_id" in names
+        assert pk == {"plan_id"}
+    closed = client.post(f"/api/backtest-plans/{plan_id}/close", json={})
+    assert closed.status_code == 200
+    body = closed.json()
+    assert body["closed"] is True
+    assert body["status"] != "running"
+    listed = client.get("/api/backtest-plans").json()["items"]
+    assert any(item["plan_id"] == plan_id for item in listed)
+    opened = client.get("/api/backtest-plans", params={"open": "1"}).json()["items"]
+    assert opened == []
+
+
+def test_closed_plan_rejects_new_items_and_start(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    plan_id = client.post("/api/backtest-plans", json={"name": "要完结"}).json()["plan_id"]
+    client.post(f"/api/backtest-plans/{plan_id}/close")
+    added = client.post(
+        f"/api/backtest-plans/{plan_id}/items",
+        json={"name": "不能加", "config": config("closed")},
+    )
+    assert added.status_code == 400
+    assert added.json()["error_code"] == "BACKTEST_PLAN_CLOSED"
+    started = client.post(f"/api/backtest-plans/{plan_id}/start", json={})
+    assert started.status_code == 400
+    assert started.json()["error_code"] == "BACKTEST_PLAN_CLOSED"
+
+
+def test_empty_plan_can_be_deleted_and_plan_with_items_cannot(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    empty_id = client.post("/api/backtest-plans", json={"name": "空计划"}).json()["plan_id"]
+    filled = client.post(
+        "/api/backtest-plans",
+        json={"name": "有任务", "items": [{"name": "一笔", "config": config("keep")}]},
+    ).json()
+    blocked = client.delete(f"/api/backtest-plans/{filled['plan_id']}")
+    assert blocked.status_code == 400
+    assert blocked.json()["error_code"] == "BACKTEST_PLAN_NOT_EMPTY"
+    assert client.get(f"/api/backtest-plans/{filled['plan_id']}").status_code == 200
+    client.post(f"/api/backtest-plans/{empty_id}/close")
+    deleted = client.delete(f"/api/backtest-plans/{empty_id}")
+    assert deleted.status_code == 200
+    assert deleted.json() == {"deleted": True, "plan_id": empty_id}
+    missing = client.get(f"/api/backtest-plans/{empty_id}")
+    assert missing.status_code == 404
+    listed = client.get("/api/backtest-plans").json()["items"]
+    assert all(item["plan_id"] != empty_id for item in listed)
+    unknown = client.delete("/api/backtest-plans/plan-missing")
+    assert unknown.status_code == 404
+
+
+def test_selected_plan_items_can_be_deleted_in_bulk(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    plan = client.post(
+        "/api/backtest-plans",
+        json={
+            "name": "可删任务",
+            "items": [
+                {"name": "留着", "config": config("keep")},
+                {"name": "删掉甲", "config": config("drop-a")},
+                {"name": "删掉乙", "config": config("drop-b")},
+            ],
+        },
+    ).json()
+    keep_id = plan["items"][0]["item_id"]
+    drop_ids = [plan["items"][1]["item_id"], plan["items"][2]["item_id"]]
+    empty = client.post(f"/api/backtest-plans/{plan['plan_id']}/items/delete", json={"item_ids": []})
+    assert empty.status_code == 400
+    assert empty.json()["error_code"] == "BACKTEST_PLAN_NOTHING_SELECTED"
+    client.patch(
+        f"/api/backtest-plans/{plan['plan_id']}/items",
+        json={"selected": {keep_id: False, drop_ids[0]: True, drop_ids[1]: True}},
+    )
+    by_selection = client.post(f"/api/backtest-plans/{plan['plan_id']}/items/delete", json={})
+    assert by_selection.status_code == 200
+    remaining = [item["item_id"] for item in by_selection.json()["items"]]
+    assert remaining == [keep_id]
+    all_ids = [keep_id]
+    cleared = client.post(
+        f"/api/backtest-plans/{plan['plan_id']}/items/delete",
+        json={"item_ids": all_ids},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["items"] == []
+    closed_id = client.post("/api/backtest-plans", json={"name": "完结后不能删任务"}).json()["plan_id"]
+    client.post(f"/api/backtest-plans/{closed_id}/close")
+    blocked = client.post(f"/api/backtest-plans/{closed_id}/items/delete", json={"item_ids": ["item-x"]})
+    assert blocked.status_code == 400
+    assert blocked.json()["error_code"] == "BACKTEST_PLAN_CLOSED"
+
+
 def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None:
     settings, database = setup_env(tmp_path)
     client = TestClient(create_app(settings, database))
@@ -147,6 +259,23 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert "全选" in html
     assert "开始" in html
     assert "停止计划" in html
+    assert 'id="new-plan"' in html
+    assert "新建计划" in html
+    assert 'id="plan-dialog"' in html
+    assert 'id="plan-name"' in html
+    assert 'id="close-plan"' in html
+    assert "完结" in html
+    assert 'id="delete-plan"' in html
+    assert "删除" in html
+    assert 'id="delete-items"' in html
+    assert "删除任务" in html
+    assert "/api/backtest-plans/" in html and "/items/delete" in html
     workbench = client.get("/backtests/new").text
     assert "加入计划" in workbench
     assert "/backtests/plan" in workbench
+    identity = workbench.split("运行身份", 1)[1].split("因子组合", 1)[0]
+    assert 'id="identity-plan"' in identity
+    assert 'label for="identity-plan">回测计划（选填）' in identity
+    assert ">不选择<" in identity
+    assert "没有未完结计划（选填）" in workbench
+    assert "/api/backtest-plans?open=1" in workbench

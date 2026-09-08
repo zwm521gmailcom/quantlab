@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 回测中心</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909plan">
+    <link rel="stylesheet" href="/assets/app.css?v=20260909plan9">
   </head>
   <body>
     <div class="shell">
@@ -17,7 +17,7 @@
         <div id="banner" class="banner"><strong>配置状态：</strong><span id="banner-text">新建回测。名称现在填写；保存配置不会自动运行，点击“开始回测”后才创建运行 ID。</span></div>
         <div class="layout">
           <div class="layout-col">
-            <section class="panel" data-panel-id="identity"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>运行身份</h2><span class="tag">必填名称</span></div><div class="form"><div class="field"><label for="name">回测名称</label><input class="input" id="name" value="未命名回测"></div><div class="field"><label for="run-id">运行 ID</label><div class="id-preview" id="run-id">开始回测后由系统生成：YYYYMMDD-HHMMSS-序号</div></div><div class="field wide"><label for="note">备注</label><input class="input" id="note" value="用于本地回测与 BQ 结果对比"></div></div></section>
+            <section class="panel" data-panel-id="identity"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>运行身份</h2><span class="tag">必填名称</span></div><div class="form"><div class="field"><label for="name">回测名称</label><input class="input" id="name" value="未命名回测"></div><div class="field"><label for="identity-plan">回测计划（选填）</label><select class="select" id="identity-plan"><option value="">不选择</option></select></div><div class="field"><label for="run-id">运行 ID</label><div class="id-preview" id="run-id">开始回测后由系统生成：YYYYMMDD-HHMMSS-序号</div></div><div class="field wide"><label for="note">备注</label><input class="input" id="note" value="用于本地回测与 BQ 结果对比"></div></div></section>
             <section class="panel" data-panel-id="factors"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>因子组合</h2><span class="tag">模块 1</span></div><div class="form"><div class="field wide"><label for="factor-search">因子组合</label><div class="factor-combo" id="factors"><span class="factor-combo-chips" id="factor-chips"></span><input class="factor-combo-input" id="factor-search" type="text" placeholder="输入名称或字段，回车添加；也可点选多项" autocomplete="off" aria-autocomplete="list"><div class="factor-combo-menu hidden" id="factor-menu" role="listbox"></div></div><p class="form-note">可多选。同一张标准行情宽表带上这些因子后，下面训练、回测各切一份。</p></div><div class="field wide"><label for="dataset">研究数据版本</label><select class="select" id="dataset"><option value="ds_canonical_market">从已发布因子加载…</option></select><p class="form-note">同一张宽表带上所选因子。下面训练、回测各切一份，过滤、日期和股票范围互相独立。不拿回测段调参。</p></div></div></section>
             <section class="panel" data-panel-id="train"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>训练样本</h2><span class="tag">模块 2</span></div><div class="form"><div class="field"><label for="train-scope">股票范围</label><select class="select" id="train-scope"><option value="中国A股（SH/SZ）">中国 A 股（SH / SZ）</option><option value="沪市（SH）">沪市（SH）</option><option value="深市（SZ）">深市（SZ）</option></select></div><div class="field"><label for="train-from">训练区间</label><input class="input" id="train-from" value="2019-01-01 — 2019-12-31"></div><div class="field wide"><span class="field-legend">样本过滤</span><div id="train-filter-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-train-filter" class="btn" type="button">添加公式</button></div><p class="form-note">只作用于训练日期窗，在盘前过滤之后追加。连接词可用 AND 或 &amp;（BQ 写法）。要 MA200 请加一行，例如 hfq_close &gt; sma200。</p></div></div></section>
             <section class="panel" data-panel-id="test"><div class="head"><span class="panel-drag-handle" draggable="true" role="button" tabindex="0" aria-label="拖动调整模块位置" title="拖动调整位置，下次打开仍按这个排"></span><h2>回测样本</h2><span class="tag">模块 3</span></div><div class="form"><div class="field"><label for="test-scope">股票范围</label><select class="select" id="test-scope"><option value="中国A股（SH/SZ）">中国 A 股（SH / SZ）</option><option value="沪市（SH）">沪市（SH）</option><option value="深市（SZ）">深市（SZ）</option></select></div><div class="field"><label for="test-from">回测区间</label><input class="input" id="test-from" value="2020-01-02 — 2020-12-31"></div><div class="field wide"><span class="field-legend">样本过滤</span><div id="test-filter-list" class="filter-expr-list"></div><div class="filter-expr-actions"><button id="add-test-filter" class="btn" type="button">添加公式</button></div><p class="form-note">只作用于回测日期窗。连接词可用 AND 或 &amp;。树数量按设定训满，不要拿这段调参。</p></div><p id="test-usage-note" class="form-note">这段 test 尚未用于已完成回测。</p></div></section>
@@ -37,6 +37,7 @@
       const q = (id) => document.getElementById(id);
       let openDraft = null;
       const DRAFT_STORAGE_KEY = "quantlab-backtest-last-draft-id";
+      const PLAN_STORAGE_KEY = "quantlab-backtest-optional-plan-id";
       let publishedFactors = [];
       let publishedStrategies = [];
       let modelVersions = [];
@@ -993,6 +994,27 @@
         syncActionAvailability();
       }
 
+      async function loadOpenPlans() {
+        const select = q("identity-plan");
+        if (!select) return;
+        const payload = await request("/api/backtest-plans?open=1");
+        const items = payload.items || [];
+        let wanted = "";
+        try { wanted = localStorage.getItem(PLAN_STORAGE_KEY) || ""; } catch (_error) {}
+        select.replaceChildren();
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = items.length ? "不选择" : "没有未完结计划（选填）";
+        select.append(blank);
+        items.forEach((plan) => {
+          const option = document.createElement("option");
+          option.value = plan.plan_id;
+          option.textContent = `${plan.name}（${plan.plan_id}）`;
+          select.append(option);
+        });
+        select.value = items.some((plan) => plan.plan_id === wanted) ? wanted : "";
+      }
+
       async function saveCurrent() {
         const payload = await request("/api/backtests/drafts", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify({config: configValue(), draft_id: openDraft?.draft_id || null, expected_revision: openDraft?.revision || null})});
         openDraft = {draft_id: payload.draft_id, revision: payload.revision};
@@ -1044,6 +1066,14 @@
           }
           await loadDatasetFields();
           refreshTestUsage();
+          await loadOpenPlans();
+          q("identity-plan")?.addEventListener("change", () => {
+            try {
+              const planId = q("identity-plan").value;
+              if (planId) localStorage.setItem(PLAN_STORAGE_KEY, planId);
+              else localStorage.removeItem(PLAN_STORAGE_KEY);
+            } catch (_error) {}
+          });
         } catch (error) {
           showError(error);
         }
@@ -1070,22 +1100,19 @@
             showBanner("请至少选择一个因子。", true);
             return;
           }
-          let plans = await request("/api/backtest-plans");
-          let plan = (plans.items || [])[0];
-          if (!plan) {
-            plan = await request("/api/backtest-plans", {
-              method: "POST",
-              headers: {"content-type": "application/json"},
-              body: JSON.stringify({name: "默认回测计划", items: []}),
-            });
+          const planId = q("identity-plan")?.value || "";
+          if (!planId) {
+            showBanner("请先在运行身份里选择一份未完结的回测计划，或到回测计划页新建。加入计划才需要选计划，开始回测不需要。", true);
+            return;
           }
-          const updated = await request(`/api/backtest-plans/${encodeURIComponent(plan.plan_id)}/items`, {
+          const updated = await request(`/api/backtest-plans/${encodeURIComponent(planId)}/items`, {
             method: "POST",
             headers: {"content-type": "application/json"},
             body: JSON.stringify({name: q("name").value, config: configValue()}),
           });
+          try { localStorage.setItem(PLAN_STORAGE_KEY, planId); } catch (_error) {}
           showStatus("已加入回测计划，尚未运行");
-          showBanner(`已写入「${updated.name}」。打开回测计划后全选开始即可自动逐笔跑。`);
+          showBanner(`已写入「${updated.name}」${updated.plan_id}。打开回测计划后全选开始即可自动逐笔跑。`);
         } catch (error) { showError(error); }
       };
       q("output-collapse")?.addEventListener("click", () => {

@@ -66,7 +66,13 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert ".archive-grid.plan-grid th:nth-child(1)" in css
     assert "width: 40px; min-width: 40px; max-width: 40px;" in css
     html = _page("backtest_plan.html")
-    assert "app.css?v=20260909plan7" in html
+    assert "app.css?v=20260909plan10" in html
+    assert 'id="new-plan"' in html
+    assert 'id="plan-dialog"' in html
+    assert 'id="delete-plan"' in html
+    assert 'id="delete-items"' in html
+    assert "删除任务" in html
+    assert "只有没有任务的计划可以删除" in html
     assert 'class="main plan-page"' in html
     assert ".main.plan-page" in css
     assert "max-width: none" in css
@@ -171,9 +177,15 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
         'class="top"', 'class="root"', 'class="banner"', 'class="layout"',
         'data-panel-id="actions"', 'id="start"', 'id="stop-backtest"', 'id="save"', 'id="preview"',
         "运行身份", "因子组合", "训练样本", "回测样本", "盘前过滤", "模型与信号", "仓位", "交易规则",
-        "开始回测", "保存配置", "运行 ID",
+        "开始回测", "保存配置", "运行 ID", 'id="identity-plan"',
     ):
         assert marker in html
+    identity = html.split("运行身份", 1)[1].split("因子组合", 1)[0]
+    assert 'label for="identity-plan">回测计划（选填）' in identity
+    assert 'id="identity-plan"' in identity
+    assert ">不选择<" in identity
+    assert "没有未完结计划（选填）" in html
+    assert "select.value = items.some((plan) => plan.plan_id === wanted) ? wanted : \"\"" in html
     assert 'class="panel run-panel"' not in html
     assert "运行前检查" not in html
     top = html.split('class="top"', 1)[1].split('class="root"', 1)[0]
@@ -389,10 +401,18 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="factor-calculation-history"' in html
     assert 'id="factor-page-size"' in html
+    assert html.count('class="factor-page-size"') == 2
     assert "每页最大显示数量" in html
+    assert 'data-factor-page-size="1"' in html
+    assert 'class="factor-data-page"' in html
+    assert "app.css?v=20260909page3" in html
     assert 'function factorCatalogPageSize' in app
     assert "FACTOR_PAGE_SIZES = [50, 100, 200, 500]" in app
+    assert "function ensureFactorPageSizeControl" in app
+    assert "function factorPageSizeSelects" in app
     assert ".factor-page-size" in css
+    assert ".factor-data-page" in css
+    assert "min-width: 760px" in css
     assert "factor-column-header" in app
     assert "function openFactorInfoPopover" in app
     assert "factor-formula-expression" in app

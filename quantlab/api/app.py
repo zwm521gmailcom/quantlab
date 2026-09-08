@@ -14,6 +14,22 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+
+class NoStoreStaticFiles(StaticFiles):
+    def is_not_modified(self, response_headers, request_headers) -> bool:
+        return False
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        name = path.rsplit("/", 1)[-1]
+        if name in {"app.js", "app.css", "nav.js"}:
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            if "etag" in response.headers:
+                del response.headers["etag"]
+        return response
+
 from quantlab.config import Settings
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
@@ -182,7 +198,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(overview_router)
     pages = Path(__file__).parents[1] / "web/pages"
     assets = Path(__file__).parents[1] / "web/assets"
-    app.mount("/assets", StaticFiles(directory=assets), name="assets")
+    app.mount("/assets", NoStoreStaticFiles(directory=assets), name="assets")
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
@@ -1119,14 +1135,29 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
                 status_code=400,
                 detail=_error_payload("BACKTEST_PLAN_EMPTY", "没有可运行的任务。已完成的不会重跑，请勾选待运行项。", entity_id=plan_id),
             ) from error
+        if isinstance(error, ValueError) and message == "closed":
+            raise HTTPException(
+                status_code=400,
+                detail=_error_payload("BACKTEST_PLAN_CLOSED", "计划已完结，不能再改或开跑。", entity_id=plan_id),
+            ) from error
+        if isinstance(error, ValueError) and message == "not_empty":
+            raise HTTPException(
+                status_code=400,
+                detail=_error_payload("BACKTEST_PLAN_NOT_EMPTY", "计划中还有任务，不能删除。", entity_id=plan_id),
+            ) from error
+        if isinstance(error, ValueError) and message == "not_selected":
+            raise HTTPException(
+                status_code=400,
+                detail=_error_payload("BACKTEST_PLAN_NOTHING_SELECTED", "没有要删除的任务。请先勾选。", entity_id=plan_id),
+            ) from error
         missing = "not found" in message.lower() or "找不到" in message
         status_code = 404 if missing else 400
         code = "BACKTEST_PLAN_NOT_FOUND" if missing else "BACKTEST_PLAN_INVALID"
         raise HTTPException(status_code=status_code, detail=_error_payload(code, message, entity_id=plan_id)) from error
 
     @app.get("/api/backtest-plans")
-    def backtest_plan_list() -> dict[str, object]:
-        return backtest_plan.list_plans()
+    def backtest_plan_list(open_only: bool = Query(False, alias="open")) -> dict[str, object]:
+        return backtest_plan.list_plans(open_only=open_only)
 
     @app.post("/api/backtest-plans", status_code=201)
     async def backtest_plan_create(request: Request) -> dict[str, object]:
@@ -1169,6 +1200,21 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             _plan_error(error, plan_id)
         raise AssertionError("unreachable")
 
+    @app.post("/api/backtest-plans/{plan_id}/items/delete")
+    async def backtest_plan_delete_items(plan_id: str, request: Request) -> dict[str, object]:
+        try:
+            body = await _json_body(request)
+        except Exception:
+            body = {}
+        try:
+            item_ids = body.get("item_ids") if isinstance(body, dict) else None
+            if item_ids is not None and not isinstance(item_ids, list):
+                raise ValueError("item_ids must be a list")
+            return backtest_plan.delete_items(plan_id, item_ids=item_ids)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
     @app.delete("/api/backtest-plans/{plan_id}/items/{item_id}")
     def backtest_plan_delete_item(plan_id: str, item_id: str) -> dict[str, object]:
         try:
@@ -1197,6 +1243,22 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     def backtest_plan_stop(plan_id: str) -> dict[str, object]:
         try:
             return backtest_plan.stop(plan_id)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.post("/api/backtest-plans/{plan_id}/close")
+    def backtest_plan_close(plan_id: str) -> dict[str, object]:
+        try:
+            return backtest_plan.close(plan_id)
+        except (RuntimeError, ValueError) as error:
+            _plan_error(error, plan_id)
+        raise AssertionError("unreachable")
+
+    @app.delete("/api/backtest-plans/{plan_id}")
+    def backtest_plan_delete(plan_id: str) -> dict[str, object]:
+        try:
+            return backtest_plan.delete(plan_id)
         except (RuntimeError, ValueError) as error:
             _plan_error(error, plan_id)
         raise AssertionError("unreachable")
@@ -1509,7 +1571,14 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
 
     @app.get("/factors")
     def factor_catalog_page() -> FileResponse:
-        return FileResponse(pages / "factors.html")
+        return FileResponse(
+            pages / "factors.html",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     @app.get("/models")
     def models_page() -> FileResponse:
@@ -1558,7 +1627,14 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
 
     @app.get("/factors/{factor_id}")
     def factor_catalog_detail_page(factor_id: str) -> FileResponse:
-        return FileResponse(pages / "factors.html")
+        return FileResponse(
+            pages / "factors.html",
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
+        )
 
     @app.get("/factors/{factor_id}/versions/{version_id}")
     @app.get("/factors/{factor_id}/{version_id}")

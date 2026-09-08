@@ -959,15 +959,69 @@ function factorHeaderCell(label, explanationLines) {
 let factorCatalogAll = [];
 let factorCatalogPage = 1;
 const FACTOR_PAGE_SIZES = [50, 100, 200, 500];
+const FACTOR_PAGE_SIZE_KEY = "quantlab-factor-page-size";
+
+function factorPageSizeSelects() {
+  return [...document.querySelectorAll("[data-factor-page-size], #factor-page-size")];
+}
 
 function factorCatalogPageSize() {
-  const select = document.getElementById("factor-page-size");
-  const value = Number(select && select.value);
-  return FACTOR_PAGE_SIZES.includes(value) ? value : 50;
+  const select = factorPageSizeSelects()[0];
+  const raw = Number(select && select.value);
+  if (FACTOR_PAGE_SIZES.includes(raw)) return raw;
+  try {
+    const stored = Number(localStorage.getItem(FACTOR_PAGE_SIZE_KEY));
+    if (FACTOR_PAGE_SIZES.includes(stored)) return stored;
+  } catch (_error) {}
+  return 50;
+}
+
+function makeFactorPageSizeSelect() {
+  const label = document.createElement("label");
+  label.className = "factor-page-size";
+  label.append("每页最大显示数量 ");
+  const select = document.createElement("select");
+  select.setAttribute("data-factor-page-size", "1");
+  select.setAttribute("aria-label", "每页最大显示数量");
+  FACTOR_PAGE_SIZES.forEach((size) => {
+    const option = document.createElement("option");
+    option.value = String(size);
+    option.textContent = String(size);
+    select.append(option);
+  });
+  label.append(select);
+  return {label, select};
+}
+
+function ensureFactorPageSizeControl() {
+  const hosts = [
+    document.querySelector("#factor-catalog-view .data-toolbar"),
+    document.querySelector("#factor-catalog-view .factor-pagination"),
+  ].filter(Boolean);
+  hosts.forEach((host) => {
+    if (host.querySelector("[data-factor-page-size], #factor-page-size")) return;
+    const {label} = makeFactorPageSizeSelect();
+    host.append(label);
+  });
+  const selects = factorPageSizeSelects();
+  const value = String(factorCatalogPageSize());
+  selects.forEach((select) => {
+    select.value = value;
+    if (select.dataset.bound) return;
+    select.addEventListener("change", () => {
+      try { localStorage.setItem(FACTOR_PAGE_SIZE_KEY, select.value); } catch (_error) {}
+      factorCatalogPage = 1;
+      factorPageSizeSelects().forEach((other) => { other.value = select.value; });
+      renderFactorCatalog(factorCatalogAll);
+    });
+    select.dataset.bound = "1";
+  });
+  return selects[0];
 }
 
 function renderFactorCatalog(items) {
   factorCatalogAll = items;
+  ensureFactorPageSizeControl();
   const table = document.getElementById("factor-table");
   const empty = document.getElementById("factor-empty");
   const query = (document.getElementById("factor-name-search")?.value || "").trim().toLowerCase();
@@ -1052,7 +1106,6 @@ async function loadFactors() {
     document.getElementById("factor-name-search")?.addEventListener("input", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-prev")?.addEventListener("click", () => { factorCatalogPage = Math.max(1, factorCatalogPage - 1); renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-next")?.addEventListener("click", () => { factorCatalogPage += 1; renderFactorCatalog(factorCatalogAll); });
-    document.getElementById("factor-page-size")?.addEventListener("change", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
   } catch (errorValue) {
     error.textContent = `因子目录加载失败：${errorValue.message}`;
     error.classList.remove("hidden");

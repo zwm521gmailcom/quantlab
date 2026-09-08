@@ -126,6 +126,14 @@ class Database:
             for column, statement in migrations.items():
                 if column not in research_columns:
                     connection.execute(statement)
+            plan_columns = {
+                row[1]
+                for row in connection.execute("PRAGMA table_info(backtest_plans)").fetchall()
+            }
+            if plan_columns and "closed" not in plan_columns:
+                connection.execute(
+                    "ALTER TABLE backtest_plans ADD COLUMN closed INTEGER NOT NULL DEFAULT 0"
+                )
             # Recreate this trigger so databases initialized before task 04 also
             # protect the newly added semantic mapping fields.
             connection.executescript(

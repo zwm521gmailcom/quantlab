@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuantLab · 回测计划</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20260909plan7">
+  <link rel="stylesheet" href="/assets/app.css?v=20260909plan10">
 </head>
 <body>
 <div class="shell">
@@ -30,20 +30,41 @@
         <div class="sub">先把要跑的回测写进清单。全选后点开始，系统一笔接一笔跑，前一笔完成或失败后再跑下一笔。</div>
       </div>
       <div class="actions">
+        <button id="new-plan" class="btn" type="button">新建计划</button>
         <a class="btn" href="/backtests/new">新建回测</a>
         <a class="btn" href="/backtests/runs">结果档案</a>
         <button id="select-all" class="btn" type="button">全选</button>
+        <button id="delete-items" class="btn danger" type="button">删除任务</button>
         <button id="start" class="btn primary" type="button">开始</button>
+        <button id="close-plan" class="btn" type="button">完结</button>
         <button id="stop" class="btn danger" type="button" disabled>停止计划</button>
       </div>
     </div>
     <div id="banner" class="banner"><strong>计划状态：</strong><span id="banner-text">还没有回测计划。可从回测中心点「加入计划」，或等写入任务后再全选开始。</span></div>
     <label class="plan-pick">当前计划
-      <select id="plan-select" class="select"></select>
+      <span class="plan-pick-row">
+        <select id="plan-select" class="select"></select>
+        <button id="delete-plan" class="btn danger" type="button">删除</button>
+      </span>
     </label>
     <div id="plan-state" class="state">正在加载…</div>
     <div class="archive-table plan-table" id="plan-table"></div>
   </main>
+</div>
+<div id="plan-dialog" class="file-config-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="plan-dialog-title">
+  <div class="file-config-panel plan-dialog">
+    <div class="file-config-head">
+      <h3 id="plan-dialog-title">新建回测计划</h3>
+      <button id="plan-dialog-cancel" class="btn" type="button">取消</button>
+    </div>
+    <label>计划名称
+      <input id="plan-name" class="input" maxlength="80" autocomplete="off">
+    </label>
+    <p class="form-note">系统会生成计划 ID 作为主键。完结后这份计划不会再出现在回测中心的下拉框里。</p>
+    <div class="actions">
+      <button id="plan-dialog-save" class="btn primary" type="button">创建</button>
+    </div>
+  </div>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -52,6 +73,7 @@ const STATUS = {
   running: "运行中",
   completed: "已完成",
   stopped: "已停止",
+  closed: "完结",
   pending: "待运行",
   queued: "排队",
   failed: "失败",
@@ -73,11 +95,20 @@ function setBanner(text, error = false) {
   $("banner").classList.toggle("banner-error", error);
 }
 
+function planLabel(plan) {
+  const status = plan.closed ? "完结" : (STATUS[plan.status] || plan.status);
+  return `${plan.name}（${status} · ${plan.items.length} 笔）`;
+}
+
 function syncButtons() {
   const running = current?.status === "running";
-  $("start").disabled = !current || running || !(current.items || []).some((item) => item.selected && ["pending", "failed", "skipped"].includes(item.status));
+  const closed = Boolean(current?.closed);
+  $("start").disabled = !current || running || closed || !(current.items || []).some((item) => item.selected && ["pending", "failed", "skipped"].includes(item.status));
   $("stop").disabled = !running;
-  $("select-all").disabled = !current || running;
+  $("select-all").disabled = !current || running || closed || !(current.items || []).length;
+  $("delete-items").disabled = !current || running || closed || !(current.items || []).some((item) => item.selected);
+  $("close-plan").disabled = !current || running || closed;
+  $("delete-plan").disabled = !current || running || (current.items || []).length > 0;
 }
 
 function renderSelect() {
@@ -93,7 +124,7 @@ function renderSelect() {
   plans.forEach((plan) => {
     const option = document.createElement("option");
     option.value = plan.plan_id;
-    option.textContent = `${plan.name}（${STATUS[plan.status] || plan.status} · ${plan.items.length} 笔）`;
+    option.textContent = planLabel(plan);
     select.append(option);
   });
   if (current) select.value = current.plan_id;
@@ -110,10 +141,10 @@ function renderTable() {
   const running = current.items.filter((item) => item.status === "running").length;
   const pending = current.items.filter((item) => item.status === "pending").length;
   const done = current.items.filter((item) => item.status === "completed").length;
-  $("plan-state").textContent = `${current.name} · ${STATUS[current.status] || current.status} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${running ? "，正在跑 1 笔" : ""}`;
+  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${running ? "，正在跑 1 笔" : ""}`;
   const table = document.createElement("table");
   table.className = "archive-grid plan-grid";
-  table.innerHTML = "<thead><tr><th></th><th>任务</th><th>因子</th><th>训练 / 回测</th><th>模型</th><th>状态</th><th>运行</th></tr></thead>";
+  table.innerHTML = "<thead><tr><th><input id=\"plan-select-all\" type=\"checkbox\" aria-label=\"全选任务\"></th><th>任务</th><th>因子</th><th>训练 / 回测</th><th>模型</th><th>状态</th><th>运行</th></tr></thead>";
   const body = document.createElement("tbody");
   current.items.forEach((item) => {
     const row = document.createElement("tr");
@@ -121,7 +152,7 @@ function renderTable() {
     const input = document.createElement("input");
     input.type = "checkbox";
     input.checked = Boolean(item.selected);
-    input.disabled = current.status === "running";
+    input.disabled = current.status === "running" || Boolean(current.closed);
     input.setAttribute("aria-label", `选择 ${item.name}`);
     input.addEventListener("change", async () => {
       try {
@@ -189,12 +220,39 @@ function renderTable() {
   });
   table.append(body);
   wrap.append(table);
+  const headerCheck = $("plan-select-all");
+  if (headerCheck) {
+    const items = current.items || [];
+    const selectedCount = items.filter((item) => item.selected).length;
+    headerCheck.disabled = current.status === "running" || Boolean(current.closed) || !items.length;
+    headerCheck.checked = items.length > 0 && selectedCount === items.length;
+    headerCheck.indeterminate = selectedCount > 0 && selectedCount < items.length;
+    headerCheck.addEventListener("change", async () => {
+      if (!current || !items.length) return;
+      const flag = headerCheck.checked;
+      const selected = {};
+      items.forEach((item) => { selected[item.item_id] = flag; });
+      try {
+        current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/items`, {
+          method: "PATCH",
+          headers: {"content-type": "application/json"},
+          body: JSON.stringify({selected}),
+        });
+        render();
+        setBanner(flag ? "已全选。可点开始运行，或点删除任务去掉这些条目。" : "已取消全选。");
+      } catch (error) {
+        setBanner(error.message, true);
+      }
+    });
+  }
   setBanner(
-    current.status === "running"
+    current.closed
+      ? "这份计划已完结。不能再加入任务或开始，回测中心下拉框也不会再列出它。"
+      : current.status === "running"
       ? "正在按勾选顺序串行运行。可以离开这个页面，运算仍会继续。"
       : current.status === "completed"
-        ? "这份计划已跑完。结果在结果档案里，看完再叫我就行。"
-        : "勾选要跑的任务，点全选再点开始。不会并行开多笔回测。",
+        ? "这份计划已跑完。结果在结果档案里，看完再点完结即可。"
+        : "勾选要跑的任务，点全选再点开始或删除任务。不会并行开多笔回测。",
     false
   );
   syncButtons();
@@ -264,9 +322,31 @@ $("select-all").addEventListener("click", async () => {
       body: JSON.stringify({selected}),
     });
     render();
-    setBanner("已全选。点开始后按清单顺序一笔接一笔跑。");
+    setBanner("已全选。可点开始运行，或点删除任务去掉这些条目。");
   } catch (error) {
     setBanner(error.message, true);
+  }
+});
+
+$("delete-items").addEventListener("click", async () => {
+  if (!current) return;
+  const itemIds = (current.items || []).filter((item) => item.selected).map((item) => item.item_id);
+  if (!itemIds.length) return;
+  if (!window.confirm(`确定删除已选的 ${itemIds.length} 笔任务？此操作不能恢复。`)) return;
+  $("delete-items").disabled = true;
+  try {
+    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/items/delete`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({item_ids: itemIds}),
+    });
+    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
+    if (index >= 0) plans[index] = current;
+    render();
+    setBanner(`已删除 ${itemIds.length} 笔任务。`);
+  } catch (error) {
+    setBanner(error.message, true);
+    syncButtons();
   }
 });
 
@@ -297,6 +377,88 @@ $("stop").addEventListener("click", async () => {
     current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/stop`, {method: "POST"});
     render();
     startPoll();
+  } catch (error) {
+    setBanner(error.message, true);
+    syncButtons();
+  }
+});
+
+function openPlanDialog() {
+  $("plan-name").value = "";
+  $("plan-dialog").classList.remove("hidden");
+  $("plan-name").focus();
+}
+
+function closePlanDialog() {
+  $("plan-dialog").classList.add("hidden");
+}
+
+$("new-plan").addEventListener("click", openPlanDialog);
+$("plan-dialog-cancel").addEventListener("click", closePlanDialog);
+$("plan-dialog").addEventListener("click", (event) => {
+  if (event.target === $("plan-dialog")) closePlanDialog();
+});
+$("plan-name").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    $("plan-dialog-save").click();
+  }
+  if (event.key === "Escape") closePlanDialog();
+});
+$("plan-dialog-save").addEventListener("click", async () => {
+  const name = $("plan-name").value.trim();
+  if (!name) {
+    setBanner("请填写计划名称。", true);
+    return;
+  }
+  $("plan-dialog-save").disabled = true;
+  try {
+    current = await request("/api/backtest-plans", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({name}),
+    });
+    closePlanDialog();
+    const url = new URL(window.location.href);
+    url.searchParams.set("plan_id", current.plan_id);
+    history.replaceState(history.state, "", `${url.pathname}${url.search}`);
+    await load();
+    setBanner(`已新建「${current.name}」，计划 ID：${current.plan_id}。`);
+  } catch (error) {
+    setBanner(error.message, true);
+  } finally {
+    $("plan-dialog-save").disabled = false;
+  }
+});
+
+$("close-plan").addEventListener("click", async () => {
+  if (!current || current.closed) return;
+  $("close-plan").disabled = true;
+  try {
+    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/close`, {method: "POST"});
+    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
+    if (index >= 0) plans[index] = current;
+    render();
+  } catch (error) {
+    setBanner(error.message, true);
+    syncButtons();
+  }
+});
+
+$("delete-plan").addEventListener("click", async () => {
+  if (!current || (current.items || []).length) return;
+  const name = current.name;
+  const planId = current.plan_id;
+  if (!window.confirm(`确定删除「${name}」？只有没有任务的计划可以删除。`)) return;
+  $("delete-plan").disabled = true;
+  try {
+    await request(`/api/backtest-plans/${encodeURIComponent(planId)}`, {method: "DELETE"});
+    const url = new URL(window.location.href);
+    url.searchParams.delete("plan_id");
+    history.replaceState(history.state, "", `${url.pathname}${url.search}`);
+    current = null;
+    await load();
+    setBanner(`已删除「${name}」。`);
   } catch (error) {
     setBanner(error.message, true);
     syncButtons();
