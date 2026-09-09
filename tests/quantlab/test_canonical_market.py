@@ -68,7 +68,7 @@ def test_apply_suspend_d_requires_files(tmp_path: Path) -> None:
 
 
 def test_data_center_can_merge_suspend_d_into_canonical() -> None:
-    js = Path("quantlab/web/assets/app.js").read_text(encoding="utf-8")
+    js = Path("quantlab/web/assets/data/datasets.js").read_text(encoding="utf-8")
     api_src = "".join(p.read_text(encoding="utf-8") for p in Path("quantlab/api").rglob("*.py"))
     assert "合并到宽表" in js
     assert "/api/raw/apply/suspend_d" in js

@@ -122,22 +122,25 @@ def test_run_record_api_and_page_use_run_record_not_workbench(tmp_path: Path) ->
     page = client.get("/backtests/runs/20260902-120000-0001")
     assert page.status_code == 200
     assert page.headers.get("cache-control") == "no-store"
-    assert "运行记录" in page.text
-    assert "仓位与交易规则" not in page.text
-    assert "保存为模板" not in page.text
-    assert "可追溯性检查" in page.text
-    assert "模块耗时" in page.text
-    assert "总耗时" in page.text
+    html = page.text
+    js = Path("quantlab/web/assets/backtest/run-record.js").read_text(encoding="utf-8")
+    source = html + js
+    assert "运行记录" in html
+    assert "仓位与交易规则" not in html
+    assert "保存为模板" not in html
+    assert "可追溯性检查" in html
+    assert "模块耗时" in html
+    assert "总耗时" in html
     assert response.json()["dag"][1]["duration_display"] == "53.0 秒"
-    assert "运行目录" in page.text
-    assert "重新回测" in page.text
-    assert "删除" in page.text
-    assert "handleScale: false" in page.text
-    assert "handleScroll: false" in page.text
-    assert 'id="equity-legend"' in page.text
-    assert "function bindChartLegend" in page.text
-    assert "equity-legend-toggle" in page.text
-    assert "setData(visible ? [] : entry.points)" in page.text
+    assert "运行目录" in html
+    assert "重新回测" in html
+    assert "删除" in html
+    assert "handleScale: false" in js
+    assert "handleScroll: false" in js
+    assert 'id="equity-legend"' in html
+    assert "function bindChartLegend" in js
+    assert "equity-legend-toggle" in source
+    assert "setData(visible ? [] : entry.points)" in js
 
 
 def test_run_record_fills_benchmark_curve_from_index_daily(tmp_path: Path) -> None:
