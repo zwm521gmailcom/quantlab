@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+*.pyc
 *.pyo
 *.pyd
 *.egg-info/
@@ -9,11 +10,6 @@ __pycache__/
 .mypy_cache/
 build/
 dist/
-
-# Recovered module bytecode while source is missing
-*.pyc
-!quantlab/services/_recovered_pyc/
-!quantlab/services/_recovered_pyc/*.pyc
 
 # Local runtime and market data
 quantlab_runtime/
