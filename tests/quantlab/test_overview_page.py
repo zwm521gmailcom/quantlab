@@ -7,7 +7,8 @@ from quantlab.repositories.database import Database
 
 
 PAGE = Path(__file__).parents[2] / "quantlab/web/pages/index.html"
-SCRIPT = Path(__file__).parents[2] / "quantlab/web/assets/app.js"
+SCRIPT = Path(__file__).parents[2] / "quantlab/web/assets/data/overview.js"
+DATASETS_SCRIPT = Path(__file__).parents[2] / "quantlab/web/assets/data/datasets.js"
 DATA_PAGE = Path(__file__).parents[2] / "quantlab/web/pages/data.html"
 
 
@@ -45,7 +46,7 @@ def test_overview_api_returns_error_contract_when_service_fails(tmp_path) -> Non
 
 def test_data_page_uses_real_dataset_api_and_safe_dom_rendering() -> None:
     page = DATA_PAGE.read_text(encoding="utf-8")
-    script = SCRIPT.read_text(encoding="utf-8")
+    script = DATASETS_SCRIPT.read_text(encoding="utf-8")
 
     assert 'id="dataset-table"' in page
     assert 'id="rescan-datasets"' in page

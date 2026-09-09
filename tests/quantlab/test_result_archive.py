@@ -168,9 +168,12 @@ def test_archive_page_is_available(tmp_path: Path) -> None:
     settings, database = setup_archive(tmp_path)
     response = TestClient(create_app(settings, database)).get("/backtests/runs")
     assert response.status_code == 200
-    assert "结果档案" in response.text
-    assert "重新回测" in response.text
-    assert "删除" in response.text
+    html = response.text
+    js = Path("quantlab/web/assets/backtest/archive.js").read_text(encoding="utf-8")
+    source = html + js
+    assert "结果档案" in html
+    assert "重新回测" in source
+    assert "删除" in source
 
 
 def test_archive_delete_removes_run_rows_artifacts_and_result_files(tmp_path: Path) -> None:

@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 PAGE = Path(__file__).parents[2] / "quantlab/web/pages/kline.html"
-SCRIPT = Path(__file__).parents[2] / "quantlab/web/assets/app.js"
+SCRIPT = Path(__file__).parents[2] / "quantlab/web/assets/data/kline.js"
 
 
 def test_kline_page_has_controls_chart_quality_and_safe_rendering() -> None:

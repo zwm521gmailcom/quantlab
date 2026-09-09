@@ -5,7 +5,7 @@ ROOT = Path(__file__).parents[2]
 FACTOR_PAGE = ROOT / "quantlab" / "web" / "pages" / "factors.html"
 OLD_LIBRARY_PAGE = ROOT / "quantlab" / "web" / "pages" / "factor_library.html"
 OLD_DETAIL_PAGE = ROOT / "quantlab" / "web" / "pages" / "factor_version_detail.html"
-SCRIPT = ROOT / "quantlab" / "web" / "assets" / "app.js"
+SCRIPT = ROOT / "quantlab" / "web" / "assets" / "factors" / "catalog.js"
 
 
 def test_old_factor_library_page_files_were_removed() -> None:

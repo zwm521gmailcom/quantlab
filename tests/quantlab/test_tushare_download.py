@@ -97,14 +97,14 @@ def test_download_index_weight_clamps_future_end_date(tmp_path, monkeypatch):
 
 
 def test_data_center_raw_dialog_has_index_weight_download_button():
-    js = Path("quantlab/web/assets/app.js").read_text()
+    js = Path("quantlab/web/assets/data/datasets.js").read_text()
     assert "下载成分权重" in js
     assert "appendIndexWeightDownload" in js
     assert "index_weight_{指数代码}" in js or "index_weight_000300_SH" in js
 
 
 def test_data_center_raw_dialog_has_suspend_d_download_button():
-    js = Path("quantlab/web/assets/app.js").read_text()
+    js = Path("quantlab/web/assets/data/datasets.js").read_text()
     api_src = "".join(p.read_text(encoding="utf-8") for p in Path("quantlab/api").rglob("*.py"))
     assert "下载停复牌" in js
     assert "appendSuspendDDownload" in js

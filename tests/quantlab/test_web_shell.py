@@ -1,8 +1,22 @@
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
+from quantlab.api.app import create_app
+
 
 def _page(name: str) -> str:
     return Path("quantlab/web/pages", name).read_text()
+
+
+def _first_party_js() -> str:
+    root = Path("quantlab/web/assets")
+    chunks = []
+    for path in sorted(root.rglob("*.js")):
+        if "vendor" in path.parts:
+            continue
+        chunks.append(path.read_text(encoding="utf-8"))
+    return "".join(chunks)
 
 
 def test_shared_shell_contains_all_navigation_entries_and_states() -> None:
@@ -66,29 +80,31 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert ".archive-grid.plan-grid th:nth-child(1)" in css
     assert "width: 40px; min-width: 40px; max-width: 40px;" in css
     html = _page("backtest_plan.html")
+    js = _first_party_js()
+    source = html + js
     assert "app.css?v=20260909plan13" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
-    assert "QuantLabPager.mount" in html
+    assert "QuantLabPager.mount" in js
     assert 'id="new-plan"' in html
     assert 'id="plan-dialog"' in html
     assert 'id="delete-plan"' in html
     assert 'id="delete-items"' in html
     assert "删除任务" in html
-    assert "只有没有任务的计划可以删除" in html
+    assert "只有没有任务的计划可以删除" in source
     assert 'class="main plan-page"' in html
     assert ".main.plan-page" in css
     assert "max-width: none" in css
     assert 'id="plan-state"' in html
-    assert 'table.className = "archive-grid plan-grid"' in html
-    assert 'factorList.className = "plan-factors"' in html
-    assert "model.children[1].textContent" in html
-    assert "lightgbm_tree ·" not in html
-    assert "收益率" in html
-    assert "最大回撤" in html
-    assert "plan-sortable" in html
-    assert "function setSort(key)" in html
-    assert "metricCell(item, \"return\")" in html
+    assert 'table.className = "archive-grid plan-grid"' in js
+    assert 'factorList.className = "plan-factors"' in js
+    assert "model.children[1].textContent" in js
+    assert "lightgbm_tree ·" not in source
+    assert "收益率" in source
+    assert "最大回撤" in source
+    assert "plan-sortable" in source
+    assert "function setSort(key)" in js
+    assert "metricCell(item, \"return\")" in js
     assert "table-layout: fixed" in css
     assert ".plan-factors { display: flex; flex-wrap: wrap;" in css
     assert ".plan-factors span" in css
@@ -96,7 +112,7 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
 
 
 def test_factor_jobs_list_renders_basic_fields_as_a_table() -> None:
-    js = Path("quantlab/web/assets/app.js").read_text()
+    js = _first_party_js()
     html = _page("factor_jobs.html")
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="factor-jobs-list"' in html
@@ -180,12 +196,14 @@ def test_grouped_sidebar_asset_declares_data_and_factor_children() -> None:
 
 
 def test_manual_factor_child_route_initializes_the_same_page_logic() -> None:
-    app = Path("quantlab/web/assets/app.js").read_text()
+    app = _first_party_js()
     assert 'window.location.pathname === "/factors/new/manual"' in app
 
 
 def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     html = _page("backtest_workbench_formal.html")
+    js = _first_party_js()
+    source = html + js
     for marker in (
         'class="top"', 'class="root"', 'class="banner"', 'class="layout"',
         'data-panel-id="actions"', 'id="start"', 'id="stop-backtest"', 'id="save"', 'id="preview"',
@@ -197,8 +215,8 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     assert 'label for="identity-plan">回测计划（选填）' in identity
     assert 'id="identity-plan"' in identity
     assert ">不选择<" in identity
-    assert "没有未完结计划（选填）" in html
-    assert "select.value = items.some((plan) => plan.plan_id === wanted) ? wanted : \"\"" in html
+    assert "没有未完结计划（选填）" in source
+    assert "select.value = items.some((plan) => plan.plan_id === wanted) ? wanted : \"\"" in js
     assert 'class="panel run-panel"' not in html
     assert "运行前检查" not in html
     top = html.split('class="top"', 1)[1].split('class="root"', 1)[0]
@@ -230,45 +248,52 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
 
 def test_backtest_workbench_save_keeps_draft_id_in_url() -> None:
     html = _page("backtest_workbench_formal.html")
-    assert "function rememberDraft" in html
-    assert 'searchParams.set("draft_id"' in html
-    assert "history.replaceState" in html
-    assert "quantlab-backtest-last-draft-id" in html
-    assert "showOutput(JSON.stringify(payload.config" not in html
-    assert 'showStatus("配置已保存为草稿，尚未生成运行 ID")' in html
+    js = _first_party_js()
+    source = html + js
+    assert "function rememberDraft" in js
+    assert 'searchParams.set("draft_id"' in js
+    assert "history.replaceState" in js
+    assert "quantlab-backtest-last-draft-id" in js
+    assert "showOutput(JSON.stringify(payload.config" not in source
+    assert 'showStatus("配置已保存为草稿，尚未生成运行 ID")' in js
 
 
 def test_backtest_workbench_panels_can_be_dragged_to_reorder() -> None:
     html = _page("backtest_workbench_formal.html")
+    js = _first_party_js()
+    source = html + js
     css = Path("quantlab/web/assets/app.css").read_text()
     for panel_id in ("identity", "factors", "train", "test", "model", "position", "pretrade", "execution", "actions", "run-status"):
         assert f'data-panel-id="{panel_id}"' in html
-    assert "columns[0]?.append(panel)" not in html
-    assert "panel.parentElement?.append(panel)" in html
+    assert "columns[0]?.append(panel)" not in source
+    assert "panel.parentElement?.append(panel)" in js
     assert 'class="layout-col"' in html
     assert 'class="panel-drag-handle"' in html
-    assert 'PANEL_ORDER_KEY = "quantlab-backtest-panel-order"' in html
-    assert "function bindWorkbenchPanelDrag" in html
-    assert "function applyPanelOrder" in html
+    assert 'PANEL_ORDER_KEY = "quantlab-backtest-panel-order"' in js
+    assert "function bindWorkbenchPanelDrag" in js
+    assert "function applyPanelOrder" in js
     assert ".panel-drag-handle { cursor: grab;" in css
     assert ".layout .panel.dragging" in css
 
 
 def test_backtest_output_can_collapse_then_hide() -> None:
     html = _page("backtest_workbench_formal.html")
+    js = _first_party_js()
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="output-wrap"' in html
     assert 'id="output-collapse"' in html
     assert 'id="output-hide"' in html
     assert ">缩小<" in html
     assert ">隐藏<" in html
-    assert "function showOutput" in html
-    assert "showOutput(JSON.stringify" in html
+    assert "function showOutput" in js
+    assert "showOutput(JSON.stringify" in js
     assert "#output.collapsed { max-height:" in css
 
 
 def test_backtest_run_status_module_tracks_steps_and_log() -> None:
     html = _page("backtest_workbench_formal.html")
+    js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
+    source = html + js
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'data-panel-id="run-status"' in html
     assert 'id="run-steps"' in html
@@ -276,11 +301,11 @@ def test_backtest_run_status_module_tracks_steps_and_log() -> None:
     assert 'id="run-record-link"' in html
     for label in ("快照校验", "模型训练", "预测打分", "生成仓位", "撮合成交", "指标汇总"):
         assert label in html
-    assert "function pollRunStatus" in html
-    assert "function applyRunStatus" in html
-    assert "/status" in html
-    assert "训练完成，进入回测" in html
-    assert "window.location.assign(`/backtests/runs/" not in html
+    assert "function pollRunStatus" in js
+    assert "function applyRunStatus" in js
+    assert "/status" in source
+    assert "训练完成，进入回测" in js
+    assert "window.location.assign(`/backtests/runs/" not in source
     assert ".run-steps li[data-status=\"running\"]" in css
     assert ".run-log" in css
 
@@ -294,7 +319,7 @@ def test_data_center_page_shows_only_raw_table_without_quality_panels() -> None:
 
 
 def test_factor_workflow_pages_share_back_path_and_step_state() -> None:
-    app = Path("quantlab/web/assets/app.js").read_text()
+    app = _first_party_js()
     manual = _page("factor_manual.html")
     mining = _page("factor_mining.html")
     for html in (manual, mining):
@@ -365,7 +390,7 @@ def test_model_list_places_three_cards_per_row() -> None:
 
 def test_model_list_cards_can_be_dragged_to_reorder() -> None:
     html = _page("models.html")
-    js = Path("quantlab/web/assets/app.js").read_text()
+    js = _first_party_js()
     css = Path("quantlab/web/assets/app.css").read_text()
     assert "拖动卡片可调整顺序" in html
     assert 'MODEL_CARD_ORDER_KEY = "model-card-order"' in js
@@ -391,7 +416,7 @@ def test_run_record_page_includes_traceability_and_directory_sections() -> None:
 
 def test_overview_page_declares_performance_and_health_regions() -> None:
     html = _page("index.html")
-    app = Path("quantlab/web/assets/app.js").read_text()
+    app = _first_party_js()
     assert 'id="recent-performance"' in html
     assert 'id="data-health"' in html
     assert 'getElementById("recent-performance")' in app
@@ -400,7 +425,7 @@ def test_overview_page_declares_performance_and_health_regions() -> None:
 
 def test_kline_page_bundles_tradingview_lightweight_charts() -> None:
     html = _page("kline.html")
-    app = Path("quantlab/web/assets/app.js").read_text()
+    app = _first_party_js()
     vendor = Path("quantlab/web/assets/vendor/lightweight-charts.standalone.production.js")
     assert vendor.is_file()
     assert "lightweight-charts.standalone.production.js" in html
@@ -410,7 +435,7 @@ def test_kline_page_bundles_tradingview_lightweight_charts() -> None:
 
 def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> None:
     html = _page("factors.html")
-    app = Path("quantlab/web/assets/app.js").read_text()
+    app = _first_party_js()
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="factor-calculation-history"' in html
     assert 'id="factor-page-size"' in html
@@ -446,9 +471,9 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
 
 def test_model_version_page_lists_human_fields_not_raw_json() -> None:
     html = _page("model_version_detail.html")
-    js = Path("quantlab/web/assets/app.js").read_text()
+    js = _first_party_js()
     assert 'class="shell"' in html
-    assert "<script src=\"/assets/app.js" in html
+    assert "<script src=\"/assets/bootstrap.js" in html
     assert "<script src=\"/assets/nav.js" in html
     assert "JSON.stringify" not in html
     assert "function loadModelVersionPage" in js
@@ -461,9 +486,9 @@ def test_model_version_page_lists_human_fields_not_raw_json() -> None:
 
 def test_model_run_page_lists_fold_and_train_window() -> None:
     html = _page("model_run.html")
-    js = Path("quantlab/web/assets/app.js").read_text()
+    js = _first_party_js()
     assert 'class="shell"' in html
-    assert "<script src=\"/assets/app.js" in html
+    assert "<script src=\"/assets/bootstrap.js" in html
     assert "JSON.stringify" not in html
     assert "function loadModelRunPage" in js
     assert "/api/models/runs/" in js
@@ -474,88 +499,98 @@ def test_model_run_page_lists_fold_and_train_window() -> None:
 
 def test_backtest_run_record_omits_training_folds_table() -> None:
     html = _page("backtest_run_record.html")
+    js = _first_party_js()
+    source = html + js
     assert 'id="train-folds"' not in html
     assert "训练折" not in html
     assert "哪一折" not in html
     assert 'id="monthly-ranking"' in html
     assert "每月 Rank IC" in html
-    assert "训练方式" in html
+    assert "训练方式" in source
     assert "按流通市值分层" in html
     assert "按换手分层" in html
     assert 'id="cap-equity-chart"' in html
     assert 'id="turn-equity-chart"' in html
-    assert "function renderSegmentCurves" in html
-    assert "function bindChartLegend" in html
-    assert "equity-legend-toggle" in html
-    assert 'aria-pressed' in html
+    assert "function renderSegmentCurves" in js
+    assert "function bindChartLegend" in js
+    assert "equity-legend-toggle" in source
+    assert 'aria-pressed' in source
 
 
 def test_backtest_run_record_lists_module_durations() -> None:
     html = _page("backtest_run_record.html")
+    js = _first_party_js()
+    source = html + js
     assert "模块耗时" in html
     assert 'id="step-timing"' in html
     assert 'id="timing-total"' in html
-    assert "function renderStepTiming" in html
-    assert "duration_display" in html
-    assert "<thead><tr><th>模块</th><th>耗时</th></tr></thead>" in html
-    assert "<th>开始</th>" not in html
-    assert "<th>结束</th>" not in html
-    assert "formatClock" not in html
+    assert "function renderStepTiming" in js
+    assert "duration_display" in js
+    assert "<thead><tr><th>模块</th><th>耗时</th></tr></thead>" in js
+    assert "<th>开始</th>" not in source
+    assert "<th>结束</th>" not in source
+    assert "formatClock" not in source
 
 
 def test_run_record_keeps_walk_forward_in_config_snapshot() -> None:
     html = _page("backtest_run_record.html")
-    app = Path("quantlab/web/assets/app.js").read_text()
-    assert "train_period_months" in html
-    assert "回测周期" in html
-    assert "function walkForwardLabel" in html
+    js = _first_party_js()
+    source = html + js
+    app = _first_party_js()
+    assert "train_period_months" in source
+    assert "回测周期" in source
+    assert "function walkForwardLabel" in js
     assert "model.walk_forward && model.walk_forward.folds" not in html
     assert "model.walk_forward && model.walk_forward.folds" in app
     assert "train_period_months" in app
 
 
 def test_backtest_workbench_clamps_test_period_to_lookback() -> None:
-    html = Path("quantlab/web/pages/backtest_workbench_formal.html").read_text()
-    assert "function clampTestPeriodToLookback" in html
-    assert 'q("bt-test-period")' in html
-    assert "clampTestPeriodToLookback()" in html
+    js = _first_party_js()
+    assert "function clampTestPeriodToLookback" in js
+    assert 'q("bt-test-period")' in js
+    assert "clampTestPeriodToLookback()" in js
 
 
 def test_backtest_workbench_restores_walk_forward_from_copied_config() -> None:
     html = Path("quantlab/web/pages/backtest_workbench_formal.html").read_text()
-    assert "configPayload.walk_forward" in html
-    assert "configPayload.train_period_months" in html
-    assert "configPayload.test_period_months" in html
-    assert "params.walk_forward != null" in html
-    assert "max_bins（分箱数）" in html
-    assert "NDCG discount_base（名次折扣）" in html
-    assert "NDCG eval_at（评估只看前 N）" in html
+    js = _first_party_js()
+    source = html + js
+    assert "configPayload.walk_forward" in js
+    assert "configPayload.train_period_months" in js
+    assert "configPayload.test_period_months" in js
+    assert "params.walk_forward != null" in js
+    assert "max_bins（分箱数）" in source
+    assert "NDCG discount_base（名次折扣）" in source
+    assert "NDCG eval_at（评估只看前 N）" in source
 
 
 def test_backtest_run_record_copy_opens_draft() -> None:
-    html = _page("backtest_run_record.html")
-    assert "window.location.assign(y.redirect_url)" in html
-    assert 'walkSnap === "lookback"' in html
+    js = _first_party_js()
+    assert "window.location.assign(y.redirect_url)" in js
+    assert 'walkSnap === "lookback"' in js
 
 
 def test_result_archive_filters_use_model_not_strategy_labels() -> None:
     html = _page("result_archive.html")
+    js = _first_party_js()
+    source = html + js
     assert "搜索名称/ID/模型/因子" in html
     assert "<label>模型" in html
-    assert "策略 / 因子" not in html
-    assert "模型 / 因子" in html
-    assert "未登记策略" not in html
-    assert "未登记模型" in html
-    assert "策略中心" not in html
+    assert "策略 / 因子" not in source
+    assert "模型 / 因子" in source
+    assert "未登记策略" not in source
+    assert "未登记模型" in source
+    assert "策略中心" not in source
     assert 'id="archive-pagination"' in html
     assert "table-pager.js" in html
-    assert "quantlab-archive-page-size" in html
+    assert "quantlab-archive-page-size" in js
 
 
 def test_table_pages_share_page_size_pager() -> None:
     pager = Path("quantlab/web/assets/table-pager.js").read_text()
     css = Path("quantlab/web/assets/app.css").read_text()
-    app = Path("quantlab/web/assets/app.js").read_text()
+    app = _first_party_js()
     assert "global.QuantLabPager" in pager
     assert "每页 " in pager
     assert "每页显示行数" in pager
@@ -583,36 +618,40 @@ def test_nav_exposes_rule_backtest_page() -> None:
 
 def test_backtest_new_does_not_embed_rule_strategy() -> None:
     html = _page("backtest_workbench_formal.html")
-    assert 'id="signal-source"' not in html
-    assert 'value="rule_signal"' not in html
-    assert "wiki_trend_follow" not in html
-    assert "up_pct_60" not in html
-    assert "规则策略" not in html
+    js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
+    source = html + js
+    assert 'id="signal-source"' not in source
+    assert 'value="rule_signal"' not in source
+    assert "wiki_trend_follow" not in source
+    assert "up_pct_60" not in source
+    assert "规则策略" not in source
 
 
 def test_backtest_rules_page_emits_required_fields() -> None:
     html = _page("backtest_rules.html")
+    js = _first_party_js()
+    source = html + js
     assert 'class="shell"' in html
     assert "<script src=\"/assets/nav.js" in html
     assert 'id="signal-source"' not in html
     assert "训练区间" not in html
     assert "因子组合" not in html
-    assert "wiki_trend_follow" in html
-    assert "Wiki 多指标趋势跟踪" in html
-    assert 'kind: "rule_signal"' in html
-    assert 'account_mode: "target_weight_exits"' in html
-    assert "strategy_entity_id: null" in html
-    assert "strategy_version_id: null" in html
-    assert "open_when_benchmark_gt_ma200: false" in html
-    assert "rule_strategy_id" in html
-    assert "strategy_params" in html
+    assert "wiki_trend_follow" in source
+    assert "Wiki 多指标趋势跟踪" in source
+    assert 'kind: "rule_signal"' in js
+    assert 'account_mode: "target_weight_exits"' in js
+    assert "strategy_entity_id: null" in js
+    assert "strategy_version_id: null" in js
+    assert "open_when_benchmark_gt_ma200: false" in js
+    assert "rule_strategy_id" in js
+    assert "strategy_params" in js
     assert 'id="stop-loss"' in html
     assert 'id="take-profit"' in html
     assert 'id="max-hold-days"' in html
     assert 'id="up-pct-20"' not in html
     assert 'id="up-pct-60"' not in html
-    assert "up_pct_20" not in html
-    assert "up_pct_60" not in html
+    assert "up_pct_20" not in source
+    assert "up_pct_60" not in source
     assert "当时" in html
     assert "下一交易日开盘" in html
     assert "月度成分" in html or "不做市场择时" in html
@@ -632,25 +671,39 @@ def test_backtest_rules_page_emits_required_fields() -> None:
 
 def test_backtest_run_record_shows_rule_signal_metrics() -> None:
     html = _page("backtest_run_record.html")
-    assert "市场多头天数" in html
-    assert "信号条数" in html
-    assert "完全空仓天数" in html
-    assert "当时月度成分" in html
-    assert "最新一期（冻结）" in html
-    assert "bullish_days" in html
-    assert "signal_rows" in html
-    assert "flat_days" in html
-    assert "membership_asof" in html
-    assert "sortino" in html
-    assert "calmar" in html
-    assert "max_loss_streak" in html
+    js = _first_party_js()
+    source = html + js
+    assert "市场多头天数" in source
+    assert "信号条数" in source
+    assert "完全空仓天数" in source
+    assert "当时月度成分" in source
+    assert "最新一期（冻结）" in source
+    assert "bullish_days" in source
+    assert "signal_rows" in source
+    assert "flat_days" in source
+    assert "membership_asof" in source
+    assert "sortino" in source
+    assert "calmar" in source
+    assert "max_loss_streak" in source
     assert "annual-summary" in html or "年度拆解" in html
 
 
 def test_backtest_run_record_rule_signal_config_snapshot() -> None:
     html = _page("backtest_run_record.html")
-    assert "信号来源" in html
-    assert "规则策略" in html
-    assert 'c.kind === "rule_signal"' in html or "isRuleSignal" in html
-    assert "规则信号（不训练）" in html
-    assert "Wiki 多指标趋势跟踪" in html
+    js = _first_party_js()
+    source = html + js
+    assert "信号来源" in js
+    assert "规则策略" in source
+    assert 'c.kind === "rule_signal"' in js or "isRuleSignal" in js
+    assert "规则信号（不训练）" in js
+    assert "Wiki 多指标趋势跟踪" in source
+
+
+def test_first_party_assets_are_no_store_vendor_is_not() -> None:
+    client = TestClient(create_app())
+    for url in ("/assets/nav.js", "/assets/bootstrap.js", "/assets/table-pager.js", "/assets/app.css"):
+        header = client.get(url).headers.get("cache-control", "").lower()
+        assert "no-store" in header, url
+    vendor = client.get("/assets/vendor/lightweight-charts.standalone.production.js")
+    assert vendor.status_code == 200
+    assert "no-store" not in vendor.headers.get("cache-control", "").lower()

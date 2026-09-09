@@ -270,6 +270,8 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     page = client.get("/backtests/plan")
     assert page.status_code == 200
     html = page.text
+    plan_js = Path("quantlab/web/assets/backtest/plan.js").read_text(encoding="utf-8")
+    source = html + plan_js
     assert "回测计划" in html
     assert "全选" in html
     assert "开始" in html
@@ -284,17 +286,19 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert "删除" in html
     assert 'id="delete-items"' in html
     assert "删除任务" in html
-    assert "/api/backtest-plans/" in html and "/items/delete" in html
-    assert "收益率" in html
-    assert "最大回撤" in html
-    assert "plan-sortable" in html
-    assert 'dataset.sort = column.key' in html or "dataset.sort" in html
+    assert "/api/backtest-plans/" in plan_js and "/items/delete" in plan_js
+    assert "收益率" in source
+    assert "最大回撤" in source
+    assert "plan-sortable" in source
+    assert 'dataset.sort = column.key' in plan_js or "dataset.sort" in plan_js
     workbench = client.get("/backtests/new").text
+    workbench_js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
+    workbench_source = workbench + workbench_js
     assert "加入计划" in workbench
     assert "/backtests/plan" in workbench
     identity = workbench.split("运行身份", 1)[1].split("因子组合", 1)[0]
     assert 'id="identity-plan"' in identity
     assert 'label for="identity-plan">回测计划（选填）' in identity
     assert ">不选择<" in identity
-    assert "没有未完结计划（选填）" in workbench
-    assert "/api/backtest-plans?open=1" in workbench
+    assert "没有未完结计划（选填）" in workbench_source
+    assert "/api/backtest-plans?open=1" in workbench_js
