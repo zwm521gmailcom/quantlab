@@ -105,12 +105,12 @@ def test_data_center_raw_dialog_has_index_weight_download_button():
 
 def test_data_center_raw_dialog_has_suspend_d_download_button():
     js = Path("quantlab/web/assets/app.js").read_text()
-    app = Path("quantlab/api/app.py").read_text()
+    api_src = "".join(p.read_text(encoding="utf-8") for p in Path("quantlab/api").rglob("*.py"))
     assert "下载停复牌" in js
     assert "appendSuspendDDownload" in js
     assert "/api/raw/download/suspend_d" in js
     assert "suspend_d.parquet" in js
-    assert '/api/raw/download/suspend_d' in app
+    assert "/api/raw/download/suspend_d" in api_src
 
 
 def test_download_suspend_d_writes_monthly_rows_and_clamps_future_end(tmp_path, monkeypatch):
