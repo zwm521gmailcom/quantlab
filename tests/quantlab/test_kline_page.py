@@ -15,6 +15,7 @@ def test_kline_page_has_controls_chart_quality_and_safe_rendering() -> None:
         "kline-date-to",
         "kline-mode",
         "kline-table",
+        "kline-pagination",
         "kline-chart",
         "kline-quality",
         "kline-export",

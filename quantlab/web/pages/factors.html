@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 因子数据</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909page3">
+    <link rel="stylesheet" href="/assets/app.css?v=20260909page4">
   </head>
   <body>
     <div class="shell">
@@ -68,13 +68,15 @@
               <div id="factor-summary" class="factor-summary"></div>
             </div>
             <div id="factor-charts" class="factor-charts"></div>
-            <p class="state factor-sample-note">样本默认取自最近一次计算周期，仅展示 10 行。动量/窗口类因子需要此前 5 个有效交易日才能计算，所以数据集最前面的 5 个交易日显示“—”属于预期，不是缺数。</p>
+            <p class="state factor-sample-note">样本默认取自最近一次计算周期，每页默认 10 行，可在表格下方改显示数量。动量/窗口类因子需要此前 5 个有效交易日才能计算，所以数据集最前面的 5 个交易日显示“—”属于预期，不是缺数。</p>
             <div id="factor-sample" class="factor-table" role="table" aria-label="因子样本"></div>
+            <div id="factor-sample-pagination" class="archive-pagination"></div>
           </div>
         </section>
       </main>
     </div>
     <script src="/assets/vendor/lightweight-charts.standalone.production.js"></script>
-    <script src="/assets/app.js?v=20260909page3"></script>
+    <script src="/assets/table-pager.js?v=20260909pager"></script>
+    <script src="/assets/app.js?v=20260909page4"></script>
   <script src="/assets/nav.js?v=20260907a"></script></body>
 </html>

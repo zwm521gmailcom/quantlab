@@ -13,6 +13,30 @@ function qlCss(prop, fallback) {
   return fallback;
 }
 
+function tablePager() {
+  return window.QuantLabPager;
+}
+
+function tablePageSize(key, fallback, sizes) {
+  const pager = tablePager();
+  if (!pager) return fallback;
+  return pager.readSize(key, sizes || pager.DEFAULT_SIZES, fallback);
+}
+
+function bindTablePager(host, options) {
+  const pager = tablePager();
+  if (!pager || !host) return;
+  pager.mount(host, options);
+}
+
+let datasetPage = 1;
+const DATASET_PAGE_KEY = "quantlab-dataset-page-size";
+let klinePage = 1;
+let klinePreferLast = true;
+const KLINE_PAGE_KEY = "quantlab-kline-page-size";
+let factorSamplePage = 1;
+const FACTOR_SAMPLE_PAGE_KEY = "quantlab-factor-sample-page-size";
+
 async function loadOverview() {
   const loading = document.getElementById("loading-state");
   const empty = document.getElementById("empty-state");
@@ -165,15 +189,24 @@ async function loadDatasets() {
   const query = document.getElementById("dataset-query").value.trim();
   const category = document.getElementById("dataset-category").value;
   const quality = document.getElementById("dataset-quality").value;
+  const pageSize = tablePageSize(DATASET_PAGE_KEY, 50);
+  const pager = tablePager();
   if (query) params.set("q", query);
   if (category) params.set("category", category);
   if (quality) params.set("quality_status", quality);
+  params.set("page", String(datasetPage));
+  params.set("page_size", String(pageSize));
   try {
     const response = await fetch(`/api/datasets/raw?${params.toString()}`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
+    const pages = pager ? pager.pagesFor(payload.total || 0, pageSize) : Math.max(1, payload.pages || 1);
+    if (pager && datasetPage > pages && (payload.total || 0) > 0) {
+      datasetPage = pages;
+      return loadDatasets();
+    }
     table.replaceChildren();
-    empty.classList.toggle("hidden", payload.items.length !== 0);
+    empty.classList.toggle("hidden", (payload.total || payload.items.length) !== 0);
     const header = appendText(table, "div", "dataset-row dataset-header", "");
     header.setAttribute("role", "row");
     appendText(header, "span", null, "数据名称");
@@ -211,6 +244,15 @@ async function loadDatasets() {
       link.textContent = "接口文档 ↗";
       link.className = "raw-doc-link";
       linkCell.append(link);
+    });
+    bindTablePager(document.getElementById("dataset-pagination"), {
+      page: payload.page || datasetPage,
+      pages,
+      pageSize,
+      total: payload.total || 0,
+      storageKey: DATASET_PAGE_KEY,
+      onPage: (next) => { datasetPage = next; loadDatasets(); },
+      onPageSize: () => { datasetPage = 1; loadDatasets(); },
     });
   } catch (errorValue) {
     error.textContent = `数据目录加载失败：${errorValue.message}`;
@@ -595,7 +637,7 @@ async function rescanDatasets() {
   }
 }
 
-function klineParams({downsample = null, pageSize = null, tail = false} = {}) {
+function klineParams({downsample = null, pageSize = null, tail = false, page = 1, maxRows = 500} = {}) {
   const params = new URLSearchParams();
   const symbol = document.getElementById("kline-symbol").value.trim();
   const dateFrom = document.getElementById("kline-date-from").value;
@@ -606,9 +648,9 @@ function klineParams({downsample = null, pageSize = null, tail = false} = {}) {
   if (dateTo) params.set("date_to", dateTo);
   params.set("version_id", "current");
   params.set("mode", mode);
-  params.set("page", "1");
-  params.set("page_size", tail ? "10" : pageSize ? String(pageSize) : downsample ? "500" : "100");
-  params.set("max_rows", "500");
+  params.set("page", String(page));
+  params.set("page_size", tail ? String(pageSize || 10) : pageSize ? String(pageSize) : downsample ? "500" : "100");
+  params.set("max_rows", String(maxRows));
   if (downsample) params.set("downsample", String(downsample));
   if (tail) params.set("tail", "1");
   return params;
@@ -816,23 +858,65 @@ function renderKlineQuality(quality) {
   });
 }
 
+function klineTablePageSize() {
+  return tablePageSize(KLINE_PAGE_KEY, 10);
+}
+
+async function fetchKlinePayload(params) {
+  const response = await fetch(`/api/kline/query?${params}`);
+  if (!response.ok) throw new Error("标准行情宽表 API 请求失败");
+  return response.json();
+}
+
+function bindKlinePager(payload) {
+  const pager = tablePager();
+  const pageSize = klineTablePageSize();
+  const pages = pager ? pager.pagesFor(payload.total || 0, pageSize) : 1;
+  bindTablePager(document.getElementById("kline-pagination"), {
+    page: klinePage,
+    pages,
+    pageSize,
+    total: payload.total || 0,
+    storageKey: KLINE_PAGE_KEY,
+    onPage: (next) => { klinePreferLast = false; klinePage = next; loadKlineTable(); },
+    onPageSize: () => { klinePreferLast = true; loadKlineTable(); },
+  });
+}
+
+async function loadKlineTable() {
+  const pager = tablePager();
+  const pageSize = klineTablePageSize();
+  let page = klinePreferLast ? 1 : klinePage;
+  let table = await fetchKlinePayload(klineParams({pageSize, page, maxRows: 5000}));
+  const pages = pager ? pager.pagesFor(table.total || 0, pageSize) : 1;
+  if (klinePreferLast) {
+    klinePage = pages;
+    if (page !== pages) table = await fetchKlinePayload(klineParams({pageSize, page: pages, maxRows: 5000}));
+    klinePreferLast = false;
+  } else if (pager) {
+    klinePage = pager.clampPage(klinePage, pages);
+    if (klinePage !== page) table = await fetchKlinePayload(klineParams({pageSize, page: klinePage, maxRows: 5000}));
+  }
+  renderKlineTable(table);
+  bindKlinePager(table);
+}
+
 async function loadKline() {
   const error = document.getElementById("kline-error");
   error.classList.add("hidden");
-  const tableParams = klineParams({tail: true});
+  klinePreferLast = true;
   const chartParams = klineParams({pageSize: 500});
   const qualityParams = new URLSearchParams({version_id: "current"});
   try {
-    const [tableResponse, chartResponse, qualityResponse] = await Promise.all([
-      fetch(`/api/kline/query?${tableParams}`),
+    const [chartResponse, qualityResponse] = await Promise.all([
       fetch(`/api/kline/query?${chartParams}`),
       fetch(`/api/kline/quality?${qualityParams}`),
     ]);
-    if (![tableResponse, chartResponse, qualityResponse].every((response) => response.ok)) throw new Error("标准行情宽表 API 请求失败");
-    const [table, chart, quality] = await Promise.all([
-      tableResponse.json(), chartResponse.json(), qualityResponse.json(),
-    ]);
-    renderKlineTable(table); renderKlineChart(chart); renderKlineQuality(quality);
+    if (![chartResponse, qualityResponse].every((response) => response.ok)) throw new Error("标准行情宽表 API 请求失败");
+    const [chart, quality] = await Promise.all([chartResponse.json(), qualityResponse.json()]);
+    renderKlineChart(chart);
+    renderKlineQuality(quality);
+    await loadKlineTable();
   } catch (errorValue) {
     error.textContent = `标准行情宽表加载失败：${errorValue.message}`;
     error.classList.remove("hidden");
@@ -1278,17 +1362,70 @@ function renderFactorDetail(item, summary, sample, calculation = null) {
     summaryBox.append(grid);
   });
     renderFactorDailyIc(completed);
-  const table = document.getElementById("factor-sample");
-  table.replaceChildren();
-  const sampleRows = (sample.items || []).slice(0, 10);
-  if (!sampleRows.length) return;
-  table.style.setProperty("--factor-col-count", String(Math.max((sample.fields || []).length, 1)));
-  const header = appendFactorText(table, "div", "factor-row factor-header", "");
-  sample.fields.forEach((field) => appendFactorText(header, "span", null, field));
-  sampleRows.forEach((item) => {
-    const row = appendFactorText(table, "div", "factor-row", "");
-    sample.fields.forEach((field) => appendFactorText(row, "span", null, item[field]));
+  renderFactorSampleTable(sample);
+}
+
+function factorSamplePageSize() {
+  return tablePageSize(FACTOR_SAMPLE_PAGE_KEY, 10);
+}
+
+function bindFactorSamplePager(sample) {
+  const pager = tablePager();
+  const host = document.getElementById("factor-sample-pagination");
+  if (!pager || !host) return;
+  const pageSize = factorSamplePageSize();
+  const total = sample.total || 0;
+  bindTablePager(host, {
+    page: sample.page || factorSamplePage,
+    pages: pager.pagesFor(total, pageSize),
+    pageSize,
+    total,
+    storageKey: FACTOR_SAMPLE_PAGE_KEY,
+    onPage: (next) => { factorSamplePage = next; reloadFactorSample(); },
+    onPageSize: () => { factorSamplePage = 1; reloadFactorSample(); },
   });
+}
+
+function renderFactorSampleTable(sample) {
+  const table = document.getElementById("factor-sample");
+  if (!table) return;
+  table.replaceChildren();
+  const sampleRows = sample.items || [];
+  if (sampleRows.length) {
+    table.style.setProperty("--factor-col-count", String(Math.max((sample.fields || []).length, 1)));
+    const header = appendFactorText(table, "div", "factor-row factor-header", "");
+    (sample.fields || []).forEach((field) => appendFactorText(header, "span", null, field));
+    sampleRows.forEach((item) => {
+      const row = appendFactorText(table, "div", "factor-row", "");
+      (sample.fields || []).forEach((field) => appendFactorText(row, "span", null, item[field]));
+    });
+  }
+  bindFactorSamplePager(sample || {});
+}
+
+async function fetchFactorSample(factorId, latestRun) {
+  const pageSize = factorSamplePageSize();
+  const query = factorParams();
+  query.set("factor", factorId);
+  query.set("page", String(factorSamplePage));
+  query.set("page_size", String(pageSize));
+  query.set("max_rows", "5000");
+  if (!query.get("date_from")) query.set("date_from", latestRun?.date_from || "2024-01-01");
+  if (!query.get("date_to")) query.set("date_to", latestRun?.date_to || "2024-12-31");
+  const sampleResponse = await fetch(`/api/factor-data/query?${query.toString()}`);
+  if (!sampleResponse.ok) return {items: [], fields: [], total: 0, page: factorSamplePage};
+  return sampleResponse.json();
+}
+
+async function reloadFactorSample() {
+  const factorId = currentFactorItem && currentFactorItem.factor_id;
+  if (!factorId) return;
+  const latest = (currentFactorHistory || []).find((entry) => entry.status === "completed") || null;
+  try {
+    const sample = await fetchFactorSample(factorId, latest);
+    currentFactorSample = sample;
+    renderFactorSampleTable(sample);
+  } catch (_error) {}
 }
 
 let factorIcChartInstance = null;
@@ -1635,6 +1772,7 @@ ${String(item.date_from).slice(0, 4)}-${String(item.date_from).slice(4, 6)}-${St
 
 async function loadFactorDetail(factorId) {
   const error = document.getElementById("factor-error");
+  factorSamplePage = 1;
   try {
     const [detailResponse, calculationResponse] = await Promise.all([
       fetch(`/api/factor-data/factors/${encodeURIComponent(factorId)}`),
@@ -1644,15 +1782,9 @@ async function loadFactorDetail(factorId) {
     const item = await detailResponse.json();
     const historyItems = (await calculationResponse.json()).items || [];
     const latestRun = historyItems.find((entry) => entry.status === "completed") || null;
-    const sampleQuery = new URLSearchParams({factor: factorId, page_size: "10", max_rows: "10"});
-    const userFrom = document.getElementById("factor-date-from")?.value.trim();
-    const userTo = document.getElementById("factor-date-to")?.value.trim();
-    sampleQuery.set("date_from", userFrom || latestRun?.date_from || "2024-01-01");
-    sampleQuery.set("date_to", userTo || latestRun?.date_to || "2024-12-31");
-    let sample = {items: [], fields: []};
+    let sample = {items: [], fields: [], total: 0};
     try {
-      const sampleResponse = await fetch(`/api/factor-data/query?${sampleQuery.toString()}`);
-      if (sampleResponse.ok) sample = await sampleResponse.json();
+      sample = await fetchFactorSample(factorId, latestRun);
     } catch (_error) {
       // Manual/derived factors may not have a physical feature column yet.
     }
@@ -1673,8 +1805,9 @@ async function queryFactorSample() {
   try {
     const base = factorParams();
     base.set("factor", factor);
-    base.set("page_size", "10");
-    base.set("max_rows", "10");
+    base.set("page", String(factorSamplePage));
+    base.set("page_size", String(factorSamplePageSize()));
+    base.set("max_rows", "5000");
     const [detailResponse, summaryResponse, sampleResponse] = await Promise.all([
       fetch(`/api/factor-data/factors/${encodeURIComponent(factor)}`),
       fetch(`/api/factor-data/summary?factor=${encodeURIComponent(factor)}&${base.toString()}`),
@@ -2657,6 +2790,24 @@ function loadFactorJobsPage() {
   const list = document.getElementById("factor-jobs-list");
   if (!listView || !detailView) return;
   const runId = new URLSearchParams(window.location.search).get("run_id");
+  let jobListPage = 1;
+  let jobDetailPage = 1;
+  let jobDetailItems = [];
+  const jobDetailSelected = new Set();
+
+  function jobListPageSize() {
+    return tablePageSize("quantlab-factor-jobs-page-size", 50);
+  }
+
+  function jobItemsPageSize() {
+    return tablePageSize("quantlab-factor-job-items-page-size", 20);
+  }
+
+  function jobItemSelectable(item) {
+    const kept = Boolean(item.kept_in_task);
+    const unevaluable = String(item.reason || "").startsWith("evaluation_error");
+    return kept && !unevaluable && !item.enabled;
+  }
 
   function showError(message) {
     error.textContent = message;
@@ -2671,11 +2822,27 @@ function loadFactorJobsPage() {
     list.replaceChildren();
     empty.classList.add("hidden");
     try {
-      const response = await fetch("/api/factor-jobs?page_size=50");
+      const pageSize = jobListPageSize();
+      const pager = tablePager();
+      const response = await fetch(`/api/factor-jobs?page=${jobListPage}&page_size=${pageSize}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
       const items = payload.items || [];
-      empty.classList.toggle("hidden", items.length !== 0);
+      const pages = pager ? pager.pagesFor(payload.total || 0, pageSize) : Math.max(1, payload.pages || 1);
+      if (pager && jobListPage > pages && (payload.total || 0) > 0) {
+        jobListPage = pages;
+        return loadList();
+      }
+      empty.classList.toggle("hidden", (payload.total || items.length) !== 0);
+      bindTablePager(document.getElementById("factor-jobs-list-pagination"), {
+        page: payload.page || jobListPage,
+        pages,
+        pageSize,
+        total: payload.total || 0,
+        storageKey: "quantlab-factor-jobs-page-size",
+        onPage: (next) => { jobListPage = next; loadList(); },
+        onPageSize: () => { jobListPage = 1; loadList(); },
+      });
       if (!items.length) return;
       const table = document.createElement("table");
       table.className = "factor-job-grid";
@@ -2728,6 +2895,67 @@ function loadFactorJobsPage() {
     }
   }
 
+  function renderJobItems() {
+    const box = document.getElementById("factor-jobs-items");
+    const pagerHost = document.getElementById("factor-jobs-items-pagination");
+    box.replaceChildren();
+    if (!jobDetailItems.length) {
+      researchText(box, "div", "state", "这个任务还没有候选公式。");
+      if (pagerHost) {
+        pagerHost.replaceChildren();
+        pagerHost.hidden = true;
+      }
+      return;
+    }
+    const pager = tablePager();
+    const pageSize = jobItemsPageSize();
+    const pages = pager ? pager.pagesFor(jobDetailItems.length, pageSize) : 1;
+    jobDetailPage = pager ? pager.clampPage(jobDetailPage, pages) : 1;
+    const visible = pager ? pager.slice(jobDetailItems, jobDetailPage, pageSize) : jobDetailItems;
+    visible.forEach((item) => {
+      const row = document.createElement("label");
+      const kept = Boolean(item.kept_in_task);
+      row.className = kept ? "factor-job-item" : "factor-job-item rejected";
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.value = item.candidate_id;
+      checkbox.dataset.kept = kept ? "1" : "0";
+      const unevaluable = String(item.reason || "").startsWith("evaluation_error");
+      const alreadyIn = Boolean(item.enabled);
+      checkbox.disabled = alreadyIn || unevaluable || !kept;
+      checkbox.checked = alreadyIn || jobDetailSelected.has(item.candidate_id);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.disabled) return;
+        if (checkbox.checked) jobDetailSelected.add(item.candidate_id);
+        else jobDetailSelected.delete(item.candidate_id);
+      });
+      row.append(checkbox);
+      const body = document.createElement("div");
+      researchText(body, "div", "factor-job-item-title", item.formula_label || item.formula || "未命名公式");
+      researchText(body, "div", "factor-job-item-formula", item.formula || "");
+      const meta = document.createElement("div");
+      meta.className = "factor-job-item-meta";
+      const keepTag = document.createElement("span");
+      keepTag.className = item.enabled ? "factor-job-tag ok" : (kept ? "factor-job-tag" : "factor-job-tag warn");
+      keepTag.textContent = item.enabled ? "已入库" : (kept ? "可入库" : "未达标");
+      meta.append(keepTag);
+      meta.append(document.createTextNode(`有效值占比 ${metricText(item.period_metrics, "coverage")} · 排序相关性 ${metricText(item.period_metrics, "rank_ic")} · ${item.reason_label || item.reason || ""}`));
+      body.append(meta);
+      row.append(body);
+      box.append(row);
+    });
+    if (pagerHost) pagerHost.hidden = false;
+    bindTablePager(pagerHost, {
+      page: jobDetailPage,
+      pages,
+      pageSize,
+      total: jobDetailItems.length,
+      storageKey: "quantlab-factor-job-items-page-size",
+      onPage: (next) => { jobDetailPage = next; renderJobItems(); },
+      onPageSize: () => { jobDetailPage = 1; renderJobItems(); },
+    });
+  }
+
   async function loadDetail(id) {
     error.classList.add("hidden");
     result.classList.add("hidden");
@@ -2741,38 +2969,13 @@ function loadFactorJobsPage() {
       if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
       document.getElementById("factor-jobs-detail-title").textContent = `${payload.job?.name || "自动因子挖掘"} · ${jobStatusLabel(payload.job?.status)}`;
       document.getElementById("factor-jobs-config").textContent = payload.config_summary || "";
-      const items = payload.items || [];
-      if (!items.length) {
-        researchText(box, "div", "state", "这个任务还没有候选公式。");
-        return;
-      }
-      items.forEach((item) => {
-        const row = document.createElement("label");
-        const kept = Boolean(item.kept_in_task);
-        row.className = kept ? "factor-job-item" : "factor-job-item rejected";
-        const checkbox = document.createElement("input");
-        checkbox.type = "checkbox";
-        checkbox.value = item.candidate_id;
-        checkbox.dataset.kept = kept ? "1" : "0";
-        const unevaluable = String(item.reason || "").startsWith("evaluation_error");
-        const alreadyIn = Boolean(item.enabled);
-        checkbox.disabled = alreadyIn || unevaluable || !kept;
-        checkbox.checked = alreadyIn || (kept && !unevaluable);
-        row.append(checkbox);
-        const body = document.createElement("div");
-        researchText(body, "div", "factor-job-item-title", item.formula_label || item.formula || "未命名公式");
-        researchText(body, "div", "factor-job-item-formula", item.formula || "");
-        const meta = document.createElement("div");
-        meta.className = "factor-job-item-meta";
-        const keepTag = document.createElement("span");
-        keepTag.className = item.enabled ? "factor-job-tag ok" : (kept ? "factor-job-tag" : "factor-job-tag warn");
-        keepTag.textContent = item.enabled ? "已入库" : (kept ? "可入库" : "未达标");
-        meta.append(keepTag);
-        meta.append(document.createTextNode(`有效值占比 ${metricText(item.period_metrics, "coverage")} · 排序相关性 ${metricText(item.period_metrics, "rank_ic")} · ${item.reason_label || item.reason || ""}`));
-        body.append(meta);
-        row.append(body);
-        box.append(row);
+      jobDetailItems = payload.items || [];
+      jobDetailSelected.clear();
+      jobDetailItems.forEach((item) => {
+        if (jobItemSelectable(item)) jobDetailSelected.add(item.candidate_id);
       });
+      jobDetailPage = 1;
+      renderJobItems();
     } catch (errorValue) {
       showError(`任务详情加载失败：${errorValue.message}`);
     }
@@ -2781,20 +2984,21 @@ function loadFactorJobsPage() {
   document.getElementById("factor-jobs-select-kept")?.addEventListener("click", () => {
     error.classList.add("hidden");
     result.classList.add("hidden");
-    const boxes = [...document.querySelectorAll("#factor-jobs-items input[data-kept='1']")].filter((input) => !input.disabled);
-    if (!boxes.length) {
+    const selectable = jobDetailItems.filter(jobItemSelectable);
+    if (!selectable.length) {
       showError("没有还能勾选的公式。未达标的不能入库；已经入库的也不用再勾。");
       return;
     }
-    boxes.forEach((input) => { input.checked = true; });
-    result.textContent = `已勾选 ${boxes.length} 条可入库公式。再点「入库并计算分析」才会写入并算 IC。`;
+    selectable.forEach((item) => jobDetailSelected.add(item.candidate_id));
+    renderJobItems();
+    result.textContent = `已勾选 ${selectable.length} 条可入库公式。再点「入库并计算分析」才会写入并算 IC。`;
     result.classList.remove("hidden");
   });
 
   document.getElementById("factor-jobs-enable")?.addEventListener("click", async () => {
     error.classList.add("hidden");
     const enableButton = document.getElementById("factor-jobs-enable");
-    const checked = [...document.querySelectorAll("#factor-jobs-items input[type='checkbox']:checked:not(:disabled)")].map((input) => input.value);
+    const checked = [...jobDetailSelected];
     if (!checked.length) {
       showError("请先勾选要放进因子库的公式。");
       return;
@@ -3731,7 +3935,7 @@ window.addEventListener("DOMContentLoaded", () => {
     document.getElementById("kline-symbol").value = query.get("ts_code") || "000001.SZ";
     loadKlineVersions().then(loadKline).catch(loadKline);
   } else if (window.location.pathname === "/data") {
-    document.getElementById("apply-dataset-filters").addEventListener("click", loadDatasets);
+    document.getElementById("apply-dataset-filters").addEventListener("click", () => { datasetPage = 1; loadDatasets(); });
     document.getElementById("rescan-datasets").addEventListener("click", rescanDatasets);
     loadDatasets();
   } else if (window.location.pathname === "/factors" || window.location.pathname === "/data/factors") {

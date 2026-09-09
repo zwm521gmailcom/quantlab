@@ -31,6 +31,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_root_arguments(snapshot)
     verify = subparsers.add_parser("verify-data-baseline")
     _add_root_arguments(verify)
+    materialize = subparsers.add_parser("materialize-pack-factors")
+    _add_root_arguments(materialize)
     args = parser.parse_args(argv)
     explicit_roots = {
         name: value
@@ -50,6 +52,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         database.initialize()
         registered = DatasetCatalog(settings, database).register_configured()
         print(f"initialized {settings.database_path} ({len(registered)} datasets)")
+        return 0
+    if args.command == "materialize-pack-factors":
+        from quantlab.services.canonical_pack_factors import materialize_canonical_pack_factors
+
+        result = materialize_canonical_pack_factors(
+            settings.data_root / "canonical.parquet",
+            progress=lambda field, index, total: print(f"{index}/{total} {field}", flush=True),
+        )
+        print(f"wrote {result['path']} ({result['rows']} rows, {len(result['fields'])} fields)")
         return 0
     baseline = settings.runtime_root / "baselines/authoritative-data.json"
     if args.command == "verify-data-baseline":

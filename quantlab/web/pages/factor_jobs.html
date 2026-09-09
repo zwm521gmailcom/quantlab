@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>QuantLab · 因子计算任务</title><link rel="stylesheet" href="/assets/app.css?v=20260906ai"></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>QuantLab · 因子计算任务</title><link rel="stylesheet" href="/assets/app.css?v=20260909pager"></head>
   <body>
     <div class="shell">
       <aside><h1>QuantLab</h1><nav aria-label="主导航"><a href="/factors">因子研究</a></nav></aside>
@@ -16,12 +16,14 @@
           <p class="form-note">点开下面的任务，才能看到公式清单并勾选启用。只看这一页会以为是空的。</p>
           <div id="factor-jobs-empty" class="state hidden">还没有计算任务。先去<a href="/research/factor-mining">自动挖掘因子</a>跑一轮，结果会先出现在这里。</div>
           <div id="factor-jobs-list" class="factor-job-table"></div>
+          <div id="factor-jobs-list-pagination" class="archive-pagination"></div>
         </section>
         <section id="factor-jobs-detail-view" class="card hidden">
           <p><a id="factor-jobs-back" href="/research/factor-jobs">← 返回任务列表</a></p>
           <h3 id="factor-jobs-detail-title">任务详情</h3>
           <p id="factor-jobs-config" class="form-note"></p>
           <div id="factor-jobs-items" class="factor-job-items"></div>
+          <div id="factor-jobs-items-pagination" class="archive-pagination"></div>
           <div class="factor-form-actions">
             <button id="factor-jobs-select-kept" type="button" class="secondary">勾选可入库项</button>
             <button id="factor-jobs-enable" type="button">入库并计算分析</button>
@@ -31,7 +33,8 @@
         </section>
       </main>
     </div>
-    <script src="/assets/app.js?v=20260906ae"></script>
+    <script src="/assets/table-pager.js?v=20260909pager"></script>
+    <script src="/assets/app.js?v=20260909pager"></script>
     <script src="/assets/nav.js?v=20260907a"></script>
   </body>
 </html>

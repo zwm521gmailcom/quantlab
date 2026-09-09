@@ -46,6 +46,39 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _pct_metric(value: Any) -> dict[str, Any]:
+    if value is None or value == "":
+        return {"value": None, "display": "—"}
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return {"value": None, "display": "—"}
+    return {"value": number, "display": f"{number:.2%}"}
+
+
+def _empty_metrics() -> dict[str, Any]:
+    return {"return": _pct_metric(None), "max_drawdown": _pct_metric(None)}
+
+
+def _metrics_for_runs(connection: Any, run_ids: list[str]) -> dict[str, dict[str, Any]]:
+    if not run_ids:
+        return {}
+    placeholders = ",".join("?" for _ in run_ids)
+    rows = connection.execute(
+        "SELECT run_id, json_extract(metrics_json, '$.return') AS total_return, "
+        "json_extract(metrics_json, '$.max_drawdown') AS max_drawdown "
+        "FROM backtest_runs WHERE run_id IN (" + placeholders + ")",
+        tuple(run_ids),
+    ).fetchall()
+    return {
+        row["run_id"]: {
+            "return": _pct_metric(row["total_return"]),
+            "max_drawdown": _pct_metric(row["max_drawdown"]),
+        }
+        for row in rows
+    }
+
+
 def _summary(config: dict[str, Any]) -> dict[str, Any]:
     factors: list[str] = []
     for item in config.get("factor_versions") or []:
@@ -119,6 +152,12 @@ class BacktestPlanService:
                 "SELECT * FROM backtest_plan_items WHERE plan_id=? ORDER BY sort_order, item_id",
                 (plan_id,),
             ).fetchall()
+            views = [_item_view(item) for item in items]
+            run_ids = [item["run_id"] for item in views if item.get("run_id")]
+            metrics_by_run = _metrics_for_runs(connection, run_ids)
+        empty = _empty_metrics()
+        for item in views:
+            item["metrics"] = dict(metrics_by_run.get(item["run_id"]) or empty)
         return {
             "plan_id": row["plan_id"],
             "name": row["name"],
@@ -126,7 +165,7 @@ class BacktestPlanService:
             "closed": bool(row["closed"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
-            "items": [_item_view(item) for item in items],
+            "items": views,
         }
 
     def create(self, raw: dict[str, Any]) -> dict[str, Any]:

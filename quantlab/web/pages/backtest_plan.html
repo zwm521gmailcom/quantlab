@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuantLab · 回测计划</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20260909plan10">
+  <link rel="stylesheet" href="/assets/app.css?v=20260909plan13">
 </head>
 <body>
 <div class="shell">
@@ -49,6 +49,7 @@
     </label>
     <div id="plan-state" class="state">正在加载…</div>
     <div class="archive-table plan-table" id="plan-table"></div>
+    <div id="plan-pagination" class="archive-pagination"></div>
   </main>
 </div>
 <div id="plan-dialog" class="file-config-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="plan-dialog-title">
@@ -66,6 +67,7 @@
     </div>
   </div>
 </div>
+<script src="/assets/table-pager.js?v=20260909pager"></script>
 <script>
 const $ = (id) => document.getElementById(id);
 const STATUS = {
@@ -79,9 +81,24 @@ const STATUS = {
   failed: "失败",
   skipped: "已跳过",
 };
+const PLAN_COLUMNS = [
+  {key: "", label: "", sortable: false},
+  {key: "name", label: "任务", type: "text"},
+  {key: "factors", label: "因子", type: "text"},
+  {key: "window", label: "训练 / 回测", type: "text"},
+  {key: "model", label: "模型", type: "text"},
+  {key: "status", label: "状态", type: "text"},
+  {key: "return", label: "收益率", type: "number"},
+  {key: "max_drawdown", label: "最大回撤", type: "number"},
+  {key: "run", label: "运行", type: "text"},
+];
+const PLAN_PAGE_KEY = "quantlab-plan-page-size";
 let plans = [];
 let current = null;
 let pollTimer = 0;
+let sortKey = "";
+let sortDir = "desc";
+let planPage = 1;
 
 async function request(url, options = {}) {
   const response = await fetch(url, options);
@@ -111,6 +128,68 @@ function syncButtons() {
   $("delete-plan").disabled = !current || running || (current.items || []).length > 0;
 }
 
+function metricValue(item, key) {
+  const value = item.metrics?.[key]?.value;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function sortValue(item, key) {
+  if (key === "name") return item.name || "";
+  if (key === "factors") return (item.summary?.factors || []).join(" ");
+  if (key === "window") return `${item.summary?.train || ""} ${item.summary?.test || ""}`;
+  if (key === "model") return `${item.summary?.kind || ""} ${item.summary?.walk_forward || ""}`;
+  if (key === "status") return item.status || "";
+  if (key === "return" || key === "max_drawdown") return metricValue(item, key);
+  if (key === "run") return item.run_id || "";
+  return "";
+}
+
+function sortedItems(items) {
+  if (!sortKey) return items.slice();
+  const dir = sortDir === "asc" ? 1 : -1;
+  return items.slice().sort((left, right) => {
+    const leftValue = sortValue(left, sortKey);
+    const rightValue = sortValue(right, sortKey);
+    const leftEmpty = leftValue == null || leftValue === "";
+    const rightEmpty = rightValue == null || rightValue === "";
+    if (leftEmpty && rightEmpty) return 0;
+    if (leftEmpty) return 1;
+    if (rightEmpty) return -1;
+    if (typeof leftValue === "number" && typeof rightValue === "number") return (leftValue - rightValue) * dir;
+    return String(leftValue).localeCompare(String(rightValue), "zh") * dir;
+  });
+}
+
+function setSort(key) {
+  const column = PLAN_COLUMNS.find((item) => item.key === key);
+  if (!column || !key) return;
+  const numeric = column.type === "number";
+  if (sortKey !== key) {
+    sortKey = key;
+    sortDir = numeric ? "desc" : "asc";
+  } else if ((numeric && sortDir === "desc") || (!numeric && sortDir === "asc")) {
+    sortDir = sortDir === "asc" ? "desc" : "asc";
+  } else {
+    sortKey = "";
+  }
+  renderTable();
+}
+
+function metricCell(item, key) {
+  const metric = item.metrics?.[key];
+  const cell = document.createElement("td");
+  const display = metric?.display || "—";
+  cell.className = "archive-num";
+  cell.textContent = display;
+  if (display === "—" || metric?.value == null || metric?.value === "") {
+    cell.classList.add("is-empty");
+    return cell;
+  }
+  const number = Number(metric.value);
+  if (!Number.isNaN(number) && number !== 0) cell.classList.add(number < 0 ? "is-neg" : "is-pos");
+  return cell;
+}
+
 function renderSelect() {
   const select = $("plan-select");
   select.replaceChildren();
@@ -132,21 +211,58 @@ function renderSelect() {
 
 function renderTable() {
   const wrap = $("plan-table");
+  const pagerHost = $("plan-pagination");
   wrap.replaceChildren();
   if (!current) {
     $("plan-state").textContent = "还没有回测计划。";
+    if (pagerHost) {
+      pagerHost.replaceChildren();
+      pagerHost.hidden = true;
+    }
     syncButtons();
     return;
   }
+  if (pagerHost) pagerHost.hidden = false;
   const running = current.items.filter((item) => item.status === "running").length;
   const pending = current.items.filter((item) => item.status === "pending").length;
   const done = current.items.filter((item) => item.status === "completed").length;
   $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${running ? "，正在跑 1 笔" : ""}`;
   const table = document.createElement("table");
   table.className = "archive-grid plan-grid";
-  table.innerHTML = "<thead><tr><th><input id=\"plan-select-all\" type=\"checkbox\" aria-label=\"全选任务\"></th><th>任务</th><th>因子</th><th>训练 / 回测</th><th>模型</th><th>状态</th><th>运行</th></tr></thead>";
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  PLAN_COLUMNS.forEach((column) => {
+    const th = document.createElement("th");
+    if (!column.key) {
+      const input = document.createElement("input");
+      input.id = "plan-select-all";
+      input.type = "checkbox";
+      input.setAttribute("aria-label", "全选任务");
+      th.append(input);
+    } else {
+      th.className = "plan-sortable";
+      th.dataset.sort = column.key;
+      th.setAttribute("aria-sort", sortKey === column.key ? (sortDir === "asc" ? "ascending" : "descending") : "none");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = column.label;
+      button.addEventListener("click", () => setSort(column.key));
+      th.append(button);
+      th.addEventListener("click", (event) => {
+        if (event.target === button) return;
+        setSort(column.key);
+      });
+    }
+    headRow.append(th);
+  });
+  head.append(headRow);
+  table.append(head);
   const body = document.createElement("tbody");
-  current.items.forEach((item) => {
+  const pageSize = QuantLabPager.readSize(PLAN_PAGE_KEY, QuantLabPager.DEFAULT_SIZES, 20);
+  const items = sortedItems(current.items || []);
+  const pages = QuantLabPager.pagesFor(items.length, pageSize);
+  planPage = QuantLabPager.clampPage(planPage, pages);
+  QuantLabPager.slice(items, planPage, pageSize).forEach((item) => {
     const row = document.createElement("tr");
     const check = document.createElement("td");
     const input = document.createElement("input");
@@ -215,11 +331,20 @@ function renderTable() {
     } else {
       run.textContent = "尚未运行";
     }
-    row.append(check, name, factors, windowCell, model, status, run);
+    row.append(check, name, factors, windowCell, model, status, metricCell(item, "return"), metricCell(item, "max_drawdown"), run);
     body.append(row);
   });
   table.append(body);
   wrap.append(table);
+  QuantLabPager.mount(pagerHost, {
+    page: planPage,
+    pages,
+    pageSize,
+    total: items.length,
+    storageKey: PLAN_PAGE_KEY,
+    onPage: (next) => { planPage = next; renderTable(); },
+    onPageSize: () => { planPage = 1; renderTable(); },
+  });
   const headerCheck = $("plan-select-all");
   if (headerCheck) {
     const items = current.items || [];
@@ -302,6 +427,7 @@ async function load() {
 
 $("plan-select").addEventListener("change", () => {
   current = plans.find((plan) => plan.plan_id === $("plan-select").value) || null;
+  planPage = 1;
   const url = new URL(window.location.href);
   if (current) url.searchParams.set("plan_id", current.plan_id);
   else url.searchParams.delete("plan_id");

@@ -139,5 +139,5 @@ def test_factor_detail_renders_conditional_ic_charts(browser_server: str, page: 
     expect(page.locator("#factor-run-analysis")).to_have_text("重新运行分析")
     expect(page.locator("#factor-run-analysis")).to_be_enabled()
     expect(page.locator("#factor-sample .factor-row:not(.factor-header)")).to_have_count(10)
-    expect(page.locator(".factor-sample-note")).to_contain_text("仅展示 10 行")
+    expect(page.locator(".factor-sample-note")).to_contain_text("每页默认 10 行")
     assert errors == []

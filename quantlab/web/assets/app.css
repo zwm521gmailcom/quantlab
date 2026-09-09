@@ -809,6 +809,7 @@ button.secondary { background: var(--color-bg-card); border-color: var(--color-b
 .archive-window div { display: block; white-space: nowrap; }
 .archive-window div + div { margin-top: 2px; }
 .archive-num { color: var(--color-text); font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.archive-num.is-pos { color: var(--color-ok); }
 .archive-num.is-neg { color: var(--color-danger); }
 .archive-num.is-empty { color: var(--color-text-muted); font-weight: 400; }
 .archive-bench { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: 12px; white-space: nowrap; }
@@ -826,13 +827,22 @@ button.secondary { background: var(--color-bg-card); border-color: var(--color-b
   padding: 2px 8px; border-radius: var(--radius-md); background: var(--color-danger-bg); color: var(--color-danger);
 }
 .archive-pagination {
-  display: flex; align-items: baseline; gap: 16px; margin-top: 4px; padding-top: 12px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin-top: 4px; padding-top: 12px;
   border-top: 1px solid var(--color-border-light); color: var(--color-text-secondary); font-size: 13px;
 }
+.archive-pagination[hidden] { display: none; }
 main .archive-pagination button:not([class]) {
   min-height: 0; padding: 0; border: 0; background: transparent; color: var(--color-primary); font-weight: 600; cursor: pointer;
 }
 main .archive-pagination button:not([class]):disabled { color: var(--color-text-muted); opacity: 1; cursor: not-allowed; }
+.table-page-size {
+  display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--color-text); white-space: nowrap;
+}
+.archive-pagination .table-page-size select,
+.table-page-size select {
+  min-height: 28px; min-width: 64px; padding: 2px 6px; border: 1px solid var(--color-border);
+  border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); font: inherit; font-size: 13px;
+}
 
 .btn { font-family: inherit; }
 .equity-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
@@ -906,6 +916,9 @@ html.dark main .archive-pagination button:not([class]) {
   background: transparent; border: 0; color: var(--color-primary); box-shadow: none;
 }
 html.dark main .archive-pagination button:not([class]):disabled { color: var(--color-text-muted); }
+html.dark .table-page-size select {
+  background: var(--color-bg-input); color: var(--color-text); border-color: var(--color-border);
+}
 html.dark button.info-dot { background: transparent; color: var(--color-text-muted); border: 0; }
 html.dark .factor-chip button { all: unset; cursor: pointer; font-size: 13px; line-height: 1; color: inherit; }
 html.dark .multi-select-toggle {
@@ -943,8 +956,8 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
 .plan-page .archive-name { overflow-wrap: break-word; }
 .archive-grid.plan-grid {
   width: 100%;
-  min-width: 900px;
-  table-layout: auto;
+  min-width: 1180px;
+  table-layout: fixed;
 }
 .archive-grid.plan-grid th:nth-child(n),
 .archive-grid.plan-grid td:nth-child(n) { width: auto; }
@@ -953,27 +966,44 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
   width: 40px; min-width: 40px; max-width: 40px;
   padding-right: 8px; text-align: center; vertical-align: middle;
 }
-.archive-grid.plan-grid td:nth-child(2) { min-width: 148px; }
-.archive-grid.plan-grid td:nth-child(3) { width: 42%; min-width: 180px; }
+.archive-grid.plan-grid th:nth-child(2),
+.archive-grid.plan-grid td:nth-child(2) { width: 16%; min-width: 132px; }
+.archive-grid.plan-grid th:nth-child(3),
+.archive-grid.plan-grid td:nth-child(3) {
+  width: 18%; min-width: 132px; white-space: normal; overflow-wrap: anywhere;
+}
 .archive-grid.plan-grid th:nth-child(n+4),
 .archive-grid.plan-grid td:nth-child(n+4) { text-align: left; }
-.archive-grid.plan-grid td:nth-child(4) { min-width: 168px; }
-.archive-grid.plan-grid td:nth-child(5) { min-width: 108px; }
-.archive-grid.plan-grid td:nth-child(6) { min-width: 64px; }
-.archive-grid.plan-grid td:nth-child(7) { min-width: 72px; }
+.archive-grid.plan-grid td:nth-child(4) { width: 14%; min-width: 148px; }
+.archive-grid.plan-grid td:nth-child(5) { width: 10%; min-width: 96px; }
+.archive-grid.plan-grid td:nth-child(6) { width: 8%; min-width: 64px; }
+.archive-grid.plan-grid th:nth-child(7),
+.archive-grid.plan-grid td:nth-child(7),
+.archive-grid.plan-grid th:nth-child(8),
+.archive-grid.plan-grid td:nth-child(8) {
+  width: 8%; min-width: 88px; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.archive-grid.plan-grid td:nth-child(9) { width: 14%; min-width: 168px; }
 .archive-grid.plan-grid th:nth-child(4),
 .archive-grid.plan-grid td:nth-child(4),
 .archive-grid.plan-grid th:nth-child(5),
 .archive-grid.plan-grid td:nth-child(5),
-.archive-grid.plan-grid th:nth-child(7),
-.archive-grid.plan-grid td:nth-child(7) { white-space: nowrap; }
+.archive-grid.plan-grid th:nth-child(9),
+.archive-grid.plan-grid td:nth-child(9) { white-space: nowrap; }
+.archive-grid.plan-grid td:nth-child(9) a { white-space: nowrap; }
 .archive-grid.plan-grid th:last-child,
 .archive-grid.plan-grid td:last-child { text-align: left; }
 .archive-grid.plan-grid .archive-window div { white-space: nowrap; }
-.plan-factors { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.archive-grid.plan-grid th.plan-sortable { cursor: pointer; user-select: none; }
+.archive-grid.plan-grid th.plan-sortable button {
+  all: unset; display: inline; cursor: pointer; color: inherit; font: inherit; font-weight: inherit;
+}
+.archive-grid.plan-grid th.plan-sortable[aria-sort="ascending"]::after { content: " ↑"; }
+.archive-grid.plan-grid th.plan-sortable[aria-sort="descending"]::after { content: " ↓"; }
+.plan-factors { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px 8px; max-width: 100%; }
 .plan-factors span {
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.35; white-space: nowrap;
-  color: var(--color-text-secondary);
+  display: inline-block; font-family: var(--font-mono); font-size: 12px; line-height: 1.35;
+  white-space: nowrap; color: var(--color-text-secondary);
 }
 .plan-dialog { width: min(420px, calc(100vw - 30px)); display: grid; gap: 12px; }
 .plan-dialog label { display: grid; gap: 6px; color: var(--color-text-secondary); font-size: 13px; }

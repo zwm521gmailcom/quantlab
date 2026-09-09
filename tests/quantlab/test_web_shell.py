@@ -66,7 +66,10 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert ".archive-grid.plan-grid th:nth-child(1)" in css
     assert "width: 40px; min-width: 40px; max-width: 40px;" in css
     html = _page("backtest_plan.html")
-    assert "app.css?v=20260909plan10" in html
+    assert "app.css?v=20260909plan13" in html
+    assert 'id="plan-pagination"' in html
+    assert "table-pager.js" in html
+    assert "QuantLabPager.mount" in html
     assert 'id="new-plan"' in html
     assert 'id="plan-dialog"' in html
     assert 'id="delete-plan"' in html
@@ -81,8 +84,15 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert 'factorList.className = "plan-factors"' in html
     assert "model.children[1].textContent" in html
     assert "lightgbm_tree ·" not in html
+    assert "收益率" in html
+    assert "最大回撤" in html
+    assert "plan-sortable" in html
+    assert "function setSort(key)" in html
+    assert "metricCell(item, \"return\")" in html
+    assert "table-layout: fixed" in css
     assert ".plan-factors { display: flex; flex-wrap: wrap;" in css
     assert ".plan-factors span" in css
+    assert "th.plan-sortable" in css
 
 
 def test_factor_jobs_list_renders_basic_fields_as_a_table() -> None:
@@ -90,6 +100,9 @@ def test_factor_jobs_list_renders_basic_fields_as_a_table() -> None:
     html = _page("factor_jobs.html")
     css = Path("quantlab/web/assets/app.css").read_text()
     assert 'id="factor-jobs-list"' in html
+    assert 'id="factor-jobs-list-pagination"' in html
+    assert 'id="factor-jobs-items-pagination"' in html
+    assert "table-pager.js" in html
     assert 'class="factor-job-table"' in html
     assert 'table.className = "factor-job-grid"' in js
     assert '["任务", "状态", "市场", "区间", "字段", "变换", "窗口", "可勾选", "未达标", "已入库", "创建"]' in js
@@ -405,7 +418,9 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     assert "每页最大显示数量" in html
     assert 'data-factor-page-size="1"' in html
     assert 'class="factor-data-page"' in html
-    assert "app.css?v=20260909page3" in html
+    assert "app.css?v=20260909page4" in html
+    assert 'id="factor-sample-pagination"' in html
+    assert "每页默认 10 行" in html
     assert 'function factorCatalogPageSize' in app
     assert "FACTOR_PAGE_SIZES = [50, 100, 200, 500]" in app
     assert "function ensureFactorPageSizeControl" in app
@@ -532,6 +547,31 @@ def test_result_archive_filters_use_model_not_strategy_labels() -> None:
     assert "未登记策略" not in html
     assert "未登记模型" in html
     assert "策略中心" not in html
+    assert 'id="archive-pagination"' in html
+    assert "table-pager.js" in html
+    assert "quantlab-archive-page-size" in html
+
+
+def test_table_pages_share_page_size_pager() -> None:
+    pager = Path("quantlab/web/assets/table-pager.js").read_text()
+    css = Path("quantlab/web/assets/app.css").read_text()
+    app = Path("quantlab/web/assets/app.js").read_text()
+    assert "global.QuantLabPager" in pager
+    assert "每页 " in pager
+    assert "每页显示行数" in pager
+    assert ".table-page-size" in css
+    assert "function bindTablePager" in app
+    assert "quantlab-dataset-page-size" in app
+    assert "quantlab-kline-page-size" in app
+    assert "quantlab-factor-sample-page-size" in app
+    data = _page("data.html")
+    kline = _page("kline.html")
+    archive = _page("result_archive.html")
+    assert 'id="dataset-pagination"' in data
+    assert "table-pager.js" in data
+    assert 'id="kline-pagination"' in kline
+    assert "table-pager.js" in kline
+    assert 'id="archive-pagination"' in archive
 
 
 def test_nav_exposes_rule_backtest_page() -> None:

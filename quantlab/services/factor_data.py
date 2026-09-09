@@ -359,7 +359,11 @@ class FactorDataService:
                 path = self.settings.require_read_path(row["path"])
                 stats = self._footer_stats(path, factor_id)
             except (ValueError, OSError):
-                stats = {"row_count": row["row_count"], "missing_rows": None, "coverage": None}
+                sidecar = Path(str(row["path"])).expanduser().resolve().parent / "derived" / "canonical_pack_factors.parquet"
+                try:
+                    stats = self._footer_stats(self.settings.require_read_path(sidecar), factor_id)
+                except (ValueError, OSError):
+                    stats = {"row_count": row["row_count"], "missing_rows": None, "coverage": None}
             metadata = json.loads(row["metadata_json"] or "{}")
             items.append({
                 "factor_id": factor_id,

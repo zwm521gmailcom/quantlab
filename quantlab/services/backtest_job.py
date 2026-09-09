@@ -214,6 +214,52 @@ def eval_expression_mask(frame: pd.DataFrame, expressions: list[str]) -> pd.Seri
     return mask
 
 
+def attach_sma(frame: pd.DataFrame, window: int = 200) -> pd.DataFrame:
+    column = f"sma_{int(window)}"
+    if frame is None or getattr(frame, "empty", True) or column in frame.columns:
+        return frame
+    result = frame.copy()
+    if "date" not in result.columns and "trade_date" in result.columns:
+        result["date"] = result["trade_date"]
+    if "instrument" not in result.columns and "ts_code" in result.columns:
+        result["instrument"] = result["ts_code"]
+    if "instrument" not in result.columns:
+        result["instrument"] = "_index"
+    if "date" not in result.columns:
+        return result
+    price_name = "hfq_close" if "hfq_close" in result.columns else "close"
+    if price_name not in result.columns:
+        return result
+    order = result.sort_values(["instrument", "date"], kind="mergesort")
+    price = pd.to_numeric(order[price_name], errors="coerce")
+    sma = price.groupby(order["instrument"], sort=False).transform(
+        lambda values: values.rolling(int(window), min_periods=int(window)).mean()
+    )
+    result[column] = sma.reindex(result.index)
+    return result
+
+
+def _sma_expressions_from_config(config: dict[str, Any] | None) -> list[str]:
+    payload = config if isinstance(config, dict) else {}
+    exprs: list[str] = []
+    pretrade = payload.get("pretrade_filters") if isinstance(payload.get("pretrade_filters"), dict) else {}
+    exprs.extend(_expression_list(pretrade.get("stock")))
+    for key in ("train", "test", "validation"):
+        section = payload.get(key)
+        if not isinstance(section, dict):
+            continue
+        filt = section.get("filter") if isinstance(section.get("filter"), dict) else {}
+        exprs.extend(_expression_list(filt.get("expressions")))
+    return exprs
+
+
+def _attach_config_sma(frame: pd.DataFrame, config: dict[str, Any] | None) -> pd.DataFrame:
+    exprs = _sma_expressions_from_config(config)
+    if not exprs or not needs_sma200(exprs):
+        return frame
+    return attach_sma(frame)
+
+
 def _ensure_sma(frame: pd.DataFrame, expressions: list[str]) -> pd.DataFrame:
     if not expressions or not needs_sma200(expressions):
         return frame
@@ -612,3 +658,17 @@ def _step(self, run_id: str, ordinal: int, status: str, error=None) -> None:
 
 
 BacktestJobService._step = _step
+
+_original_load_frame = BacktestJobService._load_frame
+
+
+def _load_frame_with_pack_factors(self, path, config):
+    from quantlab.services.canonical_pack_factors import attach_pack_factor_columns, default_sidecar_path
+
+    frame = _original_load_frame(self, path, config)
+    refs = (config or {}).get("factor_versions") or []
+    frame = attach_pack_factor_columns(frame, refs, default_sidecar_path(path))
+    return _attach_config_sma(frame, config)
+
+
+BacktestJobService._load_frame = _load_frame_with_pack_factors

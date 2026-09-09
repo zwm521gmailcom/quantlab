@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from quantlab.api.app import create_app
@@ -42,6 +44,8 @@ def test_create_plan_stores_items_without_running(tmp_path: Path) -> None:
     assert body["status"] == "draft"
     assert len(body["items"]) == 2
     assert all(item["status"] == "pending" and item["selected"] is True for item in body["items"])
+    assert body["items"][0]["metrics"]["return"] == {"value": None, "display": "—"}
+    assert body["items"][0]["metrics"]["max_drawdown"]["display"] == "—"
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()[0] == 0
 
@@ -76,6 +80,17 @@ def test_start_runs_selected_items_serially(tmp_path: Path) -> None:
     assert finished["items"][0]["finished_at"]
     assert finished["items"][1]["started_at"]
     assert finished["items"][0]["finished_at"] <= finished["items"][1]["started_at"]
+    run_id = run_ids[0]
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET metrics_json=? WHERE run_id=?",
+            (json.dumps({"return": 0.1234, "max_drawdown": -0.0567}), run_id),
+        )
+    metrics = client.get(f"/api/backtest-plans/{plan_id}").json()["items"][0]["metrics"]
+    assert metrics["return"]["value"] == pytest.approx(0.1234)
+    assert metrics["return"]["display"] == "12.34%"
+    assert metrics["max_drawdown"]["value"] == pytest.approx(-0.0567)
+    assert metrics["max_drawdown"]["display"] == "-5.67%"
 
 
 def test_start_skips_unselected_and_completed_items(tmp_path: Path) -> None:
@@ -270,6 +285,10 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert 'id="delete-items"' in html
     assert "删除任务" in html
     assert "/api/backtest-plans/" in html and "/items/delete" in html
+    assert "收益率" in html
+    assert "最大回撤" in html
+    assert "plan-sortable" in html
+    assert 'dataset.sort = column.key' in html or "dataset.sort" in html
     workbench = client.get("/backtests/new").text
     assert "加入计划" in workbench
     assert "/backtests/plan" in workbench
