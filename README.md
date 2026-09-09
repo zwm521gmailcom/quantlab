@@ -64,5 +64,3 @@ pytest tests/quantlab/browser -q
 - `quantlab/` 应用：API、服务、页面、策略注册表
 - `tests/quantlab/` 单元测试与 Playwright 页面测试
 - `docs/specs/`、`docs/plans/` 设计与实现计划
-
-部分训练/回测模块目前以恢复出的 `.pyc` 运行（`quantlab/services/_recovered_pyc/`），对应 `.py` 是加载器。

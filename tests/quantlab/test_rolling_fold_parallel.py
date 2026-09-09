@@ -156,29 +156,3 @@ def test_rolling_predictions_parallel_scores_match_serial(monkeypatch) -> None:
     assert [row["month"] for row in serial_folds] == [row["month"] for row in parallel_folds]
     assert [row["train_rows"] for row in serial_folds] == [row["train_rows"] for row in parallel_folds]
 
-
-def test_rolling_predictions_workers_one_matches_original(monkeypatch) -> None:
-    from quantlab.services.backtest_job import _original_rolling_predictions
-
-    monkeypatch.setenv("QUANTLAB_FOLD_WORKERS", "1")
-    frame = _panel()
-    job = BacktestJobService.__new__(BacktestJobService)
-    train, test = _split(frame)
-    kwargs = dict(
-        frame=frame,
-        train=train,
-        test=test,
-        config=_config(),
-        kind="ridge_linear",
-        params={"alpha": 1.0, "random_seed": 123},
-        feature_fields=["momentum_5"],
-        holding_days=2,
-        filter_notes=[],
-    )
-    original_pred, _, original_folds = _original_rolling_predictions(job, **kwargs)
-    updated_pred, _, updated_folds = job._rolling_predictions(**kwargs)
-    left = original_pred.sort_values(["date", "instrument"]).reset_index(drop=True)
-    right = updated_pred.sort_values(["date", "instrument"]).reset_index(drop=True)
-    pd.testing.assert_frame_equal(left, right, check_dtype=False)
-    assert [row["month"] for row in original_folds] == [row["month"] for row in updated_folds]
-    assert [row["train_rows"] for row in original_folds] == [row["train_rows"] for row in updated_folds]
