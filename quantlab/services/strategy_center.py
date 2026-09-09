@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from quantlab.config import Settings
+from quantlab.domain.status import LifecycleStatus, RunStatus, transition
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
 from quantlab.repositories.factors import FactorRepository
@@ -125,7 +126,9 @@ class StrategyCenterService:
             row = connection.execute("SELECT status FROM model_training_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise ValueError("training run not found")
-            connection.execute("UPDATE model_training_runs SET status=? WHERE run_id=?", (status, run_id))
+            current = row["status"]
+            next_status = transition(RunStatus(current), RunStatus(status)).value
+            connection.execute("UPDATE model_training_runs SET status=? WHERE run_id=?", (next_status, run_id))
             if status in {"completed", "failed"}:
                 connection.execute("UPDATE run_registry SET finished_at=CURRENT_TIMESTAMP WHERE run_id=?", (run_id,))
         return self.get_training_run(run_id) or {}
@@ -142,10 +145,20 @@ class StrategyCenterService:
                 raise ValueError("ModelVersion is immutable")
             if row["quality_status"] != "passed":
                 raise ValueError("model version quality gate failed")
-            connection.execute("UPDATE model_versions SET status='validated' WHERE entity_id=? AND version_id=?", (entity_id, version_id))
-            connection.execute("UPDATE model_versions SET status='published' WHERE entity_id=? AND version_id=?", (entity_id, version_id))
-            connection.execute("UPDATE models SET status='validated' WHERE entity_id=? AND status='draft'", (entity_id,))
-            connection.execute("UPDATE models SET status='published' WHERE entity_id=?", (entity_id,))
+            next_status = transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED).value
+            connection.execute("UPDATE model_versions SET status=? WHERE entity_id=? AND version_id=?", (next_status, entity_id, version_id))
+            next_status = transition(LifecycleStatus.VALIDATED, LifecycleStatus.PUBLISHED).value
+            connection.execute("UPDATE model_versions SET status=? WHERE entity_id=? AND version_id=?", (next_status, entity_id, version_id))
+            parent_row = connection.execute("SELECT status FROM models WHERE entity_id=?", (entity_id,)).fetchone()
+            if parent_row is not None:
+                parent_status = parent_row["status"]
+                if parent_status == "draft":
+                    next_status = transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED).value
+                    connection.execute("UPDATE models SET status=? WHERE entity_id=?", (next_status, entity_id))
+                    parent_status = next_status
+                if parent_status == "validated":
+                    next_status = transition(LifecycleStatus.VALIDATED, LifecycleStatus.PUBLISHED).value
+                    connection.execute("UPDATE models SET status=? WHERE entity_id=?", (next_status, entity_id))
         return self.get_model_version(entity_id, version_id) or {}
 
     def update_model_version(self, entity_id: str, version_id: str, patch: dict[str, Any]) -> dict[str, Any]:
@@ -194,10 +207,20 @@ class StrategyCenterService:
                 raise ValueError("strategy version not found")
             if row["status"] != "draft" or row["quality_status"] != "passed":
                 raise ValueError("strategy version cannot be published")
-            connection.execute("UPDATE strategy_versions SET status='validated' WHERE entity_id=? AND version_id=?", (entity_id, version_id))
-            connection.execute("UPDATE strategy_versions SET status='published' WHERE entity_id=? AND version_id=?", (entity_id, version_id))
-            connection.execute("UPDATE strategies SET status='validated' WHERE entity_id=? AND status='draft'", (entity_id,))
-            connection.execute("UPDATE strategies SET status='published' WHERE entity_id=?", (entity_id,))
+            next_status = transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED).value
+            connection.execute("UPDATE strategy_versions SET status=? WHERE entity_id=? AND version_id=?", (next_status, entity_id, version_id))
+            next_status = transition(LifecycleStatus.VALIDATED, LifecycleStatus.PUBLISHED).value
+            connection.execute("UPDATE strategy_versions SET status=? WHERE entity_id=? AND version_id=?", (next_status, entity_id, version_id))
+            parent_row = connection.execute("SELECT status FROM strategies WHERE entity_id=?", (entity_id,)).fetchone()
+            if parent_row is not None:
+                parent_status = parent_row["status"]
+                if parent_status == "draft":
+                    next_status = transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED).value
+                    connection.execute("UPDATE strategies SET status=? WHERE entity_id=?", (next_status, entity_id))
+                    parent_status = next_status
+                if parent_status == "validated":
+                    next_status = transition(LifecycleStatus.VALIDATED, LifecycleStatus.PUBLISHED).value
+                    connection.execute("UPDATE strategies SET status=? WHERE entity_id=?", (next_status, entity_id))
         return self.get_strategy_version(entity_id, version_id) or {}
 
     def copy_strategy_version(self, entity_id: str, version_id: str) -> dict[str, Any]:

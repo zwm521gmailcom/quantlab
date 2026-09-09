@@ -20,6 +20,7 @@ import pyarrow.parquet as pq
 
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
+from quantlab.repositories.research_runs import ResearchRunRepository
 
 
 FEATURE_FIELDS = (
@@ -733,6 +734,7 @@ class FactorDataService:
             "version_id": version_id,
             "max_rows": max_rows,
         }
+        runs = ResearchRunRepository(self.settings, self.database)
         with self.database.transaction() as connection:
             connection.execute(
                 "INSERT INTO run_registry(run_id, run_type) VALUES (?, 'research')",
@@ -742,9 +744,7 @@ class FactorDataService:
                 "INSERT INTO research_runs(run_id, status, config_json) VALUES (?, 'queued', ?)",
                 (run_id, json.dumps(config, ensure_ascii=False, sort_keys=True)),
             )
-            connection.execute(
-                "UPDATE research_runs SET status='running' WHERE run_id=?", (run_id,)
-            )
+        runs.transition(run_id, "running")
         try:
             result = self.query(
                 factor=factor_id, symbols=normalized_symbols, date_from=date_from,
@@ -774,14 +774,9 @@ class FactorDataService:
                 artifacts.register(run_id=run_id, path=manifest_path,
                                    display_name="因子查询清单", artifact_role="query_manifest"),
             ]
-            with self.database.transaction() as connection:
-                connection.execute("UPDATE research_runs SET status='completed' WHERE run_id=?", (run_id,))
+            runs.transition(run_id, "completed")
         except Exception as error:
-            with self.database.transaction() as connection:
-                connection.execute(
-                    "UPDATE research_runs SET status='failed', error_message=? WHERE run_id=?",
-                    (str(error), run_id),
-                )
+            runs.fail(run_id, str(error))
             raise
         return {
             "run_id": run_id,

@@ -12,6 +12,7 @@ from typing import Any
 import pyarrow.parquet as pq
 
 from quantlab.config import Settings
+from quantlab.domain.status import LifecycleStatus, transition
 from quantlab.repositories.database import Database
 from quantlab.services.factor_data import FEATURE_FIELDS
 
@@ -654,24 +655,31 @@ class FactorRepository:
             require_dataset_quality_passed=require_dataset_quality_passed,
         )
         timestamp = _now()
-        if row["status"] == "draft":
+        version_status = row["status"]
+        if version_status == "draft":
+            next_status = transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED).value
             connection.execute(
-                "UPDATE factor_versions SET status='validated', last_verified_at=? WHERE entity_id=? AND version_id=?",
-                (timestamp, entity_id, version_id),
+                "UPDATE factor_versions SET status=?, last_verified_at=? WHERE entity_id=? AND version_id=?",
+                (next_status, timestamp, entity_id, version_id),
             )
-        connection.execute(
-            "UPDATE factor_versions SET status='published', last_verified_at=? WHERE entity_id=? AND version_id=?",
-            (timestamp, entity_id, version_id),
-        )
+            version_status = next_status
+        if version_status == "validated":
+            next_status = transition(LifecycleStatus.VALIDATED, LifecycleStatus.PUBLISHED).value
+            connection.execute(
+                "UPDATE factor_versions SET status=?, last_verified_at=? WHERE entity_id=? AND version_id=?",
+                (next_status, timestamp, entity_id, version_id),
+            )
         factor_status_row = connection.execute("SELECT status FROM factors WHERE entity_id=?", (entity_id,)).fetchone()
         if factor_status_row is None:
             raise ValueError("Factor not found")
         factor_status = factor_status_row[0]
         if factor_status == "draft":
-            connection.execute("UPDATE factors SET status='validated' WHERE entity_id=?", (entity_id,))
-            factor_status = "validated"
+            next_status = transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED).value
+            connection.execute("UPDATE factors SET status=? WHERE entity_id=?", (next_status, entity_id))
+            factor_status = next_status
         if factor_status == "validated":
-            connection.execute("UPDATE factors SET status='published' WHERE entity_id=?", (entity_id,))
+            next_status = transition(LifecycleStatus.VALIDATED, LifecycleStatus.PUBLISHED).value
+            connection.execute("UPDATE factors SET status=? WHERE entity_id=?", (next_status, entity_id))
         updated = self._row(entity_id, version_id, connection)
         return self._public(updated) if updated is not None else {}
 
@@ -710,9 +718,10 @@ class FactorRepository:
             raise ValueError("FactorVersion not found")
         if row["status"] != "published":
             raise ValueError("only published FactorVersion can be deprecated")
+        next_status = transition(LifecycleStatus.PUBLISHED, LifecycleStatus.DEPRECATED).value
         connection.execute(
-            "UPDATE factor_versions SET status='deprecated' WHERE entity_id=? AND version_id=?",
-            (entity_id, version_id),
+            "UPDATE factor_versions SET status=? WHERE entity_id=? AND version_id=?",
+            (next_status, entity_id, version_id),
         )
         updated = self._row(entity_id, version_id, connection)
         return self._public(updated) if updated is not None else {}

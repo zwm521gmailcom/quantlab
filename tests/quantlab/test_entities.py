@@ -15,7 +15,7 @@ from quantlab.domain.entities import (
     Strategy,
     StrategyVersion,
 )
-from quantlab.domain.status import LifecycleStatus, RunStatus, transition
+from quantlab.domain.status import BacktestRunStatus, LifecycleStatus, RunStatus, transition
 
 
 def test_entities_require_stable_ids() -> None:
@@ -67,6 +67,8 @@ def test_run_entities_reject_invalid_run_id_format(entity) -> None:
 def test_illegal_lifecycle_and_run_transitions_are_rejected() -> None:
     assert transition(LifecycleStatus.DRAFT, LifecycleStatus.VALIDATED) == LifecycleStatus.VALIDATED
     with pytest.raises(ValueError, match="not allowed"):
+        transition(LifecycleStatus.DRAFT, LifecycleStatus.PUBLISHED)
+    with pytest.raises(ValueError, match="not allowed"):
         transition(LifecycleStatus.PUBLISHED, LifecycleStatus.DRAFT)
     with pytest.raises(ValueError, match="not allowed"):
         transition(LifecycleStatus.DEPRECATED, LifecycleStatus.PUBLISHED)
@@ -77,3 +79,16 @@ def test_illegal_lifecycle_and_run_transitions_are_rejected() -> None:
     with pytest.raises(ValueError, match="not allowed"):
         transition(RunStatus.QUEUED, RunStatus.FAILED)
     assert transition(RunStatus.RUNNING, RunStatus.FAILED) == RunStatus.FAILED
+
+
+def test_backtest_run_allows_failed_to_running() -> None:
+    assert transition(BacktestRunStatus.FAILED, BacktestRunStatus.RUNNING) == BacktestRunStatus.RUNNING
+    assert transition(BacktestRunStatus.QUEUED, BacktestRunStatus.RUNNING) == BacktestRunStatus.RUNNING
+    with pytest.raises(ValueError, match="not allowed"):
+        transition(BacktestRunStatus.QUEUED, BacktestRunStatus.COMPLETED)
+    with pytest.raises(ValueError, match="not allowed"):
+        transition(BacktestRunStatus.COMPLETED, BacktestRunStatus.RUNNING)
+    with pytest.raises(ValueError, match="not allowed"):
+        transition(RunStatus.FAILED, RunStatus.RUNNING)
+    with pytest.raises(ValueError, match="types do not match"):
+        transition(RunStatus.FAILED, BacktestRunStatus.RUNNING)
