@@ -20,6 +20,13 @@ class RunStatus(str, Enum):
     FAILED = "failed"
 
 
+class BacktestRunStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class QualityStatus(str, Enum):
     PASSED = "passed"
     WARNING = "warning"
@@ -39,8 +46,20 @@ _RUN_TRANSITIONS = {
     RunStatus.COMPLETED: set(),
     RunStatus.FAILED: set(),
 }
+_BACKTEST_RUN_TRANSITIONS = {
+    BacktestRunStatus.QUEUED: {BacktestRunStatus.RUNNING},
+    BacktestRunStatus.RUNNING: {BacktestRunStatus.COMPLETED, BacktestRunStatus.FAILED},
+    BacktestRunStatus.COMPLETED: set(),
+    BacktestRunStatus.FAILED: {BacktestRunStatus.RUNNING},
+}
 
-StatusType = TypeVar("StatusType", LifecycleStatus, RunStatus)
+_TRANSITIONS = {
+    LifecycleStatus: _LIFECYCLE_TRANSITIONS,
+    RunStatus: _RUN_TRANSITIONS,
+    BacktestRunStatus: _BACKTEST_RUN_TRANSITIONS,
+}
+
+StatusType = TypeVar("StatusType", LifecycleStatus, RunStatus, BacktestRunStatus)
 
 
 def transition(current: StatusType, target: StatusType) -> StatusType:
@@ -48,7 +67,7 @@ def transition(current: StatusType, target: StatusType) -> StatusType:
 
     if type(current) is not type(target):
         raise ValueError("status transition types do not match")
-    transitions = _LIFECYCLE_TRANSITIONS if isinstance(current, LifecycleStatus) else _RUN_TRANSITIONS
-    if target not in transitions[current]:
+    allowed = _TRANSITIONS[type(current)]
+    if target not in allowed[current]:
         raise ValueError(f"status transition {current.value} -> {target.value} is not allowed")
     return target

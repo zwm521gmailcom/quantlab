@@ -19,7 +19,9 @@ import pyarrow.compute as pc
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
+from quantlab.domain.status import BacktestRunStatus
 from quantlab.repositories.artifacts import ArtifactRepository
+from quantlab.repositories.run_lifecycle import transition_backtest_run_status
 from quantlab.services.backtest_workbench import BacktestWorkbenchService, _as_bool
 from quantlab.services.bucket_equity import attach_segment_curves
 from quantlab.services.model_training import (
@@ -605,9 +607,10 @@ def _execute_core(self, run_id):
     self._prepare_steps(run_id)
     try:
         with self.database.transaction() as connection:
+            next_status = transition_backtest_run_status(connection, run_id, BacktestRunStatus.RUNNING)
             connection.execute(
-                "UPDATE backtest_runs SET status='running' WHERE run_id=? AND status IN ('queued', 'failed')",
-                (run_id,),
+                "UPDATE backtest_runs SET status=? WHERE run_id=? AND status IN ('queued', 'failed')",
+                (next_status, run_id),
             )
         self._step(run_id, 1, "running")
         if not path.is_file():
@@ -807,9 +810,10 @@ def _execute_core(self, run_id):
             )
         self._step(run_id, 6, "completed")
         with self.database.transaction() as connection:
+            next_status = transition_backtest_run_status(connection, run_id, BacktestRunStatus.COMPLETED)
             connection.execute(
-                "UPDATE backtest_runs SET status='completed', metrics_json=? WHERE run_id=?",
-                (json.dumps(metrics, ensure_ascii=False, sort_keys=True), run_id),
+                "UPDATE backtest_runs SET status=?, metrics_json=? WHERE run_id=?",
+                (next_status, json.dumps(metrics, ensure_ascii=False, sort_keys=True), run_id),
             )
             connection.execute(
                 "UPDATE run_registry SET finished_at=? WHERE run_id=?",
@@ -826,9 +830,10 @@ def _execute_core(self, run_id):
                 "UPDATE backtest_steps SET status='skipped', finished_at=? WHERE run_id=? AND ordinal>? AND status='pending'",
                 (_now(), run_id, failed_ordinal),
             )
+            next_status = transition_backtest_run_status(connection, run_id, BacktestRunStatus.FAILED)
             connection.execute(
-                "UPDATE backtest_runs SET status='failed', error_message=? WHERE run_id=?",
-                (str(error), run_id),
+                "UPDATE backtest_runs SET status=?, error_message=? WHERE run_id=?",
+                (next_status, str(error), run_id),
             )
             connection.execute(
                 "UPDATE run_registry SET finished_at=? WHERE run_id=?",

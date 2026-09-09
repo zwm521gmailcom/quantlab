@@ -76,6 +76,20 @@ def _strategy_config() -> dict[str, object]:
     }
 
 
+def test_training_run_rejects_queued_to_completed_and_failed_to_running(tmp_path: Path) -> None:
+    _, _, service = _setup(tmp_path)
+    model = service.create_model("model_lgbm", "LightGBM排序")
+    version = service.create_model_version(model["entity_id"], _model_config())
+    run = service.create_training_run(model["entity_id"], version["version_id"], _model_config())
+    run_id = run["run_id"]
+    with pytest.raises(ValueError):
+        service.transition_training_run(run_id, "completed")
+    service.transition_training_run(run_id, "running")
+    service.transition_training_run(run_id, "failed")
+    with pytest.raises(ValueError):
+        service.transition_training_run(run_id, "running")
+
+
 def test_model_training_run_locks_config_and_artifact_without_running_backtest(tmp_path: Path) -> None:
     settings, database, service = _setup(tmp_path)
     model = service.create_model("model_lgbm", "LightGBM排序")

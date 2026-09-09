@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from quantlab.config import Settings
+from quantlab.domain.status import BacktestRunStatus, transition
 from quantlab.repositories.database import Database
 from quantlab.services.backtest_job import BacktestJobService
 
@@ -162,14 +163,25 @@ def _terminate(proc: Any) -> None:
 def mark_stopped(database: Database, run_id: str) -> None:
     timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     with database.transaction() as connection:
-        connection.execute(
-            "UPDATE backtest_runs SET status='running' WHERE run_id=? AND status='queued'",
+        row = connection.execute(
+            "SELECT status FROM backtest_runs WHERE run_id=?",
             (run_id,),
-        )
-        connection.execute(
-            "UPDATE backtest_runs SET status='failed', error_message=? WHERE run_id=? AND status='running'",
-            (STOPPED_MESSAGE, run_id),
-        )
+        ).fetchone()
+        if row is not None:
+            current = BacktestRunStatus(row["status"])
+            if current == BacktestRunStatus.QUEUED:
+                next_status = transition(current, BacktestRunStatus.RUNNING).value
+                connection.execute(
+                    "UPDATE backtest_runs SET status=? WHERE run_id=? AND status='queued'",
+                    (next_status, run_id),
+                )
+                current = BacktestRunStatus.RUNNING
+            if current == BacktestRunStatus.RUNNING:
+                next_status = transition(current, BacktestRunStatus.FAILED).value
+                connection.execute(
+                    "UPDATE backtest_runs SET status=?, error_message=? WHERE run_id=? AND status='running'",
+                    (next_status, STOPPED_MESSAGE, run_id),
+                )
         connection.execute(
             "UPDATE backtest_steps SET status='failed', finished_at=COALESCE(finished_at, ?), error_message=? "
             "WHERE run_id=? AND status='running'",

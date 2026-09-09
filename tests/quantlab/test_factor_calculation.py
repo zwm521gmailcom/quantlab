@@ -11,9 +11,11 @@ import pyarrow.parquet as pq
 import pytest
 
 from quantlab.config import Settings
+from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
 from quantlab.services.factor_calculation import FactorCalculationService, build_factor_histogram, cross_section_diagnostics
-from quantlab.services.factor_data import FEATURE_FIELDS
+from quantlab.services.factor_data import FEATURE_FIELDS, FactorDataService
+from quantlab.services.run_identity import RunIdentity
 
 
 def _env(tmp_path: Path):
@@ -50,6 +52,30 @@ def _env(tmp_path: Path):
             "VALUES ('factor_momentum_5', 'v1', 'ds', 'v1', 'hfq_close[t]/hfq_close[t-5]-1', 'published', 'passed')",
         )
     return settings, database
+
+
+def test_sample_export_completes_research_run_lifecycle(tmp_path: Path) -> None:
+    settings, database = _env(tmp_path)
+    service = FactorDataService(settings, database)
+
+    result = service.create_sample_export(
+        artifacts=ArtifactRepository(settings, database),
+        identity=RunIdentity(database),
+        factor="momentum_5",
+        date_from="20240102",
+        date_to="20240104",
+    )
+
+    assert result["run_id"]
+    assert len(result["artifacts"]) == 2
+    with database.connect() as connection:
+        row = connection.execute(
+            "SELECT rr.status, registry.finished_at FROM research_runs rr "
+            "JOIN run_registry registry ON registry.run_id=rr.run_id WHERE rr.run_id=?",
+            (result["run_id"],),
+        ).fetchone()
+    assert row["status"] == "completed"
+    assert row["finished_at"] is not None
 
 
 def test_run_persists_calculation_history_and_latest(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from quantlab.config import Settings
+from quantlab.domain.status import LifecycleStatus, transition
 from quantlab.repositories.database import Database
 from quantlab.repositories.factors import FactorRepository
 from quantlab.services.factor_calculation import FactorCalculationService
@@ -848,19 +849,23 @@ class ModelTrainingService:
             connection.execute(f"UPDATE {table} SET name=? WHERE entity_id=?", (name, entity_id))
 
     def _deprecate_other_versions(self, table: str, entity_id: str, keep_version_id: str) -> None:
+        deprecated_status = transition(LifecycleStatus.PUBLISHED, LifecycleStatus.DEPRECATED).value
         with self.database.transaction() as connection:
             connection.execute(
-                f"UPDATE {table} SET status='deprecated' WHERE entity_id=? AND version_id!=? AND status='published'",
-                (entity_id, keep_version_id),
+                f"UPDATE {table} SET status=? WHERE entity_id=? AND version_id!=? AND status='published'",
+                (deprecated_status, entity_id, keep_version_id),
             )
 
     def _deprecate_entity(self, versions_table: str, parent_table: str, entity_id: str) -> None:
+        deprecated_status = transition(LifecycleStatus.PUBLISHED, LifecycleStatus.DEPRECATED).value
         with self.database.transaction() as connection:
             connection.execute(
-                f"UPDATE {versions_table} SET status='deprecated' WHERE entity_id=? AND status='published'",
-                (entity_id,),
+                f"UPDATE {versions_table} SET status=? WHERE entity_id=? AND status='published'",
+                (deprecated_status, entity_id),
             )
-            connection.execute(f"UPDATE {parent_table} SET status='deprecated' WHERE entity_id=?", (entity_id,))
+            parent_row = connection.execute(f"SELECT status FROM {parent_table} WHERE entity_id=?", (entity_id,)).fetchone()
+            if parent_row is not None and parent_row["status"] == "published":
+                connection.execute(f"UPDATE {parent_table} SET status=? WHERE entity_id=?", (deprecated_status, entity_id))
 
     def _collapse_kind(
         self,
