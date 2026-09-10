@@ -4,7 +4,7 @@
 
 **Goal:** 设置页能看到局域网里开着的 QuantLab，一点同步回测产物（多轮互拉），行情单独从指定机拉，可开 04:00 自动（本机当源头）。
 
-**Architecture:** UI 仍 127.0.0.1:8765。8766 上 UDP 宣告 + 只提供文件索引/下载的 FastAPI。本机 API 协调拉取。结束后调用已有 `sync_result_catalog`。
+**Architecture:** UI 默认 `0.0.0.0:8765`（本机仍可用 127.0.0.1）。8766 上 UDP 宣告（含 `ui_port`）+ 只提供文件索引/下载的 FastAPI。本机 API 协调拉取。结束后调用已有 `sync_result_catalog`。
 
 **Tech Stack:** FastAPI、httpx、UDP、现有 settings.json。
 

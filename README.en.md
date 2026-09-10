@@ -2,7 +2,7 @@
 
 [中文](README.md) | **English**
 
-A local research workbench for A-share factors, models, and backtests. You operate it in the browser. FastAPI listens on `127.0.0.1` only. Metadata lives in SQLite; market data and factors stay in local Parquet files.
+A local research workbench for A-share factors, models, and backtests. You operate it in the browser. FastAPI listens on LAN `0.0.0.0:8765` by default (loopback `127.0.0.1` still works). Metadata lives in SQLite; market data and factors stay in local Parquet files.
 
 Current version `0.1.0` (Alpha). Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy). This repository is a standalone project.
 
@@ -14,7 +14,7 @@ Official trading and factor math use backward-adjusted fields: `hfq_open`, `hfq_
 
 ## Workbench
 
-After start, open http://127.0.0.1:8765/ .
+After start, open http://127.0.0.1:8765/ on this machine, or `http://<LAN-IP>:8765/` from another computer on the same LAN.
 
 | Page | Path | Role |
 |---|---|---|
@@ -72,7 +72,7 @@ export QUANTLAB_RUNTIME_ROOT=quantlab_runtime
 
 The same roots can be passed as `--data-root`, `--calibration-root`, `--runtime-root`, and `--project-root`. Use paths relative to the project root, such as `data` and `quantlab_runtime`.
 
-On a LAN, program updates still go through GitHub: push and merge here, then `git pull` and restart QuantLab on the other machines. Each machine keeps its own SQLite. The browser still opens only `127.0.0.1:8765`. Starting the service also binds `8766` (HTTP + UDP beacons) so QuantLab instances can sync files — no UI, no database port, no token. Allow UDP/TCP 8766 on the firewall. The Settings page lists machines that currently have QuantLab running: “sync backtest results” fills missing `results/<run_id>/` trees (existing directories are not overwritten; `_deleted/` markers are merged). Clicking a machine pulls `data/` from that source (same-path files with different content are overwritten; extra files on the destination are kept). Optional 04:00 market sync uses this machine as the source while the service is running; a missed 04:00 is not caught up. Do not use git to sync `quantlab_runtime/db/` or `config/` (machine id, compute settings, token). Do not mirror-delete the whole `results/` tree. Starting the service or opening the result archive backfills missing machine ids, applies delete markers from `_deleted/`, then scans `results/*/run.json` into the local database.
+On a LAN, all three machines must listen on the LAN — not loopback only. Program updates still go through GitHub: push and merge here, then `git pull` and restart QuantLab on the other machines. Each machine keeps its own SQLite. The UI defaults to `0.0.0.0:8765`; file sync uses `8766` (HTTP + UDP beacons, no UI, no database port, no token). Allow TCP 8765 and UDP/TCP 8766 on the firewall. From one computer’s browser, use “Open page” on the Settings LAN list to reach each machine’s QuantLab and start backtests in turn; then return to the host Settings page to sync results and market data. “Sync backtest results” fills missing `results/<run_id>/` trees (existing directories are not overwritten; `_deleted/` markers are merged). Clicking a machine pulls `data/` from that source (same-path files with different content are overwritten; extra files on the destination are kept). Optional 04:00 market sync uses this machine as the source while the service is running; a missed 04:00 is not caught up. `--host` accepts `127.0.0.1`, `0.0.0.0`, or an RFC1918 address — not a public IP. Do not use git to sync `quantlab_runtime/db/` or `config/` (machine id, compute settings, token). Do not mirror-delete the whole `results/` tree. Starting the service or opening the result archive backfills missing machine ids, applies delete markers from `_deleted/`, then scans `results/*/run.json` into the local database.
 
 Canonical bars come from `data/canonical.parquet` (one row per stock per day). Configure the Tushare token on the settings page; raw API files go to `data/raw/`.
 
@@ -80,10 +80,10 @@ Canonical bars come from `data/canonical.parquet` (one row per stock per day). C
 
 ```bash
 quantlab init-db
-quantlab serve --host 127.0.0.1 --port 8765
+quantlab serve
 ```
 
-Open http://127.0.0.1:8765/ . The service accepts loopback only; `--host` cannot be bound to a public address.
+Default bind is `0.0.0.0:8765`. Open http://127.0.0.1:8765/ locally, or `http://<LAN-IP>:8765/` from another machine. `--host` cannot be a public IP.
 
 Equivalent: `python -m quantlab.cli init-db` / `python -m quantlab.cli serve`.
 

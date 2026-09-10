@@ -23,7 +23,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     serve = subparsers.add_parser("serve")
     _add_root_arguments(serve)
-    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--host", default="0.0.0.0")
     serve.add_argument("--port", type=int, default=8765)
     init_db = subparsers.add_parser("init-db")
     _add_root_arguments(init_db)
@@ -39,17 +39,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         for name in ("project_root", "data_root", "calibration_root", "runtime_root")
         if (value := getattr(args, name, None)) is not None
     }
-    settings = Settings(port=getattr(args, "port", 8765), **explicit_roots)
+    extra: dict[str, object] = {}
     if args.command == "serve":
-        if args.host != "127.0.0.1":
-            parser.error("QuantLab only accepts host 127.0.0.1")
+        extra["host"] = args.host
+        extra["port"] = args.port
+    try:
+        settings = Settings(**explicit_roots, **extra)
+    except ValueError as error:
+        parser.error(str(error))
+    if args.command == "serve":
         import uvicorn
 
         from quantlab.services.lan_runtime import start_lan_sidecar
 
         app = create_app(settings)
         start_lan_sidecar(app)
-        uvicorn.run(app, host=args.host, port=args.port)
+        uvicorn.run(app, host=settings.host, port=settings.port)
         return 0
     if args.command == "init-db":
         database = Database(settings.database_path)

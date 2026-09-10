@@ -40,11 +40,16 @@ def test_settings_reject_paths_outside_authoritative_or_runtime_roots(tmp_path: 
     assert str(tmp_path) not in str(write_error.value)
 
 
-def test_settings_require_localhost() -> None:
+def test_settings_allow_lan_bind_but_reject_public_host() -> None:
     settings = Settings()
     assert settings.host == "127.0.0.1"
-    with pytest.raises(ValueError, match="127.0.0.1"):
-        settings.with_host("0.0.0.0")
+    assert Settings(host="0.0.0.0").host == "0.0.0.0"
+    assert Settings(host="192.168.1.39").host == "192.168.1.39"
+    assert Settings(host="localhost").host == "127.0.0.1"
+    with pytest.raises(ValueError, match="private LAN"):
+        Settings(host="8.8.8.8")
+    with pytest.raises(ValueError, match="private LAN"):
+        settings.with_host("1.2.3.4")
 
 
 def test_default_runtime_root_is_repository_root_not_python_package(tmp_path: Path, monkeypatch) -> None:
@@ -114,6 +119,11 @@ def test_cli_accepts_explicit_roots_for_init_db(tmp_path: Path) -> None:
 
     assert result == 0
     assert (runtime_root / "db/quantlab.sqlite3").is_file()
+
+
+def test_cli_rejects_public_bind_host() -> None:
+    with pytest.raises(SystemExit):
+        main(["serve", "--host", "8.8.8.8"])
 
 
 def test_settings_accept_relative_roots_and_round_trip_stored_paths(tmp_path: Path, monkeypatch) -> None:

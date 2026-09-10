@@ -2,7 +2,7 @@
 
 **中文** | [English](README.en.md)
 
-本机 A 股因子、模型与回测研究平台。浏览器操作，FastAPI 只监听 `127.0.0.1`，元数据在 SQLite，行情与因子在本地 Parquet。
+本机 A 股因子、模型与回测研究平台。浏览器操作，FastAPI 默认监听局域网 `0.0.0.0:8765`（本机仍可用 `127.0.0.1`），元数据在 SQLite，行情与因子在本地 Parquet。
 
 当前版本 `0.1.0`（Alpha）。运行时不依赖 [vnpy](https://github.com/vnpy/vnpy)，本仓库是独立项目。
 
@@ -14,7 +14,7 @@ QuantLab 把数据、因子、模型、回测和结果档案收进同一个本�
 
 ## 工作台
 
-启动后打开 http://127.0.0.1:8765/ 。
+启动后本机打开 http://127.0.0.1:8765/ ；同一局域网的其他电脑打开 `http://<这台机器的局域网IP>:8765/` 。
 
 | 页面 | 路径 | 作用 |
 |---|---|---|
@@ -72,7 +72,7 @@ export QUANTLAB_RUNTIME_ROOT=quantlab_runtime
 
 也可以在命令行传 `--data-root`、`--calibration-root`、`--runtime-root`、`--project-root`。路径用相对项目根的写法，例如 `data`、`quantlab_runtime`。
 
-局域网多机：程序更新仍走 GitHub（本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab）。各台使用自己的 SQLite。浏览器仍只打开本机 `127.0.0.1:8765`。启动服务后会另开 `8766`（HTTP + UDP 宣告）给 QuantLab 互相同步文件，不提供页面、不开库、不传 Token。请在防火墙放行 UDP/TCP 8766。设置页「局域网」列出正在开着的机器：可点「同步回测产物」互相补缺（已有目录不覆盖，合并 `results/_deleted/`），点某台则从那台拉 `data/` 行情（源头覆盖同路径且内容不同的文件，对端多出来的不删）。可打开「每天 04:00 自动同步行情」（本机当源头，服务须在跑；错过不补跑）。**不要**用 git 或拷盘同步 `quantlab_runtime/db/`、`config/`（机器码、运算设置、Token）。不要对整个 `results/` 做镜像删除。每台启动或打开结果档案时，会补齐缺的机器码、按 `_deleted/` 标记删掉对端已删的回测，并扫描 `results/*/run.json` 写入本机库。
+局域网多机：三台都要监听局域网，不能只绑 `127.0.0.1`。程序更新仍走 GitHub（本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab）。各台使用自己的 SQLite。默认页面端口 `8765`（绑 `0.0.0.0`），文件同步另开 `8766`（HTTP + UDP 宣告，不提供页面、不开库、不传 Token）。请在防火墙放行 TCP 8765 和 UDP/TCP 8766。可在一台电脑的浏览器里，用设置页列表的「打开页面」进入各机 QuantLab，依次点开始回测；回到主机设置页再点「同步回测产物」和同步行情。产物互相补缺（已有目录不覆盖，合并 `results/_deleted/`）；点某台则从那台拉 `data/` 行情（源头覆盖同路径且内容不同的文件，对端多出来的不删）。可打开「每天 04:00 自动同步行情」（本机当源头，服务须在跑；错过不补跑）。`--host` 只接受 `127.0.0.1`、`0.0.0.0` 或 RFC1918 地址，不能绑公网 IP。**不要**用 git 或拷盘同步 `quantlab_runtime/db/`、`config/`（机器码、运算设置、Token）。不要对整个 `results/` 做镜像删除。每台启动或打开结果档案时，会补齐缺的机器码、按 `_deleted/` 标记删掉对端已删的回测，并扫描 `results/*/run.json` 写入本机库。
 
 标准行情来自 `data/canonical.parquet`（每股票每日一行）。Tushare token 在设置页配置，原始接口文件写入 `data/raw/`。
 
@@ -80,10 +80,10 @@ export QUANTLAB_RUNTIME_ROOT=quantlab_runtime
 
 ```bash
 quantlab init-db
-quantlab serve --host 127.0.0.1 --port 8765
+quantlab serve
 ```
 
-打开 http://127.0.0.1:8765/ 。服务只接受 loopback，`--host` 不能改成对外地址。
+默认监听 `0.0.0.0:8765`。本机打开 http://127.0.0.1:8765/ ；其他机器打开 `http://<局域网IP>:8765/` 。`--host` 不能绑公网 IP。
 
 等价写法：`python -m quantlab.cli init-db` / `python -m quantlab.cli serve`。
 

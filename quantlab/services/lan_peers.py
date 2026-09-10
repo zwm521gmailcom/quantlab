@@ -13,6 +13,7 @@ from typing import Any
 from quantlab.services.machine_identity import load_machine_identity
 
 LAN_PORT = 8766
+UI_PORT = 8765
 PEER_TTL_SECONDS = 15.0
 BEACON_INTERVAL_SECONDS = 5.0
 
@@ -25,6 +26,7 @@ class LanPeer:
     port: int
     serial_prefix: int
     last_seen: float
+    ui_port: int = UI_PORT
 
 
 def validate_lan_host(host: object) -> str:
@@ -127,12 +129,14 @@ def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer 
     try:
         port = int(payload.get("sync_port") or LAN_PORT)
         prefix = int(payload.get("serial_prefix") or 10)
+        ui_port = int(payload.get("ui_port") or UI_PORT)
     except (TypeError, ValueError):
         return None
     announced = str(payload.get("host") or host or "").strip() or host
     try:
         announced = validate_lan_host(announced)
         port = validate_lan_port(port)
+        ui_port = validate_lan_port(ui_port)
     except ValueError:
         return None
     return LanPeer(
@@ -142,10 +146,18 @@ def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer 
         port=port,
         serial_prefix=prefix,
         last_seen=float(now if now is not None else time.time()),
+        ui_port=ui_port,
     )
 
 
-def beacon_payload(machine_id: str, serial_prefix: int, *, host: str | None = None, hostname: str | None = None) -> bytes:
+def beacon_payload(
+    machine_id: str,
+    serial_prefix: int,
+    *,
+    host: str | None = None,
+    hostname: str | None = None,
+    ui_port: int = UI_PORT,
+) -> bytes:
     return json.dumps(
         {
             "schema": 1,
@@ -153,6 +165,7 @@ def beacon_payload(machine_id: str, serial_prefix: int, *, host: str | None = No
             "machine_id": machine_id,
             "serial_prefix": int(serial_prefix),
             "sync_port": LAN_PORT,
+            "ui_port": int(ui_port),
             "host": host or local_lan_ip(),
             "hostname": hostname or socket.gethostname(),
         },
@@ -181,6 +194,8 @@ class PeerRegistry:
                     "hostname": peer.hostname,
                     "host": peer.host,
                     "port": peer.port,
+                    "ui_port": peer.ui_port,
+                    "ui_url": f"http://{peer.host}:{peer.ui_port}/",
                     "serial_prefix": peer.serial_prefix,
                     "self": bool(self_id) and peer.machine_id == self_id,
                     "age_s": round(current - peer.last_seen, 1),
@@ -197,7 +212,7 @@ class PeerRegistry:
         return peer
 
 
-def self_peer(runtime_root: Path | None, *, now: float | None = None) -> LanPeer:
+def self_peer(runtime_root: Path | None, *, ui_port: int = UI_PORT, now: float | None = None) -> LanPeer:
     machine = load_machine_identity(runtime_root)
     host = local_lan_ip()
     return LanPeer(
@@ -207,4 +222,5 @@ def self_peer(runtime_root: Path | None, *, now: float | None = None) -> LanPeer
         port=LAN_PORT,
         serial_prefix=int(machine.get("serial_prefix") or 10),
         last_seen=float(now if now is not None else time.time()),
+        ui_port=int(ui_port or UI_PORT),
     )

@@ -25,7 +25,7 @@ def list_peers(request: Request) -> dict[str, object]:
     settings = request.app.state.settings
     registry = _registry(request)
     machine = load_machine_identity(settings.runtime_root)
-    peer = self_peer(settings.runtime_root)
+    peer = self_peer(settings.runtime_root, ui_port=settings.port)
     if peer.machine_id:
         registry.note(peer)
     return {"lan_port": LAN_PORT, "peers": registry.online(self_id=str(machine.get("machine_id") or ""))}
@@ -36,7 +36,7 @@ def sync_results_api(request: Request) -> dict[str, object]:
     settings = request.app.state.settings
     registry = _registry(request)
     machine = load_machine_identity(settings.runtime_root)
-    peer = self_peer(settings.runtime_root)
+    peer = self_peer(settings.runtime_root, ui_port=settings.port)
     if peer.machine_id:
         registry.note(peer)
     try:
@@ -62,7 +62,7 @@ async def sync_market_api(request: Request) -> dict[str, object]:
     registry = _registry(request)
     machine = load_machine_identity(settings.runtime_root)
     self_id = str(machine.get("machine_id") or "")
-    peer = self_peer(settings.runtime_root)
+    peer = self_peer(settings.runtime_root, ui_port=settings.port)
     if peer.machine_id:
         registry.note(peer)
     source_id = str(payload.get("machine_id") or "").strip() or self_id
