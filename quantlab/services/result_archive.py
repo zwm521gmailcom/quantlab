@@ -16,6 +16,8 @@ from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
 from quantlab.services.backtest_job import fill_benchmark_metrics
+from quantlab.services.backtest_workbench import workbench_form_config
+from quantlab.services.model_training import kind_display_name
 
 
 _STATUS_NAMES = {"queued": "排队中", "running": "运行中", "completed": "已完成", "failed": "失败"}
@@ -234,7 +236,17 @@ class ResultArchiveService:
         config = self._config(row)
         metrics = fill_benchmark_metrics(self._metrics(row), config, raw_root=self.settings.raw_root)
         test = config.get("test") if isinstance(config.get("test"), dict) else {}
-        strategy_name = _strategy_label(row["strategy_name"] or config.get("strategy_entity_id") or "未登记模型")
+        model = config.get("model") if isinstance(config.get("model"), dict) else {}
+        kind = str(config.get("kind") or model.get("kind") or "").strip()
+        model_name = (
+            str(row["model_name"] or "").strip()
+            or str(model.get("name") or "").strip()
+            or kind_display_name(kind)
+            or _strategy_label(row["strategy_name"] or config.get("strategy_entity_id") or "")
+            or "未登记模型"
+        )
+        if model or model_name:
+            config = {**config, "model": {**model, "name": model_name}}
         item: dict[str, Any] = {
             "run_id": row["run_id"],
             "name": str(config.get("name") or "未命名回测"),
@@ -242,7 +254,7 @@ class ResultArchiveService:
             "status_name": _STATUS_NAMES.get(row["status"], row["status"]),
             "created_at": row["created_at"],
             "finished_at": row["finished_at"],
-            "strategy": {"entity_id": row["strategy_entity_id"], "name": strategy_name},
+            "strategy": {"entity_id": row["strategy_entity_id"], "name": model_name},
             "factors": self._factor_labels(row, config),
             "test_window": {"date_from": test.get("date_from"), "date_to": test.get("date_to")},
             "metrics": {
@@ -307,17 +319,19 @@ class ResultArchiveService:
             where.append("br.status=?")
             params.append(status)
         if strategy:
-            where.append("(br.strategy_entity_id=? OR s.name LIKE ?)")
-            params.extend([strategy, f"%{strategy}%"])
+            where.append("(br.strategy_entity_id=? OR s.name LIKE ? OR m.name LIKE ?)")
+            params.extend([strategy, f"%{strategy}%", f"%{strategy}%"])
         predicate = " AND ".join(where)
         with self.database.connect() as connection:
             return connection.execute(
                 "SELECT br.*, registry.created_at, registry.finished_at, s.name AS strategy_name, "
+                "m.name AS model_name, "
                 "(SELECT group_concat(f.name, ',') FROM strategy_factor_versions sfv "
                 "JOIN factors f ON f.entity_id=sfv.factor_entity_id "
                 "WHERE sfv.strategy_entity_id=br.strategy_entity_id AND sfv.strategy_version_id=br.strategy_version_id) AS factor_names "
                 "FROM backtest_runs br JOIN run_registry registry ON registry.run_id=br.run_id "
                 "LEFT JOIN strategies s ON s.entity_id=br.strategy_entity_id "
+                "LEFT JOIN models m ON m.entity_id=json_extract(br.config_json, '$.model.entity_id') "
                 f"WHERE {predicate} ORDER BY registry.created_at DESC, br.run_id DESC",
                 params,
             ).fetchall()
@@ -429,7 +443,7 @@ class ResultArchiveService:
             raise ValueError("backtest run not found")
         timestamp = _now()
         draft_id = f"bt-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{secrets.token_hex(4)}"
-        config = dict(source["config"])
+        config = workbench_form_config(dict(source["config"]))
         config["name"] = f"{source['name']}（复制）"
         factors = config.get("factor_versions", [])
         with self.database.transaction() as connection:

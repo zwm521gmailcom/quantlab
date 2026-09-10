@@ -66,6 +66,24 @@ def test_backtest_new_uses_formal_workbench_structure() -> None:
     assert 'id="val-close-gt-ma200"' not in html
     assert 'id="test-close-gt-ma200"' not in html
     assert "同一张标准行情宽表带上这些因子后，下面训练、回测各切一份" in html
+    assert 'id="hs300-gt-ma200"' in html
+    assert "沪深300均线开仓" in html
+
+
+def test_workbench_copy_restores_open_gate_and_roll_periods() -> None:
+    js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
+    assert 'q("hs300-gt-ma200").checked = Boolean(configPayload.open_when_benchmark_gt_ma200)' in js
+    assert 'kind !== "factor_rank" && q("bt-walk-forward")' not in js
+    assert "q(\"bt-train-period\").value = params.train_lookback_months || params.train_period_months || 12" in js
+    assert "q(\"bt-test-period\").value = params.test_period_months" in js
+
+
+def test_workbench_copy_strips_pretrade_stock_from_train_and_test_filters() -> None:
+    js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
+    assert "function withoutSharedExpressions(" in js
+    assert "withoutSharedExpressions(" in js
+    assert 'setExpressions("train-filter-list"' in js
+    assert 'setExpressions("test-filter-list"' in js
 
 
 def test_narrow_pages_constrain_wide_content_inside_the_viewport() -> None:
@@ -443,10 +461,14 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     assert "每页最大显示数量" in html
     assert 'data-factor-page-size="1"' in html
     assert 'class="factor-data-page"' in html
-    assert "app.css?v=20260909page4" in html
+    assert "app.css?v=20260909cat" in html
+    assert 'id="factor-category-filter"' in html
+    assert "因子分类" in html
+    assert 'id="factor-symbol"' not in html
     assert 'id="factor-sample-pagination"' in html
     assert "每页默认 10 行" in html
     assert 'function factorCatalogPageSize' in app
+    assert "function populateFactorCategoryFilter" in app
     assert "FACTOR_PAGE_SIZES = [50, 100, 200, 500]" in app
     assert "function ensureFactorPageSizeControl" in app
     assert "function factorPageSizeSelects" in app
@@ -697,6 +719,7 @@ def test_backtest_run_record_rule_signal_config_snapshot() -> None:
     assert 'c.kind === "rule_signal"' in js or "isRuleSignal" in js
     assert "规则信号（不训练）" in js
     assert "Wiki 多指标趋势跟踪" in source
+    assert "c.model.name || c.model.entity_id" in js
 
 
 def test_first_party_assets_are_no_store_vendor_is_not() -> None:

@@ -225,3 +225,36 @@ def test_segment_bucket_jobs_run_in_parallel(monkeypatch) -> None:
     payload = attach_segment_curves({}, frame, predictions, _config())
     assert payload["segment_curves"]["by_float_market_cap"]["status"] == "available"
     assert max_active >= 2
+
+
+def test_empty_benchmark_open_dates_leave_bucket_equity_flat() -> None:
+    frame = _panel()
+    predictions = frame[["date", "instrument", "score"]].copy()
+    config = {
+        **_config(),
+        "open_when_benchmark_gt_ma200": True,
+        "benchmark_open_dates": [],
+    }
+    payload = attach_segment_curves({}, frame, predictions, config)
+    buckets = payload["segment_curves"]["by_float_market_cap"]["buckets"]
+    assert buckets
+    assert all(item["trade_count"] == 0 for item in buckets)
+    assert all(item["total_return"] in {None, 0.0} for item in buckets)
+
+
+def test_performance_metrics_fills_missing_benchmark_open_dates(monkeypatch) -> None:
+    frame = _panel()
+    predictions = frame[["date", "instrument", "score"]].copy()
+    capture_predictions(frame, predictions)
+    monkeypatch.setattr(
+        "quantlab.services.backtest_job.benchmark_trend_open_dates",
+        lambda *_args, **_kwargs: {"20200102", "20200103", "20200106"},
+    )
+    config = {**_config(), "open_when_benchmark_gt_ma200": True}
+    equity = [
+        {"date": "20200102", "equity": 100_000.0},
+        {"date": "20200107", "equity": 100_000.0},
+    ]
+    metrics = _performance_metrics([], config, frame, equity_curve=equity)
+    buckets = metrics["segment_curves"]["by_float_market_cap"]["buckets"]
+    assert any(item["trade_count"] > 0 for item in buckets)

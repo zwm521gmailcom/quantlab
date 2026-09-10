@@ -573,10 +573,38 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   padding: 32px clamp(16px, 2.4vw, 36px) 40px;
 }
 .factor-data-page .card { min-width: 0; }
-.factor-data-page .data-toolbar label { min-width: 0; flex: 1 1 160px; }
+.factor-data-page .data-toolbar label,
+.factor-data-page .data-toolbar .toolbar-field { min-width: 0; flex: 1 1 160px; }
+.factor-data-page .data-toolbar .toolbar-field { display: grid; gap: 5px; color: var(--color-text-secondary); font-size: 13px; }
 .factor-data-page .data-toolbar .factor-page-size { flex: 0 1 220px; }
-.factor-data-page .data-toolbar input,
+.factor-data-page .data-toolbar input:not([type="checkbox"]),
 .factor-data-page .data-toolbar select { width: 100%; min-width: 0; box-sizing: border-box; }
+.factor-data-page .data-toolbar .multi-select { width: 100%; }
+.factor-data-page .data-toolbar .multi-select-dropdown label {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.factor-data-page .data-toolbar .multi-select-dropdown label:hover { background: var(--color-bg-muted); }
+.factor-data-page .data-toolbar .multi-select-dropdown input[type="checkbox"] {
+  all: revert;
+  width: 14px;
+  height: 14px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
 @media (max-width: 960px) {
   .factor-data-page { padding: 24px 16px 32px; }
 }

@@ -129,6 +129,7 @@ def test_config_normalizes_and_freezes_and_rejects_invalid_scope(tmp_path):
     svc = BacktestWorkbenchService(s, db)
     out = svc.validate(config())
     assert out["stock_scope"] == "中国A股（SH/SZ）" and out["buy_fee_minimum"] == 5.0
+    assert out["model"]["name"] == "模型"
     with pytest.raises(ValueError):
         svc.validate({**config(), "stock_scope": "中国A股（SH/SZ/BJ）"})
 

@@ -121,6 +121,9 @@ MODEL_KINDS = {
         "hyperparameters": {},
     },
 }
+KIND_DISPLAY_ALIASES = {
+    "rule_signal": "规则策略",
+}
 MIN_TRAIN_ROWS = 30
 LIGHTGBM_RANKER_SEED = 123
 LIGHTGBM_LABEL_BINS = 20
@@ -138,6 +141,29 @@ DEFAULT_STRATEGY = {
     "slippage": 0,
     "benchmark": "000300.SH",
 }
+
+
+def kind_display_name(kind: str) -> str:
+    text = str(kind or "").strip()
+    if not text:
+        return ""
+    alias = KIND_DISPLAY_ALIASES.get(text)
+    if alias:
+        return alias
+    spec = MODEL_KINDS.get(text)
+    if spec:
+        return str(spec["name"])
+    return text
+
+
+def model_center_name(connection: Any, *, entity_id: str = "", kind: str = "") -> str:
+    entity_id = str(entity_id or "").strip()
+    if entity_id:
+        row = connection.execute("SELECT name FROM models WHERE entity_id=?", (entity_id,)).fetchone()
+        name = str((row["name"] if row else "") or "").strip()
+        if name:
+            return name
+    return kind_display_name(kind)
 
 
 def rank_label_column(kind: str, params: Any = None) -> str:
@@ -795,6 +821,31 @@ class ModelTrainingService:
         for kind in MODEL_KINDS:
             self._collapse_kind(kind)
         return {"created": created, "kinds": list(MODEL_KINDS)}
+
+    def used_backtest_kinds(self) -> set[str]:
+        kinds: set[str] = set()
+        with self.database.connect() as connection:
+            for table in ("backtest_plan_items", "backtest_runs", "backtest_drafts"):
+                rows = connection.execute(
+                    f"SELECT json_extract(config_json, '$.kind') AS kind FROM {table}"
+                ).fetchall()
+                for row in rows:
+                    kind = str(row["kind"] or "").strip()
+                    if kind:
+                        kinds.add(kind)
+        return kinds
+
+    def ensure_used_backtest_models(self) -> dict[str, Any]:
+        wanted = [kind for kind in sorted(self.used_backtest_kinds()) if kind in MODEL_KINDS]
+        existing = self.registered_kinds()
+        created: list[str] = []
+        for kind in wanted:
+            if kind in existing:
+                continue
+            self.create_design({"kind": kind, "name": MODEL_KINDS[kind]["name"]})
+            created.append(kind)
+            existing.add(kind)
+        return {"created": created, "kinds": wanted}
 
     def _research_dataset(self) -> tuple[str, str]:
         with self.database.connect() as connection:

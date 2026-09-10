@@ -444,7 +444,7 @@ async function load() {
     );
   } else {
     snapshot.push(
-      ["模型", ((c.model && c.model.entity_id) || "—") + " · " + ((c.model && c.model.version_id) || "—")],
+      ["模型", ((c.model && (c.model.name || c.model.entity_id)) || "—") + " · " + ((c.model && c.model.version_id) || "—")],
       ["Top N / 权重", (c.top_n != null ? c.top_n : "—") + " / " + (c.weighting || "—")],
       ["调仓间隔", c.rebalance_every != null ? c.rebalance_every + " 个交易日" : "—"],
       ["买入 / 卖出", (c.buy_price || "—") + " / " + (c.sell_price || "—")],

@@ -46,6 +46,13 @@ def test_create_plan_stores_items_without_running(tmp_path: Path) -> None:
     assert all(item["status"] == "pending" and item["selected"] is True for item in body["items"])
     assert body["items"][0]["metrics"]["return"] == {"value": None, "display": "—"}
     assert body["items"][0]["metrics"]["max_drawdown"]["display"] == "—"
+    assert body["items"][0]["summary"]["model_name"] == "模型"
+    assert body["items"][0]["summary"]["kind"] == "factor_rank"
+    assert body["items"][0]["config"]["model"]["name"] == "模型"
+    with database.transaction() as connection:
+        connection.execute("UPDATE models SET name=? WHERE entity_id=?", ("单因子排名", "m"))
+    renamed = client.get(f"/api/backtest-plans/{body['plan_id']}").json()
+    assert renamed["items"][0]["summary"]["model_name"] == "单因子排名"
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()[0] == 0
 
@@ -290,6 +297,7 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert "收益率" in source
     assert "最大回撤" in source
     assert "plan-sortable" in source
+    assert "summary?.model_name" in plan_js
     assert 'dataset.sort = column.key' in plan_js or "dataset.sort" in plan_js
     workbench = client.get("/backtests/new").text
     workbench_js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")

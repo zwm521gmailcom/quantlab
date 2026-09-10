@@ -211,7 +211,7 @@
         const option = select.selectedOptions[0];
         if (!option || !option.value || !option.value.includes("::")) return null;
         const [entity_id, version_id] = option.value.split("::");
-        return {entity_id, version_id};
+        return {entity_id, version_id, name: option.textContent};
       }
 
       function universeFilter(prefix) {
@@ -300,6 +300,11 @@
         return [...document.querySelectorAll(`#${listId} .filter-expr-input`)]
           .map((input) => input.value.trim())
           .filter(Boolean);
+      }
+
+      function withoutSharedExpressions(exprs, shared) {
+        const skip = new Set((shared || []).map((text) => String(text || "").trim()).filter(Boolean));
+        return (exprs || []).map((text) => String(text || "").trim()).filter((text) => text && !skip.has(text));
       }
 
       function setExpressions(listId, items, fallback = []) {
@@ -706,20 +711,18 @@
         if (kind) syncKindFields(kind);
         if (!params) return;
         if (params.random_seed != null && q("random-seed")) q("random-seed").value = params.random_seed;
-        if (kind && kind !== "factor_rank" && q("bt-walk-forward")) {
-          if (params.walk_forward != null && String(params.walk_forward) !== "") {
-            const walk = String(params.walk_forward).toLowerCase();
-            q("bt-walk-forward").value = walk === "once" || walk === "" ? "once" : "rolling";
-          }
-          if (q("bt-train-period") && (params.train_lookback_months != null || params.train_period_months != null)) {
-            q("bt-train-period").value = params.train_lookback_months || params.train_period_months || 12;
-          }
-          if (q("bt-test-period") && params.test_period_months != null) {
-            q("bt-test-period").value = params.test_period_months;
-          }
-          clampTestPeriodToLookback();
-          syncRollPeriodFields();
+        if (q("bt-walk-forward") && params.walk_forward != null && String(params.walk_forward) !== "") {
+          const walk = String(params.walk_forward).toLowerCase();
+          q("bt-walk-forward").value = walk === "once" || walk === "" ? "once" : "rolling";
         }
+        if (q("bt-train-period") && (params.train_lookback_months != null || params.train_period_months != null)) {
+          q("bt-train-period").value = params.train_lookback_months || params.train_period_months || 12;
+        }
+        if (q("bt-test-period") && params.test_period_months != null) {
+          q("bt-test-period").value = params.test_period_months;
+        }
+        clampTestPeriodToLookback();
+        syncRollPeriodFields();
         if (kind === "lightgbm_tree") {
           if (params.number_of_trees != null && q("bt-trees")) q("bt-trees").value = params.number_of_trees;
           if (params.max_bins != null && q("bt-bins")) q("bt-bins").value = params.max_bins;
@@ -942,13 +945,14 @@
         const pretrade = configPayload.pretrade_filters && typeof configPayload.pretrade_filters === "object"
           ? configPayload.pretrade_filters
           : null;
+        const sharedStock = pretrade && Array.isArray(pretrade.stock) ? pretrade.stock : DEFAULT_STOCK_EXPRS;
         setExpressions("pretrade-stock-list", pretrade ? pretrade.stock : DEFAULT_STOCK_EXPRS, DEFAULT_STOCK_EXPRS);
         setExpressions("pretrade-benchmark-list", pretrade ? pretrade.benchmark : [], []);
-        setExpressions("train-filter-list", [
+        setExpressions("train-filter-list", withoutSharedExpressions([
           ...expressionsFromFilter(configPayload.train?.filter),
           ...expressionsFromFilter(configPayload.validation?.filter),
-        ].filter((text, index, list) => text && list.indexOf(text) === index), []);
-        setExpressions("test-filter-list", expressionsFromFilter(configPayload.test?.filter), []);
+        ].filter((text, index, list) => text && list.indexOf(text) === index), sharedStock), []);
+        setExpressions("test-filter-list", withoutSharedExpressions(expressionsFromFilter(configPayload.test?.filter), sharedStock), []);
         refreshTestUsage();
         if (configPayload.model?.entity_id && configPayload.model?.version_id) {
           const modelTarget = `${configPayload.model.entity_id}::${configPayload.model.version_id}`;

@@ -15,6 +15,7 @@ from pyarrow.lib import ArrowInvalid
 
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
+from quantlab.services.model_training import model_center_name
 from quantlab.services.run_identity import RunIdentity
 from quantlab.services.trade_filters import normalize_trade_filters, split_open_filters
 
@@ -63,9 +64,10 @@ class BacktestWorkbenchService:
         version_id = str(model.get("version_id") or "").strip()
         if not entity_id:
             raise ValueError("model version is required")
-        entity = db.execute("SELECT status FROM models WHERE entity_id=?", (entity_id,)).fetchone()
+        entity = db.execute("SELECT name, status FROM models WHERE entity_id=?", (entity_id,)).fetchone()
         if entity is None or entity["status"] != "published":
             raise ValueError("请先在模型中心保存这种模型的默认参数。")
+        name = str(entity["name"] or "").strip()
         requested = None
         if version_id:
             requested = db.execute(
@@ -80,7 +82,10 @@ class BacktestWorkbenchService:
             if latest is None:
                 raise ValueError("请先在模型中心保存这种模型的默认参数。")
             version_id = latest["version_id"]
-        c["model"] = {**model, "entity_id": entity_id, "version_id": version_id}
+        bound = {**model, "entity_id": entity_id, "version_id": version_id}
+        if name:
+            bound["name"] = name
+        c["model"] = bound
         strategy = db.execute(
             """
             SELECT s.entity_id, sv.version_id
@@ -382,7 +387,7 @@ class BacktestWorkbenchService:
             "factor_version_ids": json.loads(row["factor_version_ids_json"]),
             "strategy_entity_id": row["strategy_entity_id"],
             "strategy_version_id": row["strategy_version_id"],
-            "config": raw_config,
+            "config": workbench_form_config(raw_config),
             "complete": bool(raw_config),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -391,12 +396,21 @@ class BacktestWorkbenchService:
     def get(self, run_id: str) -> dict[str, Any] | None:
         with self.database.connect() as db:
             row = db.execute("SELECT * FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone()
-        if row is None:
-            return None
-        out = dict(row)
-        out["config"] = json.loads(out.pop("config_json") or "{}")
-        out["metrics"] = json.loads(out.pop("metrics_json") or "{}")
-        return out
+            if row is None:
+                return None
+            out = dict(row)
+            config = json.loads(out.pop("config_json") or "{}")
+            model = config.get("model") if isinstance(config.get("model"), dict) else {}
+            name = model_center_name(
+                db,
+                entity_id=str(model.get("entity_id") or ""),
+                kind=str(config.get("kind") or model.get("kind") or ""),
+            )
+            if name:
+                config = {**config, "model": {**model, "name": name}}
+            out["config"] = config
+            out["metrics"] = json.loads(out.pop("metrics_json") or "{}")
+            return out
 
 
 def _compact_date(value) -> str:
@@ -441,6 +455,26 @@ def _merge_exprs(*groups: Any) -> list[str]:
             if item not in seen:
                 seen.append(item)
     return seen
+
+
+def workbench_form_config(config: dict[str, Any] | None) -> dict[str, Any]:
+    """Drop pretrade stock formulas from train/test lists so the form does not repeat them."""
+    payload = dict(config or {})
+    pretrade = payload.get("pretrade_filters") if isinstance(payload.get("pretrade_filters"), dict) else {}
+    shared = set(_expr_list(pretrade.get("stock")))
+    if not shared:
+        return payload
+    for part in ("train", "test", "validation"):
+        section = payload.get(part)
+        if not isinstance(section, dict):
+            continue
+        filt = section.get("filter")
+        if not isinstance(filt, dict):
+            continue
+        exprs = _expr_list(filt.get("expressions"))
+        extras = [item for item in exprs if item not in shared]
+        payload[part] = {**section, "filter": {**filt, "expressions": extras}}
+    return payload
 
 
 def _filter_dict(section: Any) -> dict[str, Any]:

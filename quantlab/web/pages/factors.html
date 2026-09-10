@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 因子数据</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909page4">
+    <link rel="stylesheet" href="/assets/app.css?v=20260909cat">
   </head>
   <body>
     <div class="shell">
@@ -32,7 +32,16 @@
             <div class="data-toolbar">
               <label>因子 <select id="factor-filter"><option value="">全部因子</option></select></label>
               <label>名称/代码搜索 <input id="factor-name-search" type="search" placeholder="输入中文名或代码" autocomplete="off"></label>
-              <label>股票 <input id="factor-symbol" type="search" placeholder="000001.SZ" autocomplete="off"></label>
+              <div class="toolbar-field">
+                <span id="factor-category-label">因子分类</span>
+                <div class="multi-select" id="factor-category-filter" data-empty="未选择分类" data-all="全部分类">
+                  <button type="button" class="multi-select-toggle" aria-labelledby="factor-category-label" aria-haspopup="listbox">全部分类</button>
+                  <div class="multi-select-dropdown hidden" role="listbox">
+                    <label class="multi-select-all"><input type="checkbox" data-role="all" value="ALL" checked> 全选</label>
+                    <div class="multi-select-divider"></div>
+                  </div>
+                </div>
+              </div>
               <label>开始日期 <input id="factor-date-from" type="date"></label>
               <label>结束日期 <input id="factor-date-to" type="date"></label>
               <label class="factor-page-size">每页最大显示数量
@@ -81,7 +90,8 @@
     <script src="/assets/shared/fetch.js"></script>
     <script src="/assets/shared/theme.js"></script>
     <script src="/assets/shared/pager.js"></script>
-    <script src="/assets/factors/catalog.js"></script>
+    <script src="/assets/shared/multiselect.js"></script>
+    <script src="/assets/factors/catalog.js?v=20260909cat"></script>
     <script src="/assets/factors/detail.js"></script>
     <script src="/assets/bootstrap.js"></script>
   <script src="/assets/nav.js?v=20260907a"></script></body>

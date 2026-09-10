@@ -66,7 +66,7 @@ function sortValue(item, key) {
   if (key === "name") return item.name || "";
   if (key === "factors") return (item.summary?.factors || []).join(" ");
   if (key === "window") return `${item.summary?.train || ""} ${item.summary?.test || ""}`;
-  if (key === "model") return `${item.summary?.kind || ""} ${item.summary?.walk_forward || ""}`;
+  if (key === "model") return `${item.summary?.model_name || item.summary?.kind || ""} ${item.summary?.walk_forward || ""}`;
   if (key === "status") return item.status || "";
   if (key === "return" || key === "max_drawdown") return metricValue(item, key);
   if (key === "run") return item.run_id || "";
@@ -238,7 +238,7 @@ function renderTable() {
     const model = document.createElement("td");
     model.className = "archive-window";
     model.innerHTML = `<div></div><div></div>`;
-    model.children[0].textContent = item.summary?.kind || "—";
+    model.children[0].textContent = item.summary?.model_name || item.summary?.kind || "—";
     model.children[1].textContent = item.summary?.walk_forward === "rolling" ? "定长回看" : "一次训练";
     const status = document.createElement("td");
     const mark = document.createElement("span");

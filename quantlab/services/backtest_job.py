@@ -770,7 +770,7 @@ def _execute_core(self, run_id):
         self._step(run_id, 6, "running")
         start_equity = float(equity_curve[0]["equity"]) if equity_curve else float(config.get("initial_capital") or 0)
         metrics = {
-            **_performance_metrics(trades, config, frame, equity_curve, raw_root=self.settings.raw_root),
+            **_performance_metrics(trades, portfolio_config, frame, equity_curve, raw_root=self.settings.raw_root),
             "model": model,
             "equity_curve": equity_curve,
             "benchmark_curve": _benchmark_curve(
@@ -1005,13 +1005,25 @@ def run_portfolio(frame, predictions, config):
             frame.attrs.pop("_quantlab_day_index", None)
 
 
+def _segment_portfolio_config(config, frame, raw_root=None):
+    portfolio_config = dict(config or {})
+    if not _as_bool(portfolio_config.get("open_when_benchmark_gt_ma200"), False):
+        return portfolio_config
+    if portfolio_config.get("benchmark_open_dates"):
+        return portfolio_config
+    allowed = benchmark_trend_open_dates(frame, portfolio_config, raw_root=raw_root)
+    portfolio_config["benchmark_open_dates"] = sorted(allowed)
+    return portfolio_config
+
+
 def _performance_metrics(trades, config, frame, equity_curve=None, raw_root=None):
     metrics = _compute_performance_metrics(
         trades, config, frame, equity_curve=equity_curve, raw_root=raw_root
     )
     captured_frame, predictions = peek_captured()
     source = captured_frame if captured_frame is not None else frame
-    metrics = attach_segment_curves(metrics, source, predictions, config)
+    portfolio_config = _segment_portfolio_config(config, source if source is not None else frame, raw_root)
+    metrics = attach_segment_curves(metrics, source, predictions, portfolio_config)
     metrics = attach_ranking_metrics(metrics, frame, config)
     return _attach_extra_performance_metrics(metrics, equity_curve)
 

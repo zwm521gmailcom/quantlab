@@ -40,6 +40,14 @@ def _panel() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def test_kind_display_name_matches_model_center() -> None:
+    from quantlab.services.model_training import kind_display_name
+
+    assert kind_display_name("factor_rank") == "单因子排名"
+    assert kind_display_name("lightgbm_tree") == "树模型（LightGBM）"
+    assert kind_display_name("rule_signal") == "规则策略"
+
+
 def test_label_bins_are_cross_sectional_per_date() -> None:
     labeled = attach_label(_panel(), holding_days=1)
     first = labeled.loc[labeled["date"] == "20240102"].set_index("instrument")

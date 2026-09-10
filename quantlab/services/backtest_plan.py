@@ -19,6 +19,7 @@ from quantlab.services.backtest_control import (
 )
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
+from quantlab.services.model_training import kind_display_name, model_center_name
 
 
 _runtime_lock = threading.Lock()
@@ -79,7 +80,40 @@ def _metrics_for_runs(connection: Any, run_ids: list[str]) -> dict[str, dict[str
     }
 
 
-def _summary(config: dict[str, Any]) -> dict[str, Any]:
+def _load_model_names(connection: Any, configs: list[dict[str, Any]]) -> dict[str, str]:
+    ids = sorted(
+        {
+            str((config.get("model") or {}).get("entity_id") or "").strip()
+            for config in configs
+            if isinstance(config.get("model"), dict)
+        }
+        - {""}
+    )
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = connection.execute(
+        f"SELECT entity_id, name FROM models WHERE entity_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return {str(row["entity_id"]): str(row["name"] or "").strip() for row in rows}
+
+
+def _model_display_name(config: dict[str, Any], names: dict[str, str] | None = None) -> str:
+    model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    entity_id = str(model.get("entity_id") or "").strip()
+    kind = str(config.get("kind") or model.get("kind") or "").strip()
+    if names and entity_id:
+        name = str(names.get(entity_id) or "").strip()
+        if name:
+            return name
+    stored = str(model.get("name") or "").strip()
+    if stored:
+        return stored
+    return kind_display_name(kind) or "—"
+
+
+def _summary(config: dict[str, Any], names: dict[str, str] | None = None) -> dict[str, Any]:
     factors: list[str] = []
     for item in config.get("factor_versions") or []:
         if not isinstance(item, dict):
@@ -90,19 +124,25 @@ def _summary(config: dict[str, Any]) -> dict[str, Any]:
     train = config.get("train") if isinstance(config.get("train"), dict) else {}
     test = config.get("test") if isinstance(config.get("test"), dict) else {}
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    kind = str(config.get("kind") or model.get("kind") or "").strip()
     return {
         "factors": factors,
         "train": f"{train.get('date_from') or ''} — {train.get('date_to') or ''}".strip(" —"),
         "test": f"{test.get('date_from') or ''} — {test.get('date_to') or ''}".strip(" —"),
-        "kind": config.get("kind"),
+        "kind": kind,
+        "model_name": _model_display_name(config, names),
         "walk_forward": config.get("walk_forward") or "once",
         "top_n": config.get("top_n"),
         "model": model,
     }
 
 
-def _item_view(row: Any) -> dict[str, Any]:
+def _item_view(row: Any, names: dict[str, str] | None = None) -> dict[str, Any]:
     config = json.loads(row["config_json"] or "{}")
+    model = config.get("model") if isinstance(config.get("model"), dict) else {}
+    model_name = _model_display_name(config, names)
+    if model_name and model_name != "—":
+        config = {**config, "model": {**model, "name": model_name}}
     return {
         "item_id": row["item_id"],
         "plan_id": row["plan_id"],
@@ -114,7 +154,7 @@ def _item_view(row: Any) -> dict[str, Any]:
         "error_message": row["error_message"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
-        "summary": _summary(config),
+        "summary": _summary(config, names),
         "config": config,
     }
 
@@ -152,7 +192,9 @@ class BacktestPlanService:
                 "SELECT * FROM backtest_plan_items WHERE plan_id=? ORDER BY sort_order, item_id",
                 (plan_id,),
             ).fetchall()
-            views = [_item_view(item) for item in items]
+            configs = [json.loads(item["config_json"] or "{}") for item in items]
+            names = _load_model_names(connection, configs)
+            views = [_item_view(item, names) for item in items]
             run_ids = [item["run_id"] for item in views if item.get("run_id")]
             metrics_by_run = _metrics_for_runs(connection, run_ids)
         empty = _empty_metrics()
@@ -167,6 +209,32 @@ class BacktestPlanService:
             "updated_at": row["updated_at"],
             "items": views,
         }
+
+    def sync_model_names(self) -> dict[str, Any]:
+        stamp = _now()
+        updated = 0
+        with self.database.transaction() as connection:
+            rows = connection.execute(
+                "SELECT item_id, config_json FROM backtest_plan_items"
+            ).fetchall()
+            configs = [json.loads(row["config_json"] or "{}") for row in rows]
+            names = _load_model_names(connection, configs)
+            for row, config in zip(rows, configs):
+                model = config.get("model") if isinstance(config.get("model"), dict) else {}
+                entity_id = str(model.get("entity_id") or "").strip()
+                kind = str(config.get("kind") or model.get("kind") or "").strip()
+                name = names.get(entity_id) or model_center_name(
+                    connection, entity_id=entity_id, kind=kind
+                )
+                if not name or model.get("name") == name:
+                    continue
+                config["model"] = {**model, "name": name}
+                connection.execute(
+                    "UPDATE backtest_plan_items SET config_json=?, updated_at=? WHERE item_id=?",
+                    (_json(config), stamp, row["item_id"]),
+                )
+                updated += 1
+        return {"updated": updated}
 
     def create(self, raw: dict[str, Any]) -> dict[str, Any]:
         name = str(raw.get("name") or "").strip()
