@@ -15,19 +15,171 @@ from quantlab.services.factor_manual import _eval, finite_factor_values, parse_e
 
 
 PACK_SIDECAR_NAME = "canonical_pack_factors.parquet"
+COMPOSITE_SIDECAR_NAME = "composite_pack_factors.parquet"
 PACK_FIELDS = tuple(item.field for item in CANONICAL_FACTOR_PACK)
 _PACK_FORMULAS = {item.field: item.formula for item in CANONICAL_FACTOR_PACK}
+COMPOSITE_FORMULAS = {
+    "sleeve_mv_div": "total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)",
+    "sleeve_price_mv_div": (
+        "hfq_close.ts_rank(20) + total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_mom_mv": "momentum_10.cs_rank(0) + total_market_cap.cs_rank(0)",
+    "sleeve_mom_price": "momentum_10.cs_rank(0) + hfq_close.ts_rank(20)",
+    "sleeve_mom_mv_div": (
+        "momentum_10.cs_rank(0) + total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_mom_price_mv_div": (
+        "momentum_10.cs_rank(0) + hfq_close.ts_rank(20) + "
+        "total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_price_mv_div_vol": (
+        "hfq_close.ts_rank(20) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + vol_mean_20.cs_rank(0)"
+    ),
+    "sleeve_price_mv_div_range": (
+        "hfq_close.ts_rank(20) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + intraday_range.cs_rank(0)"
+    ),
+    "sleeve_price60_mv_div": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_price_float_div": (
+        "hfq_close.ts_rank(20) + float_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_price_mv_div_cheap": (
+        "hfq_close.ts_rank(20) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + (1 - pe_ttm.cs_rank(0))"
+    ),
+    "sleeve_price_mv_div_quiet": (
+        "hfq_close.ts_rank(20) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + (1 - turn.cs_rank(0))"
+    ),
+    "sleeve_price_small_div": (
+        "hfq_close.ts_rank(20) + (1 - total_market_cap.cs_rank(0)) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_price60_mv": "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0)",
+    "sleeve_price60_div": "hfq_close.ts_rank(60) + dividend_yield_ratio.cs_rank(0)",
+    "sleeve_price60_mv_div_cheap": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + (1 - pe_ttm.cs_rank(0))"
+    ),
+    "sleeve_price60_mv_div_quiet": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + (1 - turn.cs_rank(0))"
+    ),
+    "sleeve_price60_mv_div_cheap_quiet": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + "
+        "dividend_yield_ratio.cs_rank(0) + (1 - pe_ttm.cs_rank(0)) + (1 - turn.cs_rank(0))"
+    ),
+    "sleeve_price60_mv_div0": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + 0 * dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_price60_mv_div25": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + 0.25 * dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_price60_mv_div50": (
+        "hfq_close.ts_rank(60) + total_market_cap.cs_rank(0) + 0.5 * dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_zscore60_mv_div": (
+        "close_zscore_60.cs_rank(0) + total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+    "sleeve_bias60_mv_div": (
+        "close_bias_60.cs_rank(0) + total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)"
+    ),
+}
+
+
+def _coef_text(coef: float) -> str:
+    if float(coef).is_integer():
+        return str(int(coef))
+    return f"{coef:g}"
+
+
+def _weighted_term(coef: float, expr: str) -> str:
+    if coef == 0:
+        return f"0 * {expr}"
+    if coef == 1:
+        return expr
+    return f"{_coef_text(coef)} * {expr}"
+
+
+def price60_cheap_formula(price: float, size: float, div: float, cheap: float) -> str:
+    return " + ".join(
+        (
+            _weighted_term(price, "hfq_close.ts_rank(60)"),
+            _weighted_term(size, "total_market_cap.cs_rank(0)"),
+            _weighted_term(div, "dividend_yield_ratio.cs_rank(0)"),
+            _weighted_term(cheap, "(1 - pe_ttm.cs_rank(0))"),
+        )
+    )
+
+
+# field, display name, price60, size, dividend, cheap
+PRICE60_CHEAP_WEIGHTS: tuple[tuple[str, str, float, float, float, float], ...] = (
+    ("sleeve_p60_c025", "价格60加低估值 · 低估值0.25", 1, 1, 1, 0.25),
+    ("sleeve_p60_c050", "价格60加低估值 · 低估值0.5", 1, 1, 1, 0.5),
+    ("sleeve_p60_c075", "价格60加低估值 · 低估值0.75", 1, 1, 1, 0.75),
+    ("sleeve_p60_c150", "价格60加低估值 · 低估值1.5", 1, 1, 1, 1.5),
+    ("sleeve_p60_c200", "价格60加低估值 · 低估值2", 1, 1, 1, 2),
+    ("sleeve_p60_c300", "价格60加低估值 · 低估值3", 1, 1, 1, 3),
+    ("sleeve_p60_d000", "价格60加低估值 · 股息0", 1, 1, 0, 1),
+    ("sleeve_p60_d025", "价格60加低估值 · 股息0.25", 1, 1, 0.25, 1),
+    ("sleeve_p60_d050", "价格60加低估值 · 股息0.5", 1, 1, 0.5, 1),
+    ("sleeve_p60_d075", "价格60加低估值 · 股息0.75", 1, 1, 0.75, 1),
+    ("sleeve_p60_d150", "价格60加低估值 · 股息1.5", 1, 1, 1.5, 1),
+    ("sleeve_p60_d200", "价格60加低估值 · 股息2", 1, 1, 2, 1),
+    ("sleeve_p60_p050", "价格60加低估值 · 价格0.5", 0.5, 1, 1, 1),
+    ("sleeve_p60_p150", "价格60加低估值 · 价格1.5", 1.5, 1, 1, 1),
+    ("sleeve_p60_p200", "价格60加低估值 · 价格2", 2, 1, 1, 1),
+    ("sleeve_p60_s050", "价格60加低估值 · 规模0.5", 1, 0.5, 1, 1),
+    ("sleeve_p60_s150", "价格60加低估值 · 规模1.5", 1, 1.5, 1, 1),
+    ("sleeve_p60_s200", "价格60加低估值 · 规模2", 1, 2, 1, 1),
+    ("sleeve_p60_d050_c200", "价格60加低估值 · 股息0.5低估值2", 1, 1, 0.5, 2),
+    ("sleeve_p60_d200_c050", "价格60加低估值 · 股息2低估值0.5", 1, 1, 2, 0.5),
+    ("sleeve_p60_s050_c200", "价格60加低估值 · 规模0.5低估值2", 1, 0.5, 1, 2),
+    ("sleeve_p60_p050_c200", "价格60加低估值 · 价格0.5低估值2", 0.5, 1, 1, 2),
+    ("sleeve_p60_p200_c050", "价格60加低估值 · 价格2低估值0.5", 2, 1, 1, 0.5),
+    ("sleeve_p60_d000_c200", "价格60加低估值 · 股息0低估值2", 1, 1, 0, 2),
+)
+
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(price, size, div, cheap)
+        for field, _name, price, size, div, cheap in PRICE60_CHEAP_WEIGHTS
+    }
+)
+COMPOSITE_FIELDS = tuple(COMPOSITE_FORMULAS)
+_COMPOSITE_SOURCE_COLUMNS = (
+    "total_mv_cs_rank",
+    "div_yield_cs_rank",
+    "close_ts_rank_20",
+    "close_ts_rank_60",
+    "close_zscore_60",
+    "close_bias_60",
+    "float_mv_cs_rank",
+    "momentum_10",
+    "vol_mean_20",
+    "intraday_range",
+    "pe_ttm_cs_rank",
+    "turn_cs_rank",
+)
 
 
 def default_sidecar_path(canonical_path: Path | str) -> Path:
     return Path(canonical_path).expanduser().resolve().parent / "derived" / PACK_SIDECAR_NAME
 
 
+def default_composite_sidecar_path(canonical_path: Path | str) -> Path:
+    return Path(canonical_path).expanduser().resolve().parent / "derived" / COMPOSITE_SIDECAR_NAME
+
+
 def _compact_date(series: pd.Series) -> pd.Series:
     return series.astype(str).str.replace("-", "", regex=False).str.replace(".", "", regex=False).str[:8]
 
 
-def _needed_pack_fields(frame: pd.DataFrame, refs: list[Any] | None) -> list[str]:
+def _needed_fields(
+    frame: pd.DataFrame, refs: list[Any] | None, allowed: set[str]
+) -> list[str]:
     needed: list[str] = []
     columns = set(getattr(frame, "columns", ()))
     for item in refs or []:
@@ -36,24 +188,22 @@ def _needed_pack_fields(frame: pd.DataFrame, refs: list[Any] | None) -> list[str
         field = str(item.get("field") or item.get("factor_id") or "").strip()
         if field.startswith("factor_"):
             field = field.removeprefix("factor_")
-        if field in _PACK_FORMULAS and field not in columns and field not in needed:
+        if field in allowed and field not in columns and field not in needed:
             needed.append(field)
     return needed
 
 
-def attach_pack_factor_columns(
-    frame: pd.DataFrame,
-    refs: list[Any] | None,
-    sidecar_path: Path | str,
+def _needed_pack_fields(frame: pd.DataFrame, refs: list[Any] | None) -> list[str]:
+    return _needed_fields(frame, refs, set(_PACK_FORMULAS))
+
+
+def _merge_sidecar(
+    frame: pd.DataFrame, needed: list[str], sidecar: Path, missing_message: str
 ) -> pd.DataFrame:
-    if frame is None or getattr(frame, "empty", True):
-        return frame
-    needed = _needed_pack_fields(frame, refs)
     if not needed:
         return frame
-    sidecar = Path(sidecar_path)
     if not sidecar.is_file():
-        raise ValueError("可算因子还没有写入旁路文件。请先补全因子计算。")
+        raise ValueError(missing_message)
     names = set(pq.ParquetFile(sidecar).schema_arrow.names)
     missing = [field for field in needed if field not in names]
     if missing:
@@ -70,6 +220,109 @@ def attach_pack_factor_columns(
     result["_date"] = _compact_date(left_date)
     merged = result.merge(extra[["_code", "_date", *needed]], on=["_code", "_date"], how="left")
     return merged.drop(columns=["_code", "_date"])
+
+
+def attach_pack_factor_columns(
+    frame: pd.DataFrame,
+    refs: list[Any] | None,
+    sidecar_path: Path | str,
+) -> pd.DataFrame:
+    if frame is None or getattr(frame, "empty", True):
+        return frame
+    sidecar = Path(sidecar_path)
+    result = _merge_sidecar(
+        frame,
+        _needed_fields(frame, refs, set(_PACK_FORMULAS)),
+        sidecar,
+        "可算因子还没有写入旁路文件。请先补全因子计算。",
+    )
+    composite_needed = _needed_fields(result, refs, set(COMPOSITE_FORMULAS))
+    if not composite_needed:
+        return result
+    return _merge_sidecar(
+        result,
+        composite_needed,
+        sidecar.parent / COMPOSITE_SIDECAR_NAME,
+        "截面合成因子还没有写入旁路文件。请先生成 composite_pack_factors.parquet。",
+    )
+
+
+def _cs_rank(values: pd.Series, dates: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(values, errors="coerce")
+    return numeric.groupby(dates, sort=False).rank(pct=True)
+
+
+def materialize_composite_pack_factors(pack_sidecar_path: Path | str) -> dict[str, Any]:
+    sidecar = Path(pack_sidecar_path).expanduser().resolve()
+    if not sidecar.is_file():
+        raise ValueError("找不到可算因子旁路文件")
+    names = set(pq.ParquetFile(sidecar).schema_arrow.names)
+    missing = [field for field in _COMPOSITE_SOURCE_COLUMNS if field not in names]
+    if missing:
+        raise ValueError(f"旁路因子文件缺少字段 {', '.join(missing)}。")
+    code_key = "ts_code" if "ts_code" in names else "instrument"
+    date_key = "trade_date" if "trade_date" in names else "date"
+    frame = pq.read_table(
+        sidecar,
+        columns=[code_key, date_key, *_COMPOSITE_SOURCE_COLUMNS],
+    ).to_pandas()
+    dates = frame[date_key]
+    mv = pd.to_numeric(frame["total_mv_cs_rank"], errors="coerce")
+    div = pd.to_numeric(frame["div_yield_cs_rank"], errors="coerce")
+    price = pd.to_numeric(frame["close_ts_rank_20"], errors="coerce")
+    price60 = pd.to_numeric(frame["close_ts_rank_60"], errors="coerce")
+    float_mv = pd.to_numeric(frame["float_mv_cs_rank"], errors="coerce")
+    cheap = 1.0 - pd.to_numeric(frame["pe_ttm_cs_rank"], errors="coerce")
+    quiet = 1.0 - pd.to_numeric(frame["turn_cs_rank"], errors="coerce")
+    small = 1.0 - mv
+    mom = _cs_rank(frame["momentum_10"], dates)
+    vol = _cs_rank(frame["vol_mean_20"], dates)
+    rng = _cs_rank(frame["intraday_range"], dates)
+    zscore60 = _cs_rank(frame["close_zscore_60"], dates)
+    bias60 = _cs_rank(frame["close_bias_60"], dates)
+    columns: dict[str, Any] = {
+            "ts_code": frame[code_key].astype(str).to_numpy(),
+            "trade_date": _compact_date(dates).to_numpy(),
+            "sleeve_mv_div": (mv + div).to_numpy(dtype="float64"),
+            "sleeve_price_mv_div": (price + mv + div).to_numpy(dtype="float64"),
+            "sleeve_mom_mv": (mom + mv).to_numpy(dtype="float64"),
+            "sleeve_mom_price": (mom + price).to_numpy(dtype="float64"),
+            "sleeve_mom_mv_div": (mom + mv + div).to_numpy(dtype="float64"),
+            "sleeve_mom_price_mv_div": (mom + price + mv + div).to_numpy(dtype="float64"),
+            "sleeve_price_mv_div_vol": (price + mv + div + vol).to_numpy(dtype="float64"),
+            "sleeve_price_mv_div_range": (price + mv + div + rng).to_numpy(dtype="float64"),
+            "sleeve_price60_mv_div": (price60 + mv + div).to_numpy(dtype="float64"),
+            "sleeve_price_float_div": (price + float_mv + div).to_numpy(dtype="float64"),
+            "sleeve_price_mv_div_cheap": (price + mv + div + cheap).to_numpy(dtype="float64"),
+            "sleeve_price_mv_div_quiet": (price + mv + div + quiet).to_numpy(dtype="float64"),
+            "sleeve_price_small_div": (price + small + div).to_numpy(dtype="float64"),
+            "sleeve_price60_mv": (price60 + mv).to_numpy(dtype="float64"),
+            "sleeve_price60_div": (price60 + div).to_numpy(dtype="float64"),
+            "sleeve_price60_mv_div_cheap": (price60 + mv + div + cheap).to_numpy(dtype="float64"),
+            "sleeve_price60_mv_div_quiet": (price60 + mv + div + quiet).to_numpy(dtype="float64"),
+            "sleeve_price60_mv_div_cheap_quiet": (price60 + mv + div + cheap + quiet).to_numpy(
+                dtype="float64"
+            ),
+            "sleeve_price60_mv_div0": (price60 + mv + 0.0 * div).to_numpy(dtype="float64"),
+            "sleeve_price60_mv_div25": (price60 + mv + 0.25 * div).to_numpy(dtype="float64"),
+            "sleeve_price60_mv_div50": (price60 + mv + 0.5 * div).to_numpy(dtype="float64"),
+            "sleeve_zscore60_mv_div": (zscore60 + mv + div).to_numpy(dtype="float64"),
+            "sleeve_bias60_mv_div": (bias60 + mv + div).to_numpy(dtype="float64"),
+        }
+    for field, _name, price_w, size_w, div_w, cheap_w in PRICE60_CHEAP_WEIGHTS:
+        columns[field] = (price_w * price60 + size_w * mv + div_w * div + cheap_w * cheap).to_numpy(
+            dtype="float64"
+        )
+    table = pa.table(columns)
+    output = sidecar.with_name(COMPOSITE_SIDECAR_NAME)
+    tmp = output.with_name(output.name + ".next")
+    pq.write_table(table, tmp, compression="zstd")
+    tmp.replace(output)
+    return {
+        "path": str(output),
+        "rows": int(table.num_rows),
+        "fields": list(COMPOSITE_FIELDS),
+    }
 
 
 def materialize_canonical_pack_factors(

@@ -11,15 +11,38 @@ function appendFactorText(parent, tagName, className, value) {
 function factorParams() {
   const params = new URLSearchParams();
   const factor = document.getElementById("factor-filter")?.value || "";
-  const symbol = document.getElementById("factor-symbol")?.value.trim() || "";
   const dateFrom = document.getElementById("factor-date-from")?.value || "";
   const dateTo = document.getElementById("factor-date-to")?.value || "";
   if (factor) params.set("factor", factor);
-  if (symbol) params.set("ts_code", symbol);
   if (dateFrom) params.set("date_from", dateFrom);
   if (dateTo) params.set("date_to", dateTo);
   params.set("version_id", "v1");
   return params;
+}
+
+function populateFactorCategoryFilter(items) {
+  const root = document.getElementById("factor-category-filter");
+  const dropdown = root && root.querySelector(".multi-select-dropdown");
+  if (!root || !dropdown || root.dataset.filled === "1") return;
+  const categories = [...new Set(items.map((item) => String(item.category || "未分类").trim() || "未分类"))]
+    .sort((left, right) => left.localeCompare(right, "zh-CN"));
+  categories.forEach((category) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.name = "factor-category";
+    input.value = category;
+    input.checked = true;
+    input.dataset.label = category;
+    label.append(input, document.createTextNode(` ${category}`));
+    dropdown.append(label);
+  });
+  root.dataset.filled = "1";
+  bindMultiSelect(root);
+  dropdown.addEventListener("change", () => {
+    factorCatalogPage = 1;
+    renderFactorCatalog(factorCatalogAll);
+  });
 }
 
 function factorHeaderCell(label, explanationLines) {
@@ -101,9 +124,13 @@ function renderFactorCatalog(items) {
   const table = document.getElementById("factor-table");
   const empty = document.getElementById("factor-empty");
   const query = (document.getElementById("factor-name-search")?.value || "").trim().toLowerCase();
-  const filtered = query
-    ? items.filter((item) => String(item.name || "").toLowerCase().includes(query) || String(item.factor_id || "").toLowerCase().includes(query))
-    : items;
+  const categoryBoxes = [...document.querySelectorAll("#factor-category-filter input[name='factor-category']")];
+  const selectedCategories = new Set(categoryBoxes.filter((box) => box.checked).map((box) => box.value));
+  const filtered = items.filter((item) => {
+    if (categoryBoxes.length && !selectedCategories.has(String(item.category || "未分类").trim() || "未分类")) return false;
+    if (!query) return true;
+    return String(item.name || "").toLowerCase().includes(query) || String(item.factor_id || "").toLowerCase().includes(query);
+  });
   const totalFiltered = filtered.length;
   const pageSize = factorCatalogPageSize();
   const pages = Math.max(1, Math.ceil(totalFiltered / pageSize));
@@ -178,6 +205,7 @@ async function loadFactors() {
   try {
     const items = await fetchFactorCatalog();
     populateFactorFilter(items);
+    populateFactorCategoryFilter(items);
     renderFactorCatalog(items);
     document.getElementById("factor-name-search")?.addEventListener("input", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-prev")?.addEventListener("click", () => { factorCatalogPage = Math.max(1, factorCatalogPage - 1); renderFactorCatalog(factorCatalogAll); });

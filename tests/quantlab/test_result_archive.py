@@ -75,6 +75,42 @@ def test_archive_filters_status_strategy_name_date_and_sorts_without_detail_scan
     assert result["items"][0]["detail_url"] == "/backtests/runs/20260902-120000-0001"
 
 
+def test_archive_prefers_model_center_name(tmp_path: Path) -> None:
+    settings, database = setup_archive(tmp_path)
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO models(entity_id, name, status) VALUES ('model_factor_rank', '单因子排名', 'published')"
+        )
+        connection.execute(
+            "UPDATE strategies SET name=? WHERE entity_id=?",
+            ("单因子排名 · 默认策略", "strategy"),
+        )
+        connection.execute(
+            "UPDATE backtest_runs SET config_json=? WHERE run_id=?",
+            (
+                json.dumps(
+                    {
+                        "name": "Alpha动量",
+                        "kind": "factor_rank",
+                        "test": {"date_from": "2020-01-01", "date_to": "2020-12-31"},
+                        "strategy_entity_id": "strategy",
+                        "model": {"entity_id": "model_factor_rank", "version_id": "v1"},
+                    }
+                ),
+                "20260902-120000-0001",
+            ),
+        )
+    item = ResultArchiveService(settings, database).get("20260902-120000-0001")
+    assert item is not None
+    assert item["strategy"]["name"] == "单因子排名"
+    assert item["config"]["model"]["name"] == "单因子排名"
+    with database.transaction() as connection:
+        connection.execute("UPDATE models SET name=? WHERE entity_id=?", ("自定义名称", "model_factor_rank"))
+    renamed = ResultArchiveService(settings, database).get("20260902-120000-0001")
+    assert renamed is not None
+    assert renamed["strategy"]["name"] == "自定义名称"
+
+
 def test_archive_hides_default_strategy_suffix(tmp_path: Path) -> None:
     settings, database = setup_archive(tmp_path)
     with database.transaction() as connection:
@@ -162,6 +198,87 @@ def test_copy_rule_config_redirects_to_rules_page(tmp_path: Path) -> None:
     assert copied.json()["redirect_url"].startswith("/backtests/rules?draft_id=")
     assert copied.json()["config"]["kind"] == "rule_signal"
     assert "/backtests/new?" not in copied.json()["redirect_url"]
+
+
+def test_copy_config_keeps_benchmark_open_gate_and_roll_periods(tmp_path: Path) -> None:
+    settings, database = setup_archive(tmp_path)
+    run_id = "20260902-120000-0001"
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET config_json=? WHERE run_id=?",
+            (
+                json.dumps(
+                    {
+                        "name": "Alpha动量",
+                        "kind": "factor_rank",
+                        "open_when_benchmark_gt_ma200": True,
+                        "train_period_months": 1,
+                        "test_period_months": 1,
+                        "test": {"date_from": "2020-01-01", "date_to": "2020-12-31"},
+                        "strategy_entity_id": "strategy",
+                        "factor_versions": [],
+                    }
+                ),
+                run_id,
+            ),
+        )
+    copied = TestClient(create_app(settings, database)).post(f"/api/backtests/runs/{run_id}/copy-config")
+    assert copied.status_code == 201
+    payload = copied.json()["config"]
+    assert payload["open_when_benchmark_gt_ma200"] is True
+    assert payload["train_period_months"] == 1
+    assert payload["test_period_months"] == 1
+    draft = TestClient(create_app(settings, database)).get(f"/api/backtests/drafts/{copied.json()['draft_id']}")
+    assert draft.status_code == 200
+    assert draft.json()["complete"] is True
+    assert draft.json()["config"]["open_when_benchmark_gt_ma200"] is True
+
+
+def test_copy_config_does_not_repeat_pretrade_stock_in_train_or_test(tmp_path: Path) -> None:
+    settings, database = setup_archive(tmp_path)
+    run_id = "20260902-120000-0001"
+    shared = [
+        "st_status == 0",
+        "is_suspended == 0",
+        "close > low",
+        "close != up_limit AND close != down_limit",
+    ]
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET config_json=? WHERE run_id=?",
+            (
+                json.dumps(
+                    {
+                        "name": "Alpha动量",
+                        "kind": "factor_rank",
+                        "open_when_benchmark_gt_ma200": True,
+                        "pretrade_filters": {"stock": shared, "benchmark": []},
+                        "train": {
+                            "date_from": "2019-01-02",
+                            "date_to": "2019-12-31",
+                            "filter": {"expressions": [*shared, "hfq_close > sma200"]},
+                        },
+                        "test": {
+                            "date_from": "2020-01-01",
+                            "date_to": "2020-12-31",
+                            "filter": {"expressions": [*shared, "st_status==0 & close>low"]},
+                        },
+                        "strategy_entity_id": "strategy",
+                        "factor_versions": [],
+                    }
+                ),
+                run_id,
+            ),
+        )
+    copied = TestClient(create_app(settings, database)).post(f"/api/backtests/runs/{run_id}/copy-config")
+    assert copied.status_code == 201
+    payload = copied.json()["config"]
+    assert payload["pretrade_filters"]["stock"] == shared
+    assert payload["train"]["filter"]["expressions"] == ["hfq_close > sma200"]
+    assert payload["test"]["filter"]["expressions"] == ["st_status==0 & close>low"]
+    draft = TestClient(create_app(settings, database)).get(f"/api/backtests/drafts/{copied.json()['draft_id']}")
+    assert draft.json()["config"]["train"]["filter"]["expressions"] == ["hfq_close > sma200"]
+    assert draft.json()["config"]["test"]["filter"]["expressions"] == ["st_status==0 & close>low"]
 
 
 def test_archive_page_is_available(tmp_path: Path) -> None:

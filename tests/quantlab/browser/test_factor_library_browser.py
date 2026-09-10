@@ -10,6 +10,8 @@ def test_merged_factor_page_serves_unified_catalog_without_old_library_actions(b
     expect(page.get_by_role("heading", name="因子数据")).to_be_visible()
     expect(page.locator("#factor-table")).to_be_visible()
     expect(page.locator("#factor-name-search")).to_be_visible()
+    expect(page.locator("#factor-category-filter")).to_be_visible()
+    assert page.locator("#factor-symbol").count() == 0
     page.wait_for_timeout(300)
     assert page.locator("#factor-library-actions").count() == 0
     assert page.locator("#factor-library-diagnose").count() == 0
@@ -63,4 +65,26 @@ def test_factor_catalog_can_rename_a_row_and_rejects_builtin_delete(browser_serv
             data=json.dumps({"name": original}),
             headers={"content-type": "application/json"},
         )
+    assert errors == []
+
+
+def test_factor_catalog_filters_by_category_single_and_all(browser_server: str, page: Page) -> None:
+    errors: list[str] = []
+    page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
+    response = page.goto(f"{browser_server}/factors")
+    assert response is not None and response.ok
+    rows = page.locator("#factor-table .factor-row:not(.factor-header)")
+    rows.first.wait_for()
+    baseline = rows.count()
+    page.locator("#factor-category-filter .multi-select-toggle").click()
+    options = page.locator("#factor-category-filter input[name='factor-category']")
+    expect(options.first).to_be_visible()
+    category = options.first.input_value()
+    page.locator("#factor-category-filter input[data-role='all']").uncheck()
+    options.first.check()
+    expect(rows.first).to_be_visible()
+    for index in range(rows.count()):
+        expect(rows.nth(index).locator(".factor-category")).to_have_text(category)
+    page.locator("#factor-category-filter input[data-role='all']").check()
+    expect(rows).to_have_count(baseline)
     assert errors == []
