@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>QuantLab · 系统设置</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909set">
+    <link rel="stylesheet" href="/assets/app.css?v=20260910lan1">
   </head>
   <body>
     <div class="shell">
@@ -47,8 +47,36 @@
           </div>
         </section>
         <section class="card">
+          <h3>局域网</h3>
+          <p class="settings-help">程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启 QuantLab，才会出现在下面的列表里。浏览器仍只打开本机 <code>127.0.0.1:8765</code>。机器之间另走 <code>8766</code>（HTTP + UDP 宣告）同步文件，不提供页面、不开库、不传 Token。请在系统防火墙放行 UDP/TCP 8766。没开 QuantLab 的机器不会出现，也不会被推到。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>，源头覆盖同路径且内容不同的文件，对端多出来的不删。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。</p>
+          <div id="lan-peers"></div>
+          <div class="settings-actions">
+            <button id="lan-sync-results" type="button">同步回测产物</button>
+            <button id="lan-sync-market" type="button">开始同步行情</button>
+          </div>
+          <label class="lan-check">
+            <input id="lan-market-0400" type="checkbox">
+            每天 04:00 自动同步行情（本机当源头；错过不补跑；服务须在跑）
+          </label>
+          <p id="lan-status" class="state"></p>
+        </section>
+        <section class="card">
           <h3>回测运算资源</h3>
-          <p class="settings-help">这些项控制本机并行，不改变切折、成交或分层档位的结果。本机若是 16GB 内存，不要按 CPU 核数去开分层进程。只停运算请用回测中心的「回测强行停止」，不要停整个 QuantLab。</p>
+          <p class="settings-help">这些项控制本机并行，不改变切折、成交或分层档位的结果。同时回测固定 1 条，不会根据历史消耗自动加路。本机若是 16GB 内存，不要按 CPU 核数去开分层进程。只停运算请用回测中心的「回测强行停止」，不要停整个 QuantLab。</p>
+          <div class="settings-fields">
+            <label>机器码
+              <input id="machine-id" type="text" readonly>
+              <span class="field-help">本机身份，不能改。局域网同步时不要拷贝 <code>quantlab_runtime/config/</code>（含机器码、运算设置和 Token）。拷 <code>results/</code> 时把 <code>_deleted/</code> 合并进去（不要镜像删整个 results）。任意一台删除回测后，另外两台启动或打开结果档案就会删掉同一条。</span>
+            </label>
+            <label>运行序号前缀
+              <input id="serial-prefix" type="number" min="10" max="99">
+              <span class="field-help">写入运行 ID 后四位，范围 10–99。三台不要填一样的数。机器码不能改。</span>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button id="serial-prefix-save" type="button">保存运行序号前缀</button>
+            <span id="serial-prefix-saved" class="state"></span>
+          </div>
           <p id="compute-hint" class="settings-help"></p>
           <form id="compute-form">
             <div class="settings-fields">
@@ -94,7 +122,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js"></script>
+    <script src="/assets/settings.js?v=20260910lan1"></script>
     <script src="/assets/nav.js?v=20260907a"></script>
   </body>
 </html>

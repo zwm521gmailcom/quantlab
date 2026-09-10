@@ -12,8 +12,9 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from quantlab.services.compute_budget import active_resource_prior, cap_workers, note_workers
 from quantlab.services.portfolio import _DAY_INDEX_ATTR, _cached_day_index, run_portfolio as engine_portfolio
-from quantlab.services.settings import memory_safe_process_workers, resolve_bucket_pool, resolve_worker_count, total_ram_bytes
+from quantlab.services.settings import resolve_bucket_pool, resolve_worker_count, total_ram_bytes
 
 CAP_BUCKET_LABELS = {1: "Q1 小盘", 2: "Q2", 3: "Q3", 4: "Q4", 5: "Q5 大盘"}
 TURN_BUCKET_LABELS = {1: "Q1 低换手", 2: "Q2", 3: "Q3", 4: "Q4", 5: "Q5 高换手"}
@@ -196,7 +197,17 @@ def _run_bucket_jobs(frame: pd.DataFrame, config: dict[str, Any], pred_list: lis
     workers = bucket_worker_count(len(pred_list))
     pool_kind = resolve_bucket_pool()
     if pool_kind != "thread":
-        workers = memory_safe_process_workers(frame_nbytes(frame), workers, ram=total_ram_bytes())
+        prior = active_resource_prior() or {}
+        workers = cap_workers(
+            requested=workers,
+            task_count=len(pred_list),
+            ram_bytes=total_ram_bytes(),
+            unit_bytes=frame_nbytes(frame),
+            kind="bucket",
+            prior_peak_rss_bytes=int(prior.get("peak_rss_bytes") or 0),
+            prior_workers=int(prior.get("bucket_workers") or 0),
+        )
+    note_workers(bucket_workers=workers, bucket_pool=pool_kind)
     if workers <= 1:
         _cached_day_index(frame)
         return [_run_bucket(frame, preds, config) for preds in pred_list]

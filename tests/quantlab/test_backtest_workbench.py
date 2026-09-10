@@ -307,6 +307,60 @@ def test_api_force_stop_missing_run_is_404(tmp_path):
     assert response.json()["error_code"] == "BACKTEST_NOT_FOUND"
 
 
+def test_execute_writes_resource_sample_into_metrics(tmp_path, monkeypatch):
+    from quantlab.services.compute_budget import run_signature
+
+    monkeypatch.setattr(
+        "quantlab.services.compute_budget.process_tree_rss_bytes",
+        lambda pid=None: 123 * 1024 * 1024,
+    )
+    s, db = setup_env(tmp_path)
+    svc = BacktestWorkbenchService(s, db)
+    run = svc.submit({
+        **config(),
+        "test": {"date_from": "2020-01-02", "date_to": "2020-01-04", "filter": {"st_status": 0, "suspended": False}},
+    })
+    result = BacktestJobService(s, db).execute(run["run_id"])
+    assert result["status"] == "completed"
+    resources = result["metrics"]["resources"]
+    assert resources["peak_rss_bytes"] == 123 * 1024 * 1024
+    assert resources["signature"] == run_signature(result["config"])
+    with db.connect() as connection:
+        stored = json.loads(
+            connection.execute(
+                "SELECT metrics_json FROM backtest_runs WHERE run_id=?",
+                (run["run_id"],),
+            ).fetchone()["metrics_json"]
+        )
+    assert stored["resources"]["signature"] == resources["signature"]
+    manifest = s.runtime_root / "results" / run["run_id"] / "run.json"
+    assert manifest.is_file()
+    assert json.loads(manifest.read_text(encoding="utf-8"))["machine_id"]
+
+
+def test_execution_failure_still_records_resources(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "quantlab.services.compute_budget.process_tree_rss_bytes",
+        lambda pid=None: 64 * 1024 * 1024,
+    )
+    s, db = setup_env(tmp_path)
+    svc = BacktestWorkbenchService(s, db)
+    run = svc.submit(config())
+    path = s.data_root / "features.parquet"
+    path.write_bytes(path.read_bytes() + b"tampered")
+    result = BacktestJobService(s, db).execute(run["run_id"])
+    assert result["status"] == "failed"
+    with db.connect() as connection:
+        stored = json.loads(
+            connection.execute(
+                "SELECT metrics_json FROM backtest_runs WHERE run_id=?",
+                (run["run_id"],),
+            ).fetchone()["metrics_json"]
+        )
+    assert stored["resources"]["peak_rss_bytes"] == 64 * 1024 * 1024
+    assert stored["resources"]["signature"]
+
+
 def test_execute_runs_ordered_dag_and_keeps_artifacts(tmp_path):
     s, db = setup_env(tmp_path)
     svc = BacktestWorkbenchService(s, db)

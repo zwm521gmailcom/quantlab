@@ -10,8 +10,8 @@ from quantlab.services.bucket_equity import (
     attach_segment_curves,
     bucket_predictions,
     bucket_worker_count,
-    memory_safe_process_workers,
 )
+from quantlab.services.settings import memory_safe_process_workers
 from quantlab.services.ranking_metrics import capture_predictions
 from quantlab.services.backtest_job import _performance_metrics
 
@@ -173,6 +173,28 @@ def test_tight_ram_does_not_spawn_bucket_processes(monkeypatch) -> None:
     predictions = frame[["date", "instrument", "score"]].copy()
     payload = attach_segment_curves({}, frame, predictions, _config())
     assert payload["segment_curves"]["by_float_market_cap"]["status"] == "available"
+
+
+def test_prior_peak_rss_prevents_bucket_process_pool(monkeypatch) -> None:
+    from quantlab.services.compute_budget import reset_resource_prior, set_resource_prior
+
+    monkeypatch.setenv("QUANTLAB_BUCKET_WORKERS", "4")
+    monkeypatch.delenv("QUANTLAB_BUCKET_POOL", raising=False)
+    monkeypatch.setattr("quantlab.services.bucket_equity.total_ram_bytes", lambda: 16 * 1024**3)
+    monkeypatch.setattr("quantlab.services.bucket_equity.frame_nbytes", lambda frame: 512 * 1024**2)
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("process pool should not start when prior unit cost is fat")
+
+    monkeypatch.setattr("quantlab.services.bucket_equity.ProcessPoolExecutor", boom)
+    token = set_resource_prior({"peak_rss_bytes": 8 * 1024**3, "bucket_workers": 2})
+    try:
+        frame = _panel()
+        predictions = frame[["date", "instrument", "score"]].copy()
+        payload = attach_segment_curves({}, frame, predictions, _config())
+        assert payload["segment_curves"]["by_float_market_cap"]["status"] == "available"
+    finally:
+        reset_resource_prior(token)
 
 
 def test_segment_curves_spawn_pool_matches_serial(monkeypatch) -> None:

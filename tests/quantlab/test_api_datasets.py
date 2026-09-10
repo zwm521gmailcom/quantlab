@@ -24,12 +24,12 @@ def _client(tmp_path):
         connection.execute(
             "INSERT INTO dataset_versions(entity_id, version_id, path, row_count, fields_json, date_min, date_max, status, quality_status, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, 'published', ?, ?)",
-            ("d1", "v1", str(settings.data_root / "x"), 10, '["close"]', "20240101", "20240131", "passed", '{"category":"canonical","path_alias":"data/x"}'),
+            ("d1", "v1", settings.store_path(settings.data_root / "x"), 10, '["close"]', "20240101", "20240131", "passed", '{"category":"canonical","path_alias":"data/x"}'),
         )
         connection.execute(
             "INSERT INTO dataset_versions(entity_id, version_id, path, row_count, fields_json, date_min, date_max, status, quality_status, metadata_json) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, 'published', ?, ?)",
-            ("d1", "v2", str(settings.data_root / "x2"), 20, '["close"]', "20240201", "20240229", "needs_review", '{"category":"canonical","path_alias":"data/x2"}'),
+            ("d1", "v2", settings.store_path(settings.data_root / "x2"), 20, '["close"]', "20240201", "20240229", "needs_review", '{"category":"canonical","path_alias":"data/x2"}'),
         )
     app = create_app(settings, database)
     app.state.dataset_catalog = catalog

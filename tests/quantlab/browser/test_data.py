@@ -15,7 +15,8 @@ def test_data_page_renders_real_catalog_and_safe_aliases(browser_server: str, pa
     assert "七因子研究宽表" not in page.locator("#dataset-table").inner_text()
     assert "后复权加 ST 标准行情" not in page.locator("#dataset-table").inner_text()
     assert page.locator(".path-alias").all_inner_texts()
-    assert "/Volumes/T2/vnpy" not in page.content()
+    assert "/Volumes/" not in page.content()
+    assert "/Users/" not in page.content()
     assert page.locator("#dataset-table img").count() == 0
     page.locator(".dataset-name-link").first.click()
     expect(page.locator("#raw-files-dialog")).to_be_visible()

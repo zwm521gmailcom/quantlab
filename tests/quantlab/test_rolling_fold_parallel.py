@@ -18,6 +18,24 @@ def test_fold_worker_count_uses_eighty_percent_of_cpus(monkeypatch) -> None:
     assert fold_worker_count(1) == 1
 
 
+def test_fold_worker_count_collapses_when_budget_says_process_is_fat(monkeypatch) -> None:
+    monkeypatch.delenv("QUANTLAB_FOLD_WORKERS", raising=False)
+    monkeypatch.setattr("quantlab.services.backtest_job.cpu_count", lambda: 10)
+    monkeypatch.setattr("quantlab.services.backtest_job.total_ram_bytes", lambda: 16 * 1024**3)
+    from quantlab.services.compute_budget import cap_workers
+
+    assert cap_workers(
+        requested=8,
+        task_count=90,
+        ram_bytes=16 * 1024**3,
+        unit_bytes=0,
+        kind="fold",
+        prior_peak_rss_bytes=9 * 1024**3,
+    ) == 1
+    assert fold_worker_count(90, prior_peak_rss_bytes=9 * 1024**3) == 1
+    assert fold_worker_count(90) == 8
+
+
 def test_fold_worker_count_env_overrides_cpu_percent(monkeypatch) -> None:
     monkeypatch.setenv("QUANTLAB_FOLD_WORKERS", "4")
     monkeypatch.setattr("quantlab.services.backtest_job.cpu_count", lambda: 10)

@@ -3,6 +3,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from quantlab.api.app import create_app
+from quantlab.config import Settings
 from quantlab.repositories.database import Database
 
 
@@ -27,9 +28,15 @@ def test_overview_page_contains_real_overview_containers_and_run_links() -> None
 
 
 def test_overview_api_returns_error_contract_when_service_fails(tmp_path) -> None:
-    database = Database(tmp_path / "quantlab.sqlite3")
+    settings = Settings(
+        project_root=tmp_path,
+        data_root=tmp_path / "data",
+        calibration_root=tmp_path / "cal",
+        runtime_root=tmp_path / "runtime",
+    )
+    database = Database(settings.database_path)
     database.initialize()
-    app = create_app(database=database)
+    app = create_app(settings=settings, database=database)
     with database.connect() as connection:
         connection.execute("DROP TABLE run_registry")
     client = TestClient(app, raise_server_exceptions=False)

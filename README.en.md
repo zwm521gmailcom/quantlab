@@ -65,12 +65,14 @@ By default the app reads `data/` under the repo and writes run output to `quantl
 Point an existing warehouse at QuantLab with environment variables; you do not need to move files:
 
 ```bash
-export QUANTLAB_DATA_ROOT=/path/to/market-data
-export QUANTLAB_CALIBRATION_ROOT=/path/to/calibration
-export QUANTLAB_RUNTIME_ROOT=/path/to/quantlab_runtime
+export QUANTLAB_DATA_ROOT=data
+export QUANTLAB_CALIBRATION_ROOT=data/calibration
+export QUANTLAB_RUNTIME_ROOT=quantlab_runtime
 ```
 
-The same roots can be passed as `--data-root`, `--calibration-root`, `--runtime-root`, and `--project-root`. Paths must be absolute.
+The same roots can be passed as `--data-root`, `--calibration-root`, `--runtime-root`, and `--project-root`. Use paths relative to the project root, such as `data` and `quantlab_runtime`.
+
+On a LAN, program updates still go through GitHub: push and merge here, then `git pull` and restart QuantLab on the other machines. Each machine keeps its own SQLite. The browser still opens only `127.0.0.1:8765`. Starting the service also binds `8766` (HTTP + UDP beacons) so QuantLab instances can sync files — no UI, no database port, no token. Allow UDP/TCP 8766 on the firewall. The Settings page lists machines that currently have QuantLab running: “sync backtest results” fills missing `results/<run_id>/` trees (existing directories are not overwritten; `_deleted/` markers are merged). Clicking a machine pulls `data/` from that source (same-path files with different content are overwritten; extra files on the destination are kept). Optional 04:00 market sync uses this machine as the source while the service is running; a missed 04:00 is not caught up. Do not use git to sync `quantlab_runtime/db/` or `config/` (machine id, compute settings, token). Do not mirror-delete the whole `results/` tree. Starting the service or opening the result archive backfills missing machine ids, applies delete markers from `_deleted/`, then scans `results/*/run.json` into the local database.
 
 Canonical bars come from `data/canonical.parquet` (one row per stock per day). Configure the Tushare token on the settings page; raw API files go to `data/raw/`.
 
@@ -97,7 +99,7 @@ quantlab materialize-pack-factors     # compute the formula-pack factors from ca
 
 Every subcommand accepts `--project-root`, `--data-root`, `--calibration-root`, and `--runtime-root`.
 
-Backtest parallelism (also editable on the settings page; no service restart required):
+Backtest parallelism (also editable on the settings page; no service restart required). These are per-run request values; the runtime may lower them when RAM is tight. They do not mean multiple backtests at once. Concurrent backtests stay fixed at 1.
 
 - `QUANTLAB_FOLD_WORKERS`: parallel walk-forward folds
 - `QUANTLAB_BUCKET_WORKERS`: bucket-equity worker count

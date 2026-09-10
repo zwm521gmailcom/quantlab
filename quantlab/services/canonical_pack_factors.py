@@ -10,6 +10,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from quantlab.config import posix_relative
 from quantlab.services.canonical_factor_pack import CANONICAL_FACTOR_PACK
 from quantlab.services.factor_manual import _eval, finite_factor_values, parse_expression
 
@@ -173,6 +174,10 @@ def default_composite_sidecar_path(canonical_path: Path | str) -> Path:
     return Path(canonical_path).expanduser().resolve().parent / "derived" / COMPOSITE_SIDECAR_NAME
 
 
+def _display_output_path(output: Path, base: Path) -> str:
+    return posix_relative(output, base)
+
+
 def _compact_date(series: pd.Series) -> pd.Series:
     return series.astype(str).str.replace("-", "", regex=False).str.replace(".", "", regex=False).str[:8]
 
@@ -319,7 +324,7 @@ def materialize_composite_pack_factors(pack_sidecar_path: Path | str) -> dict[st
     pq.write_table(table, tmp, compression="zstd")
     tmp.replace(output)
     return {
-        "path": str(output),
+        "path": _display_output_path(output, sidecar.parent.parent),
         "rows": int(table.num_rows),
         "fields": list(COMPOSITE_FIELDS),
     }
@@ -366,7 +371,7 @@ def materialize_canonical_pack_factors(
     pq.write_table(table, tmp, compression="zstd")
     tmp.replace(output)
     return {
-        "path": str(output),
+        "path": _display_output_path(output, canonical.parent),
         "rows": int(table.num_rows),
         "fields": list(PACK_FIELDS),
     }

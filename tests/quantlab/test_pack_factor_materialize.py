@@ -60,8 +60,9 @@ def test_materialize_writes_all_pack_fields_without_changing_canonical(tmp_path:
 
     result = materialize_canonical_pack_factors(canonical)
 
-    sidecar = Path(result["path"])
+    sidecar = Path(canonical.parent / result["path"]).resolve()
     assert sidecar == default_sidecar_path(canonical)
+    assert not Path(result["path"]).is_absolute()
     assert sidecar.is_file()
     assert canonical.read_bytes() == before
     names = set(pq.ParquetFile(sidecar).schema_arrow.names)
@@ -98,7 +99,8 @@ def test_composite_sidecar_attaches_sum_of_existing_ranks(tmp_path: Path) -> Non
     _tiny_canonical(canonical, days=5)
     materialize_canonical_pack_factors(canonical)
     written = materialize_composite_pack_factors(default_sidecar_path(canonical))
-    assert Path(written["path"]) == default_composite_sidecar_path(canonical)
+    assert not Path(written["path"]).is_absolute()
+    assert (canonical.parent / written["path"]).resolve() == default_composite_sidecar_path(canonical)
     frame = pq.read_table(canonical).to_pandas().copy()
     frame["instrument"] = frame["ts_code"]
     frame["date"] = frame["trade_date"]

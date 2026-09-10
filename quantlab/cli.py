@@ -45,13 +45,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("QuantLab only accepts host 127.0.0.1")
         import uvicorn
 
-        uvicorn.run(create_app(settings), host=args.host, port=args.port)
+        from quantlab.services.lan_runtime import start_lan_sidecar
+
+        app = create_app(settings)
+        start_lan_sidecar(app)
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
     if args.command == "init-db":
         database = Database(settings.database_path)
         database.initialize()
         registered = DatasetCatalog(settings, database).register_configured()
-        print(f"initialized {settings.database_path} ({len(registered)} datasets)")
+        print(f"initialized {settings.display_path(settings.database_path)} ({len(registered)} datasets)")
         return 0
     if args.command == "materialize-pack-factors":
         from quantlab.services.canonical_pack_factors import materialize_canonical_pack_factors
@@ -60,7 +64,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             settings.data_root / "canonical.parquet",
             progress=lambda field, index, total: print(f"{index}/{total} {field}", flush=True),
         )
-        print(f"wrote {result['path']} ({result['rows']} rows, {len(result['fields'])} fields)")
+        print(
+            f"wrote {settings.display_path(settings.data_root / result['path'])} "
+            f"({result['rows']} rows, {len(result['fields'])} fields)"
+        )
         return 0
     baseline = settings.runtime_root / "baselines/authoritative-data.json"
     if args.command == "verify-data-baseline":
@@ -68,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("verified" if ok else "changed")
         return 0 if ok else 1
     snapshot_authoritative_data(settings, baseline)
-    print(f"created {baseline}")
+    print(f"created {settings.display_path(baseline)}")
     return 0
 
 

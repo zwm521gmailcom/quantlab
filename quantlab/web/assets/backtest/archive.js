@@ -50,6 +50,7 @@ async function deleteArchiveRun(item, button) {
     document.querySelectorAll(".archive-actions button.danger").forEach(resetArchiveDelete);
     button.dataset.confirming = "1";
     button.textContent = "确认删除";
+    $("archive-state").textContent = "同步后其他机器也会删除这条。";
     const cancel = document.createElement("button");
     cancel.type = "button";
     cancel.dataset.role = "delete-cancel";

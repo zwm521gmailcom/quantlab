@@ -65,12 +65,14 @@ python -m playwright install chromium
 已有数据仓库可以只改环境变量，不必搬文件：
 
 ```bash
-export QUANTLAB_DATA_ROOT=/path/to/market-data
-export QUANTLAB_CALIBRATION_ROOT=/path/to/calibration
-export QUANTLAB_RUNTIME_ROOT=/path/to/quantlab_runtime
+export QUANTLAB_DATA_ROOT=data
+export QUANTLAB_CALIBRATION_ROOT=data/calibration
+export QUANTLAB_RUNTIME_ROOT=quantlab_runtime
 ```
 
-也可以在命令行传 `--data-root`、`--calibration-root`、`--runtime-root`、`--project-root`。路径必须是绝对路径。
+也可以在命令行传 `--data-root`、`--calibration-root`、`--runtime-root`、`--project-root`。路径用相对项目根的写法，例如 `data`、`quantlab_runtime`。
+
+局域网多机：程序更新仍走 GitHub（本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab）。各台使用自己的 SQLite。浏览器仍只打开本机 `127.0.0.1:8765`。启动服务后会另开 `8766`（HTTP + UDP 宣告）给 QuantLab 互相同步文件，不提供页面、不开库、不传 Token。请在防火墙放行 UDP/TCP 8766。设置页「局域网」列出正在开着的机器：可点「同步回测产物」互相补缺（已有目录不覆盖，合并 `results/_deleted/`），点某台则从那台拉 `data/` 行情（源头覆盖同路径且内容不同的文件，对端多出来的不删）。可打开「每天 04:00 自动同步行情」（本机当源头，服务须在跑；错过不补跑）。**不要**用 git 或拷盘同步 `quantlab_runtime/db/`、`config/`（机器码、运算设置、Token）。不要对整个 `results/` 做镜像删除。每台启动或打开结果档案时，会补齐缺的机器码、按 `_deleted/` 标记删掉对端已删的回测，并扫描 `results/*/run.json` 写入本机库。
 
 标准行情来自 `data/canonical.parquet`（每股票每日一行）。Tushare token 在设置页配置，原始接口文件写入 `data/raw/`。
 
@@ -97,7 +99,7 @@ quantlab materialize-pack-factors     # 从 canonical.parquet 计算并落地公
 
 每个子命令都接受 `--project-root`、`--data-root`、`--calibration-root`、`--runtime-root`。
 
-回测并行相关环境变量（也可在设置页保存，不必重启服务）：
+回测并行相关环境变量（也可在设置页保存，不必重启服务）。这些是一条回测内部的请求值，内存不够时运行时会再降；它们不是同时多条回测。同时回测固定为 1 条。
 
 - `QUANTLAB_FOLD_WORKERS`：定长回看折并行数
 - `QUANTLAB_BUCKET_WORKERS`：分层净值进程数

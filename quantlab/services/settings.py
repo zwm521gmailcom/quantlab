@@ -8,9 +8,11 @@ from collections.abc import Callable
 from typing import Any
 
 from quantlab.config import Settings
+from quantlab.services.machine_identity import load_machine_identity, save_serial_prefix
 
 DEFAULTS: dict[str, Any] = {"top_n": 10, "rebalance_days": 2, "capital": 1_000_000, "benchmark": "000300.SH", "buy_fee": 0.0003, "sell_fee": 0.0005, "slippage": 0.0005}
 COMPUTE_DEFAULTS: dict[str, Any] = {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
+LAN_DEFAULTS: dict[str, Any] = {"market_sync_at_0400": False}
 _ACTIVE_COMPUTE: dict[str, Any] = dict(COMPUTE_DEFAULTS)
 
 
@@ -62,6 +64,7 @@ def compute_hint() -> dict[str, Any]:
         "ram_gb": round(ram_gb, 1),
         "safe_bucket_workers": safe_bucket,
         "safe_fold_workers": min(4, auto),
+        "max_concurrent_backtests": 1,
     }
 
 
@@ -100,6 +103,10 @@ def _coerce_compute(value: dict[str, Any]) -> dict[str, Any]:
     return {"fold_workers": fold, "bucket_workers": bucket, "bucket_pool": pool}
 
 
+def _coerce_lan(value: dict[str, Any]) -> dict[str, Any]:
+    return {"market_sync_at_0400": bool(value.get("market_sync_at_0400"))}
+
+
 class SettingsService:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -131,7 +138,7 @@ class SettingsService:
         return {"configured": bool(cleaned)}
 
     def _read(self) -> dict[str, Any]:
-        empty = {"defaults": dict(DEFAULTS), "compute": dict(COMPUTE_DEFAULTS)}
+        empty = {"defaults": dict(DEFAULTS), "compute": dict(COMPUTE_DEFAULTS), "lan": dict(LAN_DEFAULTS)}
         if not self.path.is_file():
             return empty
         try:
@@ -148,12 +155,19 @@ class SettingsService:
             compute = _coerce_compute(compute_raw)
         except ValueError:
             compute = dict(COMPUTE_DEFAULTS)
-        return {"defaults": {**DEFAULTS, **(value.get("defaults") or {})}, "compute": compute}
+        lan_raw = value.get("lan") or {}
+        if not isinstance(lan_raw, dict):
+            lan_raw = {}
+        return {
+            "defaults": {**DEFAULTS, **(value.get("defaults") or {})},
+            "compute": compute,
+            "lan": _coerce_lan(lan_raw),
+        }
 
-    def _write(self, defaults: dict[str, Any], compute: dict[str, Any]) -> None:
+    def _write(self, defaults: dict[str, Any], compute: dict[str, Any], lan: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(
-            json.dumps({"defaults": defaults, "compute": compute}, ensure_ascii=False, indent=2),
+            json.dumps({"defaults": defaults, "compute": compute, "lan": lan}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         apply_compute(compute)
@@ -171,33 +185,38 @@ class SettingsService:
         return value.get("path") if isinstance(value, dict) else None
 
     def raw_path(self) -> str:
-        return self._raw_override() or str(self.settings.raw_root)
+        override = self._raw_override()
+        if override:
+            return self.settings.display_path(override)
+        return self.settings.display_path(self.settings.raw_root)
 
     def update_raw_root(self, path: str) -> dict[str, Any]:
-        from pathlib import Path as _Path
-        resolved = _Path(path).expanduser().resolve()
+        resolved = self.settings.resolve_user_path(path)
         if not resolved.is_dir():
             raise ValueError("raw directory must exist")
+        stored = self.settings.store_path(resolved)
         override_file = self.path.parent / "raw_path.json"
         override_file.parent.mkdir(parents=True, exist_ok=True)
-        override_file.write_text(json.dumps({"path": str(resolved), "updated_at": __import__("datetime").datetime.now().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"raw_root": str(resolved), "saved": True}
+        override_file.write_text(json.dumps({"path": stored, "updated_at": __import__("datetime").datetime.now().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"raw_root": stored, "saved": True}
 
     def public(self) -> dict[str, Any]:
         value = self._read()
         return {
             "paths": {
-                "project_root": str(self.settings.project_root),
-                "data_root": str(self.settings.data_root),
-                "calibration_root": str(self.settings.calibration_root),
-                "runtime_root": str(self.settings.runtime_root),
+                "project_root": self.settings.display_path(self.settings.project_root),
+                "data_root": self.settings.display_path(self.settings.data_root),
+                "calibration_root": self.settings.display_path(self.settings.calibration_root),
+                "runtime_root": self.settings.display_path(self.settings.runtime_root),
                 "raw_root": self.raw_path(),
-                "results_root": str(self.settings.runtime_root / "results"),
+                "results_root": self.settings.display_path(self.settings.runtime_root / "results"),
             },
             "environment": {"host": self.settings.host, "port": self.settings.port, "service": "local-only"},
             "defaults": value["defaults"],
             "compute": value["compute"],
+            "lan": value["lan"],
             "compute_hint": compute_hint(),
+            "machine": load_machine_identity(self.settings.runtime_root),
             "secrets": {"tushare_token": self.token_configured()},
         }
 
@@ -208,13 +227,26 @@ class SettingsService:
             raise ValueError("authoritative and runtime paths are startup-controlled")
         defaults = payload.get("defaults", {})
         compute = payload.get("compute", {})
+        machine = payload.get("machine", {})
+        lan = payload.get("lan", {})
         if defaults and not isinstance(defaults, dict):
             raise ValueError("unsupported settings: defaults")
         if compute and not isinstance(compute, dict):
             raise ValueError("unsupported settings: compute")
+        if machine and not isinstance(machine, dict):
+            raise ValueError("unsupported settings: machine")
+        if lan and not isinstance(lan, dict):
+            raise ValueError("unsupported settings: lan")
         defaults = defaults if isinstance(defaults, dict) else {}
         compute = compute if isinstance(compute, dict) else {}
-        unknown = (set(defaults) - set(DEFAULTS)) | (set(compute) - set(COMPUTE_DEFAULTS))
+        machine = machine if isinstance(machine, dict) else {}
+        lan = lan if isinstance(lan, dict) else {}
+        unknown = (
+            (set(defaults) - set(DEFAULTS))
+            | (set(compute) - set(COMPUTE_DEFAULTS))
+            | (set(machine) - {"serial_prefix"})
+            | (set(lan) - set(LAN_DEFAULTS))
+        )
         if unknown:
             raise ValueError(f"unsupported settings: {sorted(unknown)}")
         current = self._read()
@@ -222,13 +254,27 @@ class SettingsService:
         if not 1 <= int(merged["top_n"]) <= 1000 or int(merged["rebalance_days"]) < 1:
             raise ValueError("top_n or rebalance_days is invalid")
         merged_compute = _coerce_compute({**current["compute"], **compute})
-        self._write(merged, merged_compute)
+        merged_lan = _coerce_lan({**current["lan"], **lan})
+        if "serial_prefix" in machine:
+            save_serial_prefix(self.settings.runtime_root, machine["serial_prefix"])
+        self._write(merged, merged_compute, merged_lan)
         return self.public()
 
     def reset(self) -> dict[str, Any]:
-        self._write(dict(DEFAULTS), dict(COMPUTE_DEFAULTS))
+        self._write(dict(DEFAULTS), dict(COMPUTE_DEFAULTS), dict(LAN_DEFAULTS))
         return self.public()
 
     def scan(self) -> dict[str, Any]:
         roots = {name: path for name, path in (("data_root", self.settings.data_root), ("calibration_root", self.settings.calibration_root), ("runtime_root", self.settings.runtime_root))}
-        return {"manual": True, "roots": [{"name": name, "path": str(path), "exists": path.exists(), "is_dir": path.is_dir()} for name, path in roots.items()]}
+        return {
+            "manual": True,
+            "roots": [
+                {
+                    "name": name,
+                    "path": self.settings.display_path(path),
+                    "exists": path.exists(),
+                    "is_dir": path.is_dir(),
+                }
+                for name, path in roots.items()
+            ],
+        }
