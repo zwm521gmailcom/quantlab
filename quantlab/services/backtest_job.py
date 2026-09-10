@@ -23,7 +23,22 @@ from quantlab.domain.status import BacktestRunStatus
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.run_lifecycle import transition_backtest_run_status
 from quantlab.services.backtest_workbench import BacktestWorkbenchService, _as_bool
-from quantlab.services.bucket_equity import attach_segment_curves
+from quantlab.services.bucket_equity import attach_segment_curves, frame_nbytes
+from quantlab.services.compute_budget import (
+    ResourceSampler,
+    active_resource_prior,
+    cap_workers,
+    last_resource_sample,
+    note_workers,
+    persist_run_resources,
+    reset_resource_notes,
+    reset_resource_prior,
+    run_signature,
+    set_resource_notes,
+    set_resource_prior,
+)
+from quantlab.services.machine_identity import load_machine_identity
+from quantlab.services.result_sync import write_run_manifest
 from quantlab.services.model_training import (
     MIN_TRAIN_ROWS,
     MODEL_KINDS,
@@ -40,7 +55,7 @@ from quantlab.services.model_training import (
 )
 from quantlab.services.portfolio import run_portfolio
 from quantlab.services.ranking_metrics import attach_ranking_metrics, capture_predictions, peek_captured
-from quantlab.services.settings import resolve_worker_count
+from quantlab.services.settings import resolve_worker_count, total_ram_bytes
 from quantlab.services.trade_filters import FIELD_ALIASES, needs_sma200, open_expressions, parse_expr
 
 STEPS = ("snapshot_validation", "model_training", "prediction", "positions", "execution", "metrics")
@@ -631,6 +646,7 @@ def _execute_core(self, run_id):
         config = run["config"]
         field = self._factor_field(config)
         frame = self._load_frame(path, config)
+        note_workers(frame_nbytes=frame_nbytes(frame))
         if uses_stock_ma200(config):
             attach_sma(frame)
         filter_notes = []
@@ -1412,29 +1428,72 @@ def _benchmark_allowed_dates(self, config: dict[str, Any]) -> set[str] | None:
 def execute(self, run_id: str):
     row = self.get(run_id)
     config = (row or {}).get("config") or {}
+    previous_status = (row or {}).get("status")
+    machine = load_machine_identity(self.settings.runtime_root)
+    if machine.get("machine_id") and not config.get("machine_id"):
+        config = {**config, "machine_id": machine["machine_id"]}
+    prior_token = set_resource_prior(
+        last_resource_sample(self.database, run_signature(config), machine_id=machine.get("machine_id"))
+    )
+    notes_token = set_resource_notes({})
+    sampler = ResourceSampler().start()
     token = _pretrade_allowed_dates.set(_benchmark_allowed_dates(self, config))
+    result = None
     try:
         if config.get("kind") == "rule_signal":
             from quantlab.services.rule_backtest import execute_rule_signal
 
-            return execute_rule_signal(self, run_id)
-        if walk_forward_mode(config) != "once":
-            return _execute_core(self, run_id)
-        test = config.get("test") or {}
-        predict_from = test.get("date_from")
-        if not predict_from:
-            return _execute_core(self, run_id)
-        hyper = config.get("hyperparameters") if isinstance(config.get("hyperparameters"), dict) else {}
-        validation = config.get("validation") if isinstance(config.get("validation"), dict) else {}
-        validation_from = hyper.get("validation_date_from") or validation.get("date_from")
-        with once_label_embargo(predict_from, config.get("holding_days"), validation_from=validation_from):
-            return _execute_core(self, run_id)
+            result = execute_rule_signal(self, run_id)
+        elif walk_forward_mode(config) != "once":
+            result = _execute_core(self, run_id)
+        else:
+            test = config.get("test") or {}
+            predict_from = test.get("date_from")
+            if not predict_from:
+                result = _execute_core(self, run_id)
+            else:
+                hyper = config.get("hyperparameters") if isinstance(config.get("hyperparameters"), dict) else {}
+                validation = config.get("validation") if isinstance(config.get("validation"), dict) else {}
+                validation_from = hyper.get("validation_date_from") or validation.get("date_from")
+                with once_label_embargo(predict_from, config.get("holding_days"), validation_from=validation_from):
+                    result = _execute_core(self, run_id)
     finally:
+        sample = sampler.stop()
+        persist_run_resources(
+            self.database,
+            run_id,
+            config,
+            sample,
+            settings=self.settings,
+            previous_status=previous_status,
+        )
+        write_run_manifest(self.settings, self.database, run_id)
+        reset_resource_notes(notes_token)
+        reset_resource_prior(prior_token)
         _pretrade_allowed_dates.reset(token)
+    if isinstance(result, dict):
+        latest = self.get(run_id)
+        if latest and isinstance(latest.get("metrics"), dict):
+            result["metrics"] = latest["metrics"]
+    return result
 
 
-def fold_worker_count(fold_count: int) -> int:
-    return resolve_worker_count("QUANTLAB_FOLD_WORKERS", "fold_workers", fold_count, cpu_count)
+def fold_worker_count(fold_count: int, *, prior_peak_rss_bytes: int = 0) -> int:
+    requested = resolve_worker_count("QUANTLAB_FOLD_WORKERS", "fold_workers", fold_count, cpu_count)
+    peak = int(prior_peak_rss_bytes or 0)
+    if not peak:
+        prior = active_resource_prior() or {}
+        peak = int(prior.get("peak_rss_bytes") or 0)
+    workers = cap_workers(
+        requested=requested,
+        task_count=fold_count,
+        ram_bytes=total_ram_bytes(),
+        unit_bytes=0,
+        kind="fold",
+        prior_peak_rss_bytes=peak,
+    )
+    note_workers(fold_workers=workers)
+    return workers
 
 
 def _rolling_predictions(
@@ -1514,6 +1573,14 @@ def _rolling_predictions(
         return pred_slice[["date", "instrument", "score"]], fold_row, labeled
 
     workers = fold_worker_count(len(folds))
+    database = getattr(self, "database", None)
+    prior = last_resource_sample(database, run_signature(config)) if database is not None else None
+    if prior is None:
+        prior = active_resource_prior()
+    workers = fold_worker_count(
+        len(folds),
+        prior_peak_rss_bytes=int((prior or {}).get("peak_rss_bytes") or 0),
+    )
     with booster_thread_limit(workers):
         if workers <= 1:
             results = [run_fold(fold) for fold in folds]

@@ -11,7 +11,7 @@
 .venv/bin/python -m quantlab.cli serve --host 127.0.0.1 --port 8765
 ```
 
-浏览器打开 `http://127.0.0.1:8765/`。服务只接受 loopback 地址，不支持对外监听。
+浏览器打开 `http://127.0.0.1:8765/`。服务只接受 loopback 地址，不支持对外监听。程序更新仍走 GitHub（`git pull` 后重启）；机器之间的行情和回测产物走 `8766`，不要用 git 同步 `data/` 或 `quantlab_runtime/`。
 
 K 线页位于 `http://127.0.0.1:8765/kline`，只读取已登记的
 `ds_hfq_market_st_v1` 不可变版本。提供以下只读接口：
@@ -31,10 +31,10 @@ K 线页位于 `http://127.0.0.1:8765/kline`，只读取已登记的
 
 ```bash
 .venv/bin/python -m quantlab.cli init-db \
-  --project-root /absolute/path/to/quantlab \
-  --data-root /absolute/path/to/market-data \
-  --calibration-root /absolute/path/to/calibration \
-  --runtime-root /absolute/path/to/quantlab_runtime
+  --project-root . \
+  --data-root data \
+  --calibration-root data/calibration \
+  --runtime-root quantlab_runtime
 ```
 
 也可使用 `QUANTLAB_PROJECT_ROOT`、`QUANTLAB_DATA_ROOT`、
@@ -45,10 +45,10 @@ K 线页位于 `http://127.0.0.1:8765/kline`，只读取已登记的
 
 ```bash
 .venv/bin/python -m quantlab.cli snapshot-data-baseline \
-  --project-root /absolute/path/to/quantlab \
-  --data-root /absolute/path/to/market-data \
-  --calibration-root /absolute/path/to/calibration \
-  --runtime-root /absolute/path/to/quantlab_runtime
+  --project-root . \
+  --data-root data \
+  --calibration-root data/calibration \
+  --runtime-root quantlab_runtime
 ```
 
 ## 测试

@@ -15,6 +15,7 @@ from pyarrow.lib import ArrowInvalid
 
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
+from quantlab.services.machine_identity import load_machine_identity
 from quantlab.services.model_training import model_center_name
 from quantlab.services.run_identity import RunIdentity
 from quantlab.services.trade_filters import normalize_trade_filters, split_open_filters
@@ -56,7 +57,7 @@ class BacktestWorkbenchService:
     def __init__(self, settings: Settings, database: Database) -> None:
         self.settings = settings
         self.database = database
-        self.identity = RunIdentity(database)
+        self.identity = RunIdentity(database, settings.runtime_root)
 
     def _bind_published_model_and_strategy(self, db: Any, c: dict[str, Any]) -> None:
         model = c.get("model") if isinstance(c.get("model"), dict) else {}
@@ -287,6 +288,9 @@ class BacktestWorkbenchService:
 
     def _submit_core(self, raw: dict[str, Any]) -> dict[str, Any]:
         c = self.validate(raw)
+        machine = load_machine_identity(self.settings.runtime_root)
+        if machine.get("machine_id"):
+            c = {**c, "machine_id": machine["machine_id"]}
         token = str(c.get("submission_token", "")).strip()
         if not token:
             raise ValueError("submission_token is required")
@@ -460,6 +464,7 @@ def _merge_exprs(*groups: Any) -> list[str]:
 def workbench_form_config(config: dict[str, Any] | None) -> dict[str, Any]:
     """Drop pretrade stock formulas from train/test lists so the form does not repeat them."""
     payload = dict(config or {})
+    payload.pop("machine_id", None)
     pretrade = payload.get("pretrade_filters") if isinstance(payload.get("pretrade_filters"), dict) else {}
     shared = set(_expr_list(pretrade.get("stock")))
     if not shared:

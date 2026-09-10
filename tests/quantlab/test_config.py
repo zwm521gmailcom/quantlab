@@ -14,9 +14,10 @@ def test_settings_expose_authoritative_roots_and_controlled_write_roots(tmp_path
         runtime_root=tmp_path / "quantlab_runtime",
     )
 
-    assert settings.data_root.is_absolute()
-    assert settings.calibration_root.is_absolute()
-    assert settings.runtime_root.is_absolute()
+    assert settings.display_path(settings.data_root) == "tushare_migration_data"
+    assert settings.display_path(settings.calibration_root) == "tushare_migration_calibration"
+    assert settings.display_path(settings.runtime_root) == "quantlab_runtime"
+    assert not Path(settings.display_path(settings.data_root)).is_absolute()
     assert settings.is_read_path_allowed(settings.data_root / "source_tables/daily.parquet")
     assert settings.is_read_path_allowed(settings.calibration_root / "run/summary.json")
     assert settings.is_write_path_allowed(settings.runtime_root / "results/run-1")
@@ -30,10 +31,13 @@ def test_settings_reject_paths_outside_authoritative_or_runtime_roots(tmp_path: 
         runtime_root=tmp_path / "quantlab_runtime",
     )
 
-    with pytest.raises(ValueError, match="allowed"):
+    with pytest.raises(ValueError, match="allowed") as read_error:
         settings.require_read_path(tmp_path / "secret.txt")
-    with pytest.raises(ValueError, match="allowed"):
+    assert "secret.txt" in str(read_error.value)
+    assert str(tmp_path) not in str(read_error.value)
+    with pytest.raises(ValueError, match="allowed") as write_error:
         settings.require_write_path(tmp_path / "outside")
+    assert str(tmp_path) not in str(write_error.value)
 
 
 def test_settings_require_localhost() -> None:
@@ -110,3 +114,44 @@ def test_cli_accepts_explicit_roots_for_init_db(tmp_path: Path) -> None:
 
     assert result == 0
     assert (runtime_root / "db/quantlab.sqlite3").is_file()
+
+
+def test_settings_accept_relative_roots_and_round_trip_stored_paths(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    settings = Settings(
+        project_root=".",
+        data_root="data",
+        calibration_root="data/calibration",
+        runtime_root="quantlab_runtime",
+    )
+    assert settings.display_path(settings.project_root) == "."
+    assert settings.display_path(settings.data_root) == "data"
+    assert settings.display_path(settings.runtime_root) == "quantlab_runtime"
+    stored = settings.store_path(settings.data_root / "canonical.parquet")
+    assert stored == "data/canonical.parquet"
+    assert settings.require_read_path(stored) == (tmp_path / "data/canonical.parquet").resolve()
+    assert settings.require_read_path(tmp_path / "data/canonical.parquet") == (
+        tmp_path / "data/canonical.parquet"
+    ).resolve()
+
+
+def test_cli_accepts_relative_roots_for_init_db(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    (tmp_path / "calibration").mkdir()
+    result = main(
+        [
+            "init-db",
+            "--project-root",
+            ".",
+            "--data-root",
+            "data",
+            "--calibration-root",
+            "calibration",
+            "--runtime-root",
+            "runtime",
+        ]
+    )
+    assert result == 0
+    assert (tmp_path / "runtime/db/quantlab.sqlite3").is_file()

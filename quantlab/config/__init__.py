@@ -18,6 +18,18 @@ _WRITE_SUBDIRECTORIES = (
 )
 
 
+def posix_relative(path: Path | str, base: Path | str) -> str:
+    """Return a POSIX path relative to ``base``. Never returns an absolute path."""
+
+    resolved = Path(path).expanduser().resolve()
+    origin = Path(base).expanduser().resolve()
+    relative = os.path.relpath(resolved, origin)
+    if os.path.isabs(relative):
+        raise ValueError("path cannot be expressed relative to project root")
+    posix = Path(relative).as_posix()
+    return "." if posix in {"", "."} else posix
+
+
 def _default_project_root() -> Path:
     configured = os.environ.get("QUANTLAB_PROJECT_ROOT")
     if configured:
@@ -25,10 +37,10 @@ def _default_project_root() -> Path:
     return Path.cwd()
 
 
-def _absolute(path: Path | str) -> Path:
+def _resolve_path(path: Path | str, *, base: Path) -> Path:
     value = Path(path).expanduser()
     if not value.is_absolute():
-        raise ValueError(f"QuantLab paths must be absolute: {value}")
+        value = Path(base) / value
     return value.resolve()
 
 
@@ -56,26 +68,30 @@ class Settings:
     port: int = 8765
 
     def __post_init__(self) -> None:
-        project_root = _absolute(self.project_root)
-        data_root = _absolute(
+        project_root = _resolve_path(self.project_root, base=Path.cwd())
+        data_root = _resolve_path(
             self.data_root
             or os.environ.get("QUANTLAB_DATA_ROOT")
-            or project_root / "data"
+            or Path("data"),
+            base=project_root,
         )
-        calibration_root = _absolute(
+        calibration_root = _resolve_path(
             self.calibration_root
             or os.environ.get("QUANTLAB_CALIBRATION_ROOT")
-            or project_root / "data" / "calibration"
+            or Path("data") / "calibration",
+            base=project_root,
         )
-        raw_root = _absolute(
+        raw_root = _resolve_path(
             self.raw_root
             or os.environ.get("QUANTLAB_RAW_ROOT")
-            or project_root / "data" / "raw"
+            or Path("data") / "raw",
+            base=project_root,
         )
-        runtime_root = _absolute(
+        runtime_root = _resolve_path(
             self.runtime_root
             or os.environ.get("QUANTLAB_RUNTIME_ROOT")
-            or project_root / "quantlab_runtime"
+            or Path("quantlab_runtime"),
+            base=project_root,
         )
         if self.host != "127.0.0.1":
             raise ValueError("QuantLab only accepts host 127.0.0.1")
@@ -99,37 +115,51 @@ class Settings:
     def baselines_root(self) -> Path:
         return self.runtime_root / "baselines"
 
+    def resolve_user_path(self, path: Path | str) -> Path:
+        value = Path(path).expanduser()
+        if not str(path).strip():
+            raise ValueError("path is required")
+        if not value.is_absolute():
+            value = self.project_root / value
+        return value.resolve()
+
+    def display_path(self, path: Path | str) -> str:
+        return posix_relative(self.resolve_user_path(path), self.project_root)
+
+    def store_path(self, path: Path | str) -> str:
+        return self.display_path(path)
+
     def is_read_path_allowed(self, path: Path | str) -> bool:
-        return _inside(Path(path), (self.data_root, self.calibration_root, self.raw_root))
+        return _inside(self.resolve_user_path(path), (self.data_root, self.calibration_root, self.raw_root))
 
     def is_write_path_allowed(self, path: Path | str) -> bool:
-        return _inside(Path(path), self.writable_roots)
+        return _inside(self.resolve_user_path(path), self.writable_roots)
 
     def require_read_path(self, path: Path | str) -> Path:
-        resolved = Path(path).expanduser().resolve()
-        if not self.is_read_path_allowed(resolved):
-            raise ValueError(f"path is outside allowed read roots: {resolved}")
+        resolved = self.resolve_user_path(path)
+        if not _inside(resolved, (self.data_root, self.calibration_root, self.raw_root)):
+            raise ValueError(f"path is outside allowed read roots: {self.display_path(resolved)}")
         return resolved
 
     def require_write_path(self, path: Path | str) -> Path:
-        resolved = Path(path).expanduser().resolve()
-        if not self.is_write_path_allowed(resolved):
-            raise ValueError(f"path is outside allowed write roots: {resolved}")
+        resolved = self.resolve_user_path(path)
+        if not _inside(resolved, self.writable_roots):
+            raise ValueError(f"path is outside allowed write roots: {self.display_path(resolved)}")
         return resolved
 
     def require_baseline_path(self, path: Path | str) -> Path:
-        resolved = Path(path).expanduser().resolve()
-        baseline_root = self.baselines_root.resolve()
-        if not _inside(resolved, (baseline_root,)):
-            raise ValueError(f"path is outside runtime baselines root: {resolved}")
+        resolved = self.resolve_user_path(path)
+        if not _inside(resolved, (self.baselines_root,)):
+            raise ValueError(f"path is outside runtime baselines root: {self.display_path(resolved)}")
         return resolved
 
     def require_artifact_path(self, path: Path | str) -> Path:
-        resolved = Path(path).expanduser().resolve()
+        resolved = self.resolve_user_path(path)
         if not (
-            self.is_read_path_allowed(resolved) or self.is_write_path_allowed(resolved)
+            _inside(resolved, (self.data_root, self.calibration_root, self.raw_root))
+            or _inside(resolved, self.writable_roots)
         ):
-            raise ValueError(f"path is outside allowed artifact roots: {resolved}")
+            raise ValueError(f"path is outside allowed artifact roots: {self.display_path(resolved)}")
         return resolved
 
     def with_host(self, host: str) -> Settings:

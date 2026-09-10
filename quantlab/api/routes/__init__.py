@@ -9,6 +9,7 @@ from quantlab.api.routes.factor_mining import router as factor_mining_router
 from quantlab.api.routes.factors import router as factors_router
 from quantlab.api.routes.health import router as health_router
 from quantlab.api.routes.kline import router as kline_router
+from quantlab.api.routes.lan import router as lan_router
 from quantlab.api.routes.models import router as models_router
 from quantlab.api.routes.overview import router as overview_router
 from quantlab.api.routes.pages import router as pages_router
@@ -21,6 +22,7 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(overview_router)
     app.include_router(health_router)
     app.include_router(settings_router)
+    app.include_router(lan_router)
     app.include_router(datasets_router)
     app.include_router(kline_router)
     app.include_router(factor_data_router)

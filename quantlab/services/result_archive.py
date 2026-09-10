@@ -6,9 +6,7 @@ import csv
 import io
 import json
 import secrets
-import shutil
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 from quantlab.config import Settings
@@ -18,6 +16,7 @@ from quantlab.repositories.database import Database
 from quantlab.services.backtest_job import fill_benchmark_metrics
 from quantlab.services.backtest_workbench import workbench_form_config
 from quantlab.services.model_training import kind_display_name
+from quantlab.services.result_sync import purge_backtest_run, sync_result_catalog, write_deleted_marker
 
 
 _STATUS_NAMES = {"queued": "排队中", "running": "运行中", "completed": "已完成", "failed": "失败"}
@@ -235,6 +234,8 @@ class ResultArchiveService:
     def _project(self, row: Any, *, include_detail: bool = False) -> dict[str, Any]:
         config = self._config(row)
         metrics = fill_benchmark_metrics(self._metrics(row), config, raw_root=self.settings.raw_root)
+        resources = metrics.get("resources") if isinstance(metrics.get("resources"), dict) else {}
+        machine_id = str(resources.get("machine_id") or (config.get("machine_id") if isinstance(config, dict) else "") or "")
         test = config.get("test") if isinstance(config.get("test"), dict) else {}
         model = config.get("model") if isinstance(config.get("model"), dict) else {}
         kind = str(config.get("kind") or model.get("kind") or "").strip()
@@ -271,14 +272,16 @@ class ResultArchiveService:
             "execute_url": f"/api/backtests/{row['run_id']}/execute",
             "delete_url": f"/api/backtests/runs/{row['run_id']}",
             "retryable": row["status"] == "failed",
+            "machine_id": machine_id,
         }
         if include_detail:
             item["config"] = config
             item["configuration"] = config
             item["metrics_raw"] = metrics
+            item["resources"] = resources if isinstance(resources, dict) else {}
             item["error_message"] = _ERROR_ZH.get(row["error_message"] or "", row["error_message"])
             item["artifacts"] = self._artifact_rows(row["run_id"])
-            item["results_root"] = str(self.settings.runtime_root / "results" / row["run_id"])
+            item["results_root"] = self.settings.display_path(self.settings.runtime_root / "results" / row["run_id"])
             with self.database.connect() as connection:
                 step_rows = connection.execute(
                     "SELECT ordinal, step_name, status, started_at, finished_at, error_message, artifact_ids_json "
@@ -353,6 +356,7 @@ class ResultArchiveService:
             raise ValueError("page_size must be between 1 and 200")
         if sort not in _SORT_FIELDS or order not in {"asc", "desc"}:
             raise ValueError("invalid sort or order")
+        sync_result_catalog(self.settings, self.database)
         rows = self._rows(status=status, strategy=strategy)
         items = []
         query_text = query.lower().strip() if query else ""
@@ -377,64 +381,20 @@ class ResultArchiveService:
             items.sort(key=lambda pair: (pair[1]["created_at"], pair[1]["run_id"]), reverse=order == "desc")
         total = len(items)
         start = (page - 1) * page_size
-        return {"items": [item for _, item in items[start : start + page_size]], "page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size, "results_root": str(self.settings.runtime_root / "results")}
+        return {"items": [item for _, item in items[start : start + page_size]], "page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size, "results_root": self.settings.display_path(self.settings.runtime_root / "results")}
 
     def get(self, run_id: str) -> dict[str, Any] | None:
         rows = self._rows()
         row = next((item for item in rows if item["run_id"] == run_id), None)
         return self._project(row, include_detail=True) if row else None
 
-    def _result_dir(self, run_id: str) -> Path:
-        root = (self.settings.runtime_root / "results").resolve()
-        target = (root / run_id).resolve()
-        if target == root or root not in target.parents:
-            raise ValueError("result path is outside results root")
-        return self.settings.require_write_path(target)
-
-    def _remove_result_files(self, run_id: str, artifact_paths: list[str]) -> None:
-        for raw in artifact_paths:
-            try:
-                path = self.settings.require_write_path(raw)
-            except ValueError:
-                continue
-            if path.is_file():
-                path.unlink()
-        try:
-            target = self._result_dir(run_id)
-        except ValueError:
-            return
-        if target.is_dir():
-            shutil.rmtree(target)
-
     def delete(self, run_id: str) -> dict[str, Any]:
         run_id = validate_run_id(run_id)
         row = next((item for item in self._rows() if item["run_id"] == run_id), None)
         if row is None:
             raise ValueError("找不到这条回测。")
-        with self.database.connect() as connection:
-            artifact_rows = connection.execute("SELECT path FROM artifacts WHERE run_id=?", (run_id,)).fetchall()
-        artifact_paths = [str(item["path"]) for item in artifact_rows]
-        with self.database.transaction() as connection:
-            connection.execute("DELETE FROM artifacts WHERE run_id=?", (run_id,))
-            connection.execute("DELETE FROM backtest_steps WHERE run_id=?", (run_id,))
-            connection.execute("DELETE FROM backtest_model_versions WHERE backtest_run_id=?", (run_id,))
-            connection.execute("DELETE FROM backtest_runs WHERE run_id=?", (run_id,))
-            deleted = connection.execute(
-                "DELETE FROM run_registry WHERE run_id=? AND run_type='backtest'",
-                (run_id,),
-            )
-            if deleted.rowcount != 1:
-                raise ValueError("找不到这条回测。")
-            connection.execute(
-                "INSERT INTO system_audit_logs(audit_id, action, details_json, created_at) VALUES (?, ?, ?, ?)",
-                (
-                    f"audit-{secrets.token_hex(12)}",
-                    "backtest_result_delete",
-                    json.dumps({"run_id": run_id}, ensure_ascii=False, sort_keys=True),
-                    _now(),
-                ),
-            )
-        self._remove_result_files(run_id, artifact_paths)
+        write_deleted_marker(self.settings, run_id)
+        purge_backtest_run(self.settings, self.database, run_id, audit_action="backtest_result_delete")
         return {"run_id": run_id}
 
     def copy_config(self, run_id: str) -> dict[str, Any]:

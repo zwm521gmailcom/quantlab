@@ -54,6 +54,34 @@ def setup_archive(tmp_path: Path) -> tuple[Settings, Database]:
     return settings, database
 
 
+def test_archive_detail_exposes_resources_without_using_them_as_return(tmp_path: Path) -> None:
+    settings, database = setup_archive(tmp_path)
+    run_id = "20260902-120000-0001"
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET metrics_json=? WHERE run_id=?",
+            (
+                json.dumps(
+                    {
+                        "return": 0.25,
+                        "resources": {
+                            "peak_rss_bytes": 3 * 1024**3,
+                            "fold_workers": 2,
+                            "bucket_workers": 1,
+                            "signature": "abc",
+                        },
+                    }
+                ),
+                run_id,
+            ),
+        )
+    detail = ResultArchiveService(settings, database).get(run_id)
+    assert detail["metrics"]["return"]["value"] == 0.25
+    assert detail["resources"]["fold_workers"] == 2
+    listing = ResultArchiveService(settings, database).list()
+    assert all("resources" not in item for item in listing["items"])
+
+
 def test_archive_lists_projected_metrics_and_marks_missing_as_un_generated(tmp_path: Path) -> None:
     settings, database = setup_archive(tmp_path)
     result = ResultArchiveService(settings, database).list(page=1, page_size=2)
@@ -64,6 +92,8 @@ def test_archive_lists_projected_metrics_and_marks_missing_as_un_generated(tmp_p
     assert result["items"][1]["retryable"] is True
     assert result["items"][1]["metrics"]["sharpe"]["display"] == "未生成"
     assert "excess_return" in result["items"][1]["metrics"]
+    assert result["results_root"] == "runtime/results"
+    assert not Path(result["results_root"]).is_absolute()
 
 
 def test_archive_filters_status_strategy_name_date_and_sorts_without_detail_scan(tmp_path: Path) -> None:
@@ -314,6 +344,11 @@ def test_archive_delete_removes_run_rows_artifacts_and_result_files(tmp_path: Pa
     assert service.get(run_id) is None
     assert service.get(kept_id) is not None
     assert not result_dir.exists()
+    marker = settings.runtime_root / "results" / "_deleted" / f"{run_id}.json"
+    assert marker.is_file()
+    payload = json.loads(marker.read_text(encoding="utf-8"))
+    assert payload["run_id"] == run_id
+    assert payload["machine_id"]
     assert (kept_dir / "keep.json").is_file()
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone()[0] == 0
@@ -350,6 +385,7 @@ def test_archive_api_delete_is_explicit(tmp_path: Path) -> None:
     assert remaining.status_code == 200
     assert remaining.json()["total"] == 2
     assert (settings.runtime_root / "results" / "20260902-120000-0001").exists() is False
+    assert (settings.runtime_root / "results" / "_deleted" / "20260902-120000-0001.json").is_file()
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()[0] == 2

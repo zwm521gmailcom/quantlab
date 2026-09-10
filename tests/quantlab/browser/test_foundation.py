@@ -18,7 +18,8 @@ def test_foundation_shell_loads_navigation_and_real_health(browser_server: str, 
     canonical = next(item for item in datasets if item["entity_id"] == "ds_canonical_market")
     assert canonical["row_count"] == 10_282_666
     assert canonical["quality_status"] == "passed"
-    assert "/Volumes/T2/vnpy/tushare_migration_data" not in datasets_response.text()
+    assert "/Volumes/" not in datasets_response.text()
+    assert "/Users/" not in datasets_response.text()
     page.reload()
     assert page.get_by_role("heading", name="研究总览").is_visible()
     refreshed = page.request.get(f"{browser_server}/api/datasets").json()["items"]
@@ -34,5 +35,6 @@ def test_foundation_shell_loads_navigation_and_real_health(browser_server: str, 
         "entity_id": "not-found",
         "details": {},
     }
-    assert "/Volumes/T2/vnpy/tushare_migration_data" not in page.content()
+    assert "/Volumes/" not in page.content()
+    assert "/Users/" not in page.content()
     assert console_errors == []

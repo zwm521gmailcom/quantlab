@@ -28,20 +28,33 @@ _gate_label: str | None = None
 
 def settings_payload(settings: Settings) -> dict[str, Any]:
     return {
-        "project_root": str(settings.project_root),
-        "data_root": str(settings.data_root),
-        "calibration_root": str(settings.calibration_root),
-        "raw_root": str(settings.raw_root),
-        "runtime_root": str(settings.runtime_root),
+        "project_root": settings.display_path(settings.project_root),
+        "data_root": settings.display_path(settings.data_root),
+        "calibration_root": settings.display_path(settings.calibration_root),
+        "raw_root": settings.display_path(settings.raw_root),
+        "runtime_root": settings.display_path(settings.runtime_root),
         "host": settings.host,
         "port": settings.port,
     }
 
 
 def execute_backtest_worker(payload: dict[str, Any], run_id: str) -> None:
-    settings = Settings(**payload)
+    settings = Settings(
+        project_root=".",
+        data_root=payload["data_root"],
+        calibration_root=payload["calibration_root"],
+        raw_root=payload["raw_root"],
+        runtime_root=payload["runtime_root"],
+        host=payload.get("host", "127.0.0.1"),
+        port=int(payload.get("port") or 8765),
+    )
     database = Database(settings.database_path)
     BacktestJobService(settings, database).execute(run_id)
+
+
+def _spawn_backtest_worker(project_root: str, payload: dict[str, Any], run_id: str) -> None:
+    os.chdir(project_root)
+    execute_backtest_worker(payload, run_id)
 
 
 def reset_execution_gate() -> None:
@@ -227,8 +240,8 @@ def run_isolated(settings: Settings, job: BacktestJobService, run_id: str) -> di
             return job.execute(run_id)
         ctx = multiprocessing.get_context("spawn")
         proc = ctx.Process(
-            target=execute_backtest_worker,
-            args=(settings_payload(settings), run_id),
+            target=_spawn_backtest_worker,
+            args=(os.fspath(settings.project_root), settings_payload(settings), run_id),
             name=f"quantlab-bt-{run_id}",
         )
         with _lock:

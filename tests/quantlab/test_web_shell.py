@@ -554,6 +554,15 @@ def test_backtest_run_record_lists_module_durations() -> None:
     assert "formatClock" not in source
 
 
+def test_backtest_run_record_lists_resource_summary() -> None:
+    html = _page("backtest_run_record.html")
+    js = _first_party_js()
+    assert 'id="resource-summary"' in html
+    assert "峰值内存" in html or "峰值内存" in js
+    assert "function renderResourceSummary" in js
+    assert "机器" in js
+
+
 def test_run_record_keeps_walk_forward_in_config_snapshot() -> None:
     html = _page("backtest_run_record.html")
     js = _first_party_js()

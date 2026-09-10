@@ -1,5 +1,6 @@
 import hashlib
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -134,4 +135,5 @@ def test_artifact_can_register_file_from_authoritative_read_root(tmp_path) -> No
         artifact_role="source",
     )
 
-    assert artifact.path == str(source.resolve())
+    assert artifact.path == "tushare_migration_data/registered-source.csv"
+    assert not Path(artifact.path).is_absolute()

@@ -35,7 +35,7 @@ def _aggregate_file_fingerprint(root: Path, paths: list[Path]) -> tuple[str, lis
     digest = hashlib.sha256()
     missing: list[str] = []
     for path in sorted(paths):
-        relative = str(path.relative_to(root))
+        relative = path.relative_to(root).as_posix()
         digest.update(relative.encode())
         digest.update(b"\0")
         if not path.is_file():
@@ -121,7 +121,7 @@ def authoritative_data_snapshot(settings: Settings) -> dict[str, Any]:
         for path in sorted(root.rglob("*")):
             if not path.is_file():
                 continue
-            relative = str(path.relative_to(root))
+            relative = path.relative_to(root).as_posix()
             item: dict[str, Any] = {
                 "root": root_name,
                 "relative_path": relative,
@@ -135,7 +135,7 @@ def authoritative_data_snapshot(settings: Settings) -> dict[str, Any]:
             records.append(item)
     return {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "roots": {name: str(root) for name, root in roots.items()},
+        "roots": {name: settings.display_path(root) for name, root in roots.items()},
         "files": records,
     }
 
@@ -146,7 +146,11 @@ def verify_authoritative_data(settings: Settings, baseline: Path | str) -> bool:
     actual = authoritative_data_snapshot(settings)
     expected_files = expected.get("files", [])
     actual_files = actual.get("files", [])
-    return expected.get("roots") == actual.get("roots") and expected_files == actual_files
+    expected_roots = {
+        name: settings.display_path(path)
+        for name, path in (expected.get("roots") or {}).items()
+    }
+    return expected_roots == actual.get("roots") and expected_files == actual_files
 
 
 class DatasetCatalog:
@@ -215,7 +219,7 @@ class DatasetCatalog:
             version_path = path / "versions" / locked_version
             manifest_path = version_path / "manifest.json"
             if not manifest_path.exists():
-                raise FileNotFoundError(f"dataset manifest not found: {manifest_path}")
+                raise FileNotFoundError(f"dataset manifest not found: {self.settings.display_path(manifest_path)}")
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             partition_names = manifest.get("partitions")
             if isinstance(partition_names, list):
@@ -310,7 +314,7 @@ class DatasetCatalog:
                     (
                         entry["entity_id"],
                         version_id,
-                        str(version_path),
+                        self.settings.store_path(version_path),
                         row_count,
                         json.dumps(fields, ensure_ascii=False),
                         date_min,
@@ -329,8 +333,8 @@ class DatasetCatalog:
                 ):
                     quality_status = "needs_review"
                 connection.execute(
-                    "UPDATE dataset_versions SET quality_status = ? WHERE entity_id = ? AND version_id = ?",
-                    (quality_status, entry["entity_id"], version_id),
+                    "UPDATE dataset_versions SET quality_status = ?, path = ? WHERE entity_id = ? AND version_id = ?",
+                    (quality_status, self.settings.store_path(version_path), entry["entity_id"], version_id),
                 )
         return {
             "entity_id": entry["entity_id"],
@@ -402,7 +406,7 @@ class DatasetCatalog:
         if override_file.is_file():
             try:
                 override = json.loads(override_file.read_text(encoding="utf-8"))
-                candidate = Path(override.get("path", "")).expanduser().resolve()
+                candidate = self.settings.resolve_user_path(override.get("path", ""))
                 if candidate.is_dir():
                     root = candidate
             except (OSError, json.JSONDecodeError, AttributeError):

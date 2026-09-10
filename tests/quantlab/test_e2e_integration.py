@@ -86,7 +86,8 @@ def test_authoritative_baseline_is_created_outside_data_root(tmp_path: Path) -> 
     baseline = snapshot_authoritative_data(settings, settings.runtime_root / "baselines" / "authoritative-data.json")
     payload = json.loads(baseline.read_text(encoding="utf-8"))
     assert baseline.is_relative_to(settings.runtime_root)
-    assert payload["roots"]["data"] == str(settings.data_root)
+    assert payload["roots"]["data"] == settings.display_path(settings.data_root)
+    assert not Path(payload["roots"]["data"]).is_absolute()
     assert not (settings.data_root / "baselines").exists()
     assert database.db_path.is_relative_to(settings.runtime_root)
 

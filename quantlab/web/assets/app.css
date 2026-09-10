@@ -351,10 +351,19 @@ main, .card { min-width: 0; }
 .settings-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; min-width: 0; }
 .settings-fields label { display: grid; gap: 6px; min-width: 0; color: var(--color-text-secondary); font-size: 13px; }
 .settings-fields input, .settings-fields select { width: 100%; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); }
+.settings-fields input[readonly] { background: var(--color-bg-muted); color: var(--color-text-secondary); cursor: default; font-family: var(--font-mono); }
 .settings-fields .field-help { color: var(--color-text-muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
 .settings-fields .field-help code { font-size: 11px; }
 .settings-help, .card > p.muted { margin: 0 0 14px; color: var(--color-text-muted); font-size: 12px; line-height: 1.65; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.lan-check { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; color: var(--color-text-secondary); font-size: 13px; }
+.lan-check input[type="checkbox"] { width: 16px; min-width: 16px; min-height: 16px; padding: 0; }
+#lan-peers { margin: 0 0 14px; overflow-x: auto; }
+.lan-peers { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lan-peers th, .lan-peers td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--color-border-light); vertical-align: middle; }
+.lan-peers th { color: var(--color-text-muted); font-weight: 600; }
+.lan-peers .muted { color: var(--color-text-muted); }
+.lan-empty { margin: 0; color: var(--color-text-muted); font-size: 13px; }
 @media (max-width: 560px) { .settings-fields { grid-template-columns: 1fr; } .settings-actions button { flex: 1 1 160px; } }
 
 /* The sidebar is rendered by nav.js so every page shares one hierarchy. */

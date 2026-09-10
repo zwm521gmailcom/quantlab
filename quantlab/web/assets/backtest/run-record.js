@@ -367,6 +367,22 @@ function renderStepTiming(d) {
   target.append(table);
 }
 
+function formatRssGiB(bytes) {
+  const number = Number(bytes);
+  if (!Number.isFinite(number) || number <= 0) return "—";
+  return (number / (1024 ** 3)).toFixed(1) + " GB";
+}
+
+function renderResourceSummary(d) {
+  const target = q("resource-summary");
+  if (!target) return;
+  const resources = d.resources || {};
+  const peak = formatRssGiB(resources.peak_rss_bytes);
+  const fold = resources.fold_workers == null || resources.fold_workers === "" ? "—" : String(resources.fold_workers);
+  const bucket = resources.bucket_workers == null || resources.bucket_workers === "" ? "—" : String(resources.bucket_workers);
+  target.textContent = `峰值内存 ${peak} · 折并行 ${fold} · 分层 ${bucket}`;
+}
+
 function renderAnnualSummary(d) {
   const target = q("annual-summary");
   if (!target) return;
@@ -404,7 +420,7 @@ async function load() {
   q("title").textContent = d.name + " · 运行记录";
   const fail = d.status === "failed" ? ((d.failure && d.failure.reason) || d.error_message || "回测没有跑完") : "";
   const totalText = d.timing && d.timing.duration_display && d.timing.duration_display !== "—" ? " · 总耗时 " + d.timing.duration_display : "";
-  q("identity").textContent = d.run_id + " · " + d.status_name + " · 创建 " + d.created_at + (d.finished_at ? " · 完成 " + d.finished_at : "") + totalText;
+  q("identity").textContent = d.run_id + " · " + d.status_name + " · 创建 " + d.created_at + (d.finished_at ? " · 完成 " + d.finished_at : "") + totalText + (d.machine_id ? " · 机器 " + d.machine_id : "");
   const c = d.configuration || {};
   q("summary").innerHTML = (fail ? `<p class="state error">${esc(fail)}</p>` : "")
     + Object.entries(d.metrics).map(([k, v]) => `<span class="metric"><b>${esc(metricLabels[k] || k)}</b> ${esc(v.display)}</span>`).join("")
@@ -469,6 +485,7 @@ async function load() {
   renderMonthlyRanking(d);
   renderAnnualSummary(d);
   renderStepTiming(d);
+  renderResourceSummary(d);
   const folds = q("config-folds");
   folds.replaceChildren();
   appendJsonFold(folds, "运行配置", d.configuration, "configuration");
@@ -525,6 +542,7 @@ async function load() {
     if (!confirmingDelete) {
       confirmingDelete = true;
       q("remove").textContent = "确认删除";
+      q("message").textContent = "同步后其他机器也会删除这条。";
       return;
     }
     q("remove").disabled = true;

@@ -30,7 +30,9 @@ from quantlab.services.backtest_workbench import BacktestWorkbenchService
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_plan import BacktestPlanService
 from quantlab.services.result_archive import ResultArchiveService
+from quantlab.services.result_sync import sync_result_catalog
 from quantlab.services.settings import SettingsService
+from quantlab.services.lan_peers import PeerRegistry
 from quantlab.services.tushare_download import TushareDownloadService
 from quantlab.api.errors import _error_payload
 from quantlab.api.routes import register_routers
@@ -41,6 +43,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     resolved_settings = settings or Settings()
     resolved_database = database or Database(resolved_settings.database_path)
     resolved_database.initialize()
+    sync_result_catalog(resolved_settings, resolved_database)
     catalog = DatasetCatalog(resolved_settings, resolved_database)
     artifacts = ArtifactRepository(resolved_settings, resolved_database)
     overview = OverviewService(resolved_database)
@@ -88,6 +91,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.state.model_training_service = model_training
     app.state.settings = resolved_settings
     app.state.database = resolved_database
+    app.state.peer_registry = PeerRegistry()
     register_routers(app)
     assets = Path(__file__).parents[1] / "web/assets"
     app.mount("/assets", NoStoreStaticFiles(directory=assets), name="assets")

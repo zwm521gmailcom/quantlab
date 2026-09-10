@@ -37,14 +37,14 @@ class ArtifactRepository:
     ) -> Artifact:
         resolved = self.settings.require_artifact_path(path)
         if not resolved.is_file():
-            raise FileNotFoundError(f"artifact file not found: {resolved}")
+            raise FileNotFoundError(f"artifact file not found: {self.settings.display_path(resolved)}")
         artifact = Artifact(
             artifact_id=f"artifact-{uuid.uuid4().hex}",
             run_id=run_id,
             display_name=display_name,
             original_name=resolved.name,
             artifact_role=artifact_role,
-            path=str(resolved),
+            path=self.settings.store_path(resolved),
             content_hash=_sha256_file(resolved),
             size_bytes=resolved.stat().st_size,
         )

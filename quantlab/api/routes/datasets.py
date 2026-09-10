@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
@@ -69,7 +67,7 @@ def raw_apply_suspend_d(request: Request) -> dict[str, object]:
                 "WHERE entity_id='ds_canonical_market' AND version_id='current'"
             ).fetchone()
         canonical = (
-            Path(row["path"])
+            request.app.state.settings.resolve_user_path(row["path"])
             if row and row["path"]
             else request.app.state.settings.data_root / "canonical.parquet"
         )
