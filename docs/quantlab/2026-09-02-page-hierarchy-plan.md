@@ -1,7 +1,7 @@
 # QuantLab 页面信息层级定稿：现状核对与修正版实施顺序
 
 日期：2026-09-02
-范围：`/Volumes/T2/vnpy/.worktrees/quantlab-platform`（`codex/quantlab-platform`）
+范围：当时的 `quantlab-platform` worktree（`codex/quantlab-platform`）
 
 ## 1. 结论
 

@@ -66,7 +66,7 @@ def setup_env(tmp_path: Path):
                 ),
             ),
         )
-        c.execute("INSERT INTO factors VALUES ('f','动量','技术','published')")
+        c.execute("INSERT INTO factors(entity_id, name, category, status) VALUES ('f','动量','技术','published')")
         c.execute(
             "INSERT INTO factor_versions(entity_id,version_id,dataset_id,dataset_version_id,formula,status,quality_status) VALUES ('f','v1','ds','v1','momentum_5','published','passed')"
         )

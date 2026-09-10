@@ -124,9 +124,11 @@ function renderFactorCatalog(items) {
   const table = document.getElementById("factor-table");
   const empty = document.getElementById("factor-empty");
   const query = (document.getElementById("factor-name-search")?.value || "").trim().toLowerCase();
+  const assetClass = document.getElementById("factor-asset-class")?.value || "";
   const categoryBoxes = [...document.querySelectorAll("#factor-category-filter input[name='factor-category']")];
   const selectedCategories = new Set(categoryBoxes.filter((box) => box.checked).map((box) => box.value));
   const filtered = items.filter((item) => {
+    if (assetClass && String(item.asset_class || "cn_a") !== assetClass) return false;
     if (categoryBoxes.length && !selectedCategories.has(String(item.category || "未分类").trim() || "未分类")) return false;
     if (!query) return true;
     return String(item.name || "").toLowerCase().includes(query) || String(item.factor_id || "").toLowerCase().includes(query);
@@ -148,6 +150,7 @@ function renderFactorCatalog(items) {
   const header = appendFactorText(table, "div", "factor-row factor-header", "");
   appendFactorText(header, "span", null, "因子代码");
   appendFactorText(header, "span", null, "因子名称");
+  appendFactorText(header, "span", null, "资产分类");
   appendFactorText(header, "span", null, "分类");
   appendFactorText(header, "span", null, "方向");
   header.append(factorHeaderCell("覆盖率", ["覆盖率 = 最近一次已完成计算中，因子非空行数 ÷ 计算周期内可用于计算的总行数。", "缺失行 = 计算周期内因子为空、或窗口不足的可计算行数。", "数据来自 canonical 标准行情宽表按计算任务现算；无已完成计算时显示“—”。"]));
@@ -163,6 +166,7 @@ function renderFactorCatalog(items) {
     const name = appendFactorText(factorCell, "a", "factor-name", item.name);
     name.href = `/factors/${encodeURIComponent(item.factor_id)}`;
     factorCell.append(infoDot("因子说明", [`${item.factor_id} ${item.name}`, item.formula, ...(item.formula_explanation || [])].filter(Boolean)));
+    appendFactorText(row, "span", "factor-asset-class", item.asset_class_label || "A股");
     appendFactorText(row, "span", "factor-category", item.category || "未分类");
     appendFactorText(row, "span", null, `${item.direction_label} ${item.direction === "negative" ? "↓" : "↑"}`);
     const coverageValue = item.latest_calculation && item.latest_calculation.status === "completed" && item.latest_calculation.coverage != null ? item.latest_calculation.coverage : item.coverage;
@@ -208,6 +212,7 @@ async function loadFactors() {
     populateFactorCategoryFilter(items);
     renderFactorCatalog(items);
     document.getElementById("factor-name-search")?.addEventListener("input", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
+    document.getElementById("factor-asset-class")?.addEventListener("change", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-prev")?.addEventListener("click", () => { factorCatalogPage = Math.max(1, factorCatalogPage - 1); renderFactorCatalog(factorCatalogAll); });
     document.getElementById("factor-page-next")?.addEventListener("click", () => { factorCatalogPage += 1; renderFactorCatalog(factorCatalogAll); });
   } catch (errorValue) {

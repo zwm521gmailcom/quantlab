@@ -95,3 +95,16 @@ def test_manual_rescan_returns_audit_without_exposing_filesystem_paths(tmp_path)
     assert payload["audit_id"]
     assert "path" not in response.text
     assert str(tmp_path) not in response.text
+
+
+def test_raw_dataset_api_exposes_and_filters_asset_class() -> None:
+    client = TestClient(create_app())
+    listed = client.get("/api/datasets/raw").json()
+    assert listed["total"] >= 1
+    assert all(item["asset_class"] == "cn_a" for item in listed["items"])
+    assert all(item["asset_class_label"] == "A股" for item in listed["items"])
+    a_shares = client.get("/api/datasets/raw", params={"asset_class": "cn_a"}).json()
+    assert a_shares["total"] == listed["total"]
+    hong_kong = client.get("/api/datasets/raw", params={"asset_class": "hk"}).json()
+    assert hong_kong["total"] == 0
+    assert hong_kong["items"] == []

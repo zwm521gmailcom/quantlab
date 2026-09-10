@@ -10,7 +10,7 @@
 - `GET /api/datasets/{dataset_id}/versions` 展示不可变版本；CURRENT 仅作为当前指针。
 - 页面只显示路径别名和受控相对路径，不暴露任意文件读取能力。
 - 首批目录必须覆盖 source tables、canonical、features 和正式 HFQ+ST 数据集。
-- 配置固定登记 `/Volumes/T2/vnpy/tushare_migration_data` 与 `/Volumes/T2/vnpy/tushare_migration_calibration`；正式版本 `ds_hfq_market_st_v1@20260830T173152Z-50e42e72` 锁定 8,204,633 行、2016-10-10 至 2024-12-31、`47e9c6968ee856136fea128aa49a76d0c6976afa63d99066744ab0b717f02d2a` manifest 哈希和实际 Schema。
+- 配置固定登记 `data/` 与 `data/calibration`；正式版本 `ds_hfq_market_st_v1@20260830T173152Z-50e42e72` 锁定 8,204,633 行、2016-10-10 至 2024-12-31、`47e9c6968ee856136fea128aa49a76d0c6976afa63d99066744ab0b717f02d2a` manifest 哈希和实际 Schema。
 
 ## 实施任务
 

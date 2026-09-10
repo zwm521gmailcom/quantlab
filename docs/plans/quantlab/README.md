@@ -60,7 +60,7 @@
 
 ## 统一设计约束
 
-- 权威数据目录保持原位，只读使用：`/Volumes/T2/vnpy/tushare_migration_data` 与 `/Volumes/T2/vnpy/tushare_migration_calibration`。
+- 权威数据目录保持原位，只读使用：`data/` 与 `data/calibration`。
 - 标准成交和因子字段使用 `hfq_open`、`hfq_high`、`hfq_low`、`hfq_close`；`momentum_5` 使用 `hfq_close[t] / hfq_close[t-5 observations] - 1`。
 - 大型 Parquet 不复制到网站；运行时目录、版本摘要和诊断摘要由 SQLite/API 动态提供，源码目录不生成运行数据。
 - 因子、策略、模型、数据集和回测均使用不可变版本或运行快照；不覆盖历史记录。

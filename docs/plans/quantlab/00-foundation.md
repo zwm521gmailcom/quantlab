@@ -42,7 +42,7 @@
 
 - [ ] **Step 3: 添加依赖、打包配置与最小实现**
 
-  在 `pyproject.toml` 增加 `quantlab` 可选依赖：FastAPI、Uvicorn、Pydantic、Playwright、pytest-playwright，并把 Hatch wheel packages 改为 `['vnpy', 'quantlab']`、sdist 纳入 `quantlab*`。`Settings` 必须使用显式绝对路径，并通过 `Path.resolve()`（包括符号链接解析）验证读取路径属于两个只读数据根，写入路径属于 `quantlab_runtime` 的受控子目录。
+  在 `pyproject.toml` 增加 `quantlab` 可选依赖：FastAPI、Uvicorn、Pydantic、Playwright、pytest-playwright，并把 Hatch wheel packages 改为 `['vnpy', 'quantlab']`、sdist 纳入 `quantlab*`。`Settings` 接受相对项目根的路径，并通过 `Path.resolve()`（包括符号链接解析）验证读取路径属于两个只读数据根，写入路径属于 `quantlab_runtime` 的受控子目录。对外展示、入库和错误信息只使用相对路径。
 
 - [ ] **Step 4: 验证通过**
 

@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from quantlab.config import Settings
+from quantlab.services.asset_layout import directory_plan
 from quantlab.services.machine_identity import load_machine_identity, save_serial_prefix
 
 DEFAULTS: dict[str, Any] = {"top_n": 10, "rebalance_days": 2, "capital": 1_000_000, "benchmark": "000300.SH", "buy_fee": 0.0003, "sell_fee": 0.0005, "slippage": 0.0005}
@@ -202,15 +203,21 @@ class SettingsService:
 
     def public(self) -> dict[str, Any]:
         value = self._read()
+        paths = {
+            "project_root": self.settings.display_path(self.settings.project_root),
+            "data_root": self.settings.display_path(self.settings.data_root),
+            "calibration_root": self.settings.display_path(self.settings.calibration_root),
+            "runtime_root": self.settings.display_path(self.settings.runtime_root),
+            "raw_root": self.raw_path(),
+            "results_root": self.settings.display_path(self.settings.runtime_root / "results"),
+        }
         return {
-            "paths": {
-                "project_root": self.settings.display_path(self.settings.project_root),
-                "data_root": self.settings.display_path(self.settings.data_root),
-                "calibration_root": self.settings.display_path(self.settings.calibration_root),
-                "runtime_root": self.settings.display_path(self.settings.runtime_root),
-                "raw_root": self.raw_path(),
-                "results_root": self.settings.display_path(self.settings.runtime_root / "results"),
-            },
+            "paths": paths,
+            "directory_plan": directory_plan(
+                data_root=paths["data_root"],
+                raw_root=paths["raw_root"],
+                runtime_root=paths["runtime_root"],
+            ),
             "environment": {"host": self.settings.host, "port": self.settings.port, "service": "local-only"},
             "defaults": value["defaults"],
             "compute": value["compute"],

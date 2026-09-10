@@ -97,7 +97,7 @@ function renderFactorDetail(item, summary, sample, calculation = null) {
     if (line === (item.formula_explanation || [])[0]) appendFactorText(formulaBlock, "h4", null, "公式中文解释");
     appendFactorText(formulaBlock, "p", null, line);
   });
-  appendFactorText(detail, "p", "factor-detail-meta", `因子版本 ${item.factor_version_id} · 数据版本 canonical/${item.dataset_version_id} · 方向 ${item.direction_label} · 频率 ${item.frequency}`);
+  appendFactorText(detail, "p", "factor-detail-meta", `资产分类 ${item.asset_class_label || "A股"} · 因子版本 ${item.factor_version_id} · 数据版本 canonical/${item.dataset_version_id} · 方向 ${item.direction_label} · 频率 ${item.frequency}`);
   appendFactorText(detail, "p", "factor-storage", "因子数据文件：data/canonical.parquet（标准行情只读，因子按计算任务生成，不再依赖 features.parquet）");
   appendFactorText(detail, "p", "factor-detail-meta", `缺失规则：${item.missing_policy}；点时规则：${item.pit_policy}`);
   const summaryBox = document.getElementById("factor-summary");

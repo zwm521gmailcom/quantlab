@@ -11,7 +11,7 @@ from quantlab.config import Settings
 from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.database import Database
 from quantlab.services.lan_files import iter_rel_files, safe_under
-from quantlab.services.lan_peers import validate_lan_host, validate_lan_port
+from quantlab.services.lan_peers import LAN_PORT, UI_PORT, local_lan_ip, validate_lan_host, validate_lan_port
 from quantlab.services.lan_sync import (
     DELETED_DIR,
     HTTP_TIMEOUT,
@@ -32,6 +32,9 @@ def _hello(settings: Settings) -> dict[str, object]:
         "machine_id": machine.get("machine_id") or "",
         "serial_prefix": int(machine.get("serial_prefix") or 10),
         "hostname": socket.gethostname(),
+        "host": local_lan_ip(),
+        "sync_port": LAN_PORT,
+        "ui_port": int(getattr(settings, "port", UI_PORT) or UI_PORT),
     }
 
 

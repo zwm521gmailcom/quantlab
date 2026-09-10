@@ -87,8 +87,18 @@ def test_factor_repository_imports_strict_definition_and_lists_filterable_versio
     created = repository.import_definition(_definition())
     assert created["entity_id"] == "factor_momentum_5"
     assert created["status"] == "draft"
+    assert created["asset_class"] == "cn_a"
+    assert created["asset_class_label"] == "A股"
     assert repository.list(category="技术", source="hfq_daily_standard", lifecycle="draft")["total"] == 1
+    assert repository.list(asset_class="cn_a")["total"] == 1
+    assert repository.list(asset_class="hk")["total"] == 0
     assert repository.list(query="动量")["items"][0]["detail_url"] == "/factors/factor_momentum_5/versions/v1"
+    hong_kong = repository.import_definition(_definition(entity_id="factor_hk_momentum_5", asset_class="hk"))
+    assert hong_kong["asset_class"] == "hk"
+    assert hong_kong["asset_class_label"] == "港股"
+    assert repository.list(asset_class="hk")["total"] == 1
+    with pytest.raises(ValueError, match="asset_class"):
+        repository.import_definition(_definition(entity_id="factor_bad_asset", asset_class="gold"))
 
     with pytest.raises(ValueError, match="additional|额外"):
         repository.import_definition(_definition(unexpected="reject"))
@@ -332,6 +342,9 @@ def test_factor_api_exposes_catalog_actions_without_detail_implementation(tmp_pa
     response = client.get("/api/factors", params={"category": "技术", "lifecycle": "draft"})
     assert response.status_code == 200
     assert response.json()["items"][0]["detail_url"] == "/factors/factor_momentum_5/versions/v1"
+    assert response.json()["items"][0]["asset_class"] == "cn_a"
+    assert response.json()["items"][0]["asset_class_label"] == "A股"
+    assert client.get("/api/factors", params={"asset_class": "hk"}).json()["total"] == 0
     assert client.post("/api/factors/diagnose", json={"items": [{"entity_id": "factor_momentum_5", "version_id": "v1"}]}).status_code == 200
     assert client.post("/api/factors/factor_momentum_5/v1/publish").status_code == 200
     assert client.post("/api/factors/factor_momentum_5/v1/deprecate").status_code == 200

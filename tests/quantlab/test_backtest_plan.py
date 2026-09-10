@@ -159,6 +159,58 @@ def test_second_start_is_rejected_while_plan_is_running(tmp_path: Path, monkeypa
     _wait_plan(client, plan_id, timeout=15)
 
 
+def test_list_plans_keeps_creation_order_after_later_updates(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    first = client.post("/api/backtest-plans", json={"name": "先建"}).json()
+    second = client.post("/api/backtest-plans", json={"name": "后建"}).json()
+    added = client.post(
+        f"/api/backtest-plans/{first['plan_id']}/items",
+        json={"name": "后补的任务", "config": config("later")},
+    )
+    assert added.status_code == 201
+    names = [plan["name"] for plan in client.get("/api/backtest-plans").json()["items"]]
+    assert names[:2] == ["后建", "先建"]
+
+
+def test_start_reruns_single_failed_item(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    plan = client.post(
+        "/api/backtest-plans",
+        json={
+            "name": "失败单笔重算",
+            "items": [
+                {"name": "要重算", "config": config("retry")},
+                {"name": "先不动", "config": config("keep")},
+            ],
+        },
+    ).json()
+    failed_id = plan["items"][0]["item_id"]
+    keep_id = plan["items"][1]["item_id"]
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_plan_items SET status=?, error_message=? WHERE item_id=?",
+            ("failed", "已强行停止", failed_id),
+        )
+        connection.execute(
+            "UPDATE backtest_plans SET status=? WHERE plan_id=?",
+            ("completed", plan["plan_id"]),
+        )
+    started = client.post(
+        f"/api/backtest-plans/{plan['plan_id']}/start",
+        json={"item_ids": [failed_id]},
+    )
+    assert started.status_code == 202
+    finished = _wait_plan(client, plan["plan_id"])
+    by_id = {item["item_id"]: item for item in finished["items"]}
+    assert by_id[failed_id]["status"] == "completed"
+    assert by_id[failed_id]["run_id"]
+    assert by_id[failed_id]["error_message"] in {None, ""}
+    assert by_id[keep_id]["status"] == "pending"
+    assert by_id[keep_id]["run_id"] is None
+
+
 def test_create_rejects_blank_plan_name(tmp_path: Path) -> None:
     settings, database = setup_env(tmp_path)
     client = TestClient(create_app(settings, database))
@@ -299,6 +351,8 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert "plan-sortable" in source
     assert "summary?.model_name" in plan_js
     assert 'dataset.sort = column.key' in plan_js or "dataset.sort" in plan_js
+    assert "重算" in plan_js
+    assert '["failed", "skipped"].includes(item.status)' in plan_js or "item.status === \"failed\"" in plan_js
     workbench = client.get("/backtests/new").text
     workbench_js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
     workbench_source = workbench + workbench_js

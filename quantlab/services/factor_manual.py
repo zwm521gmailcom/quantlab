@@ -460,6 +460,7 @@ class ManualFactorService:
             "entity_id": entity_id,
             "name": str(request.get("name", "")).strip(),
             "category": str(request.get("category", "技术")),
+            "asset_class": request.get("asset_class") or "cn_a",
             "version_id": "v1",
             "dataset_id": str(request["dataset_id"]),
             "dataset_version_id": str(request["dataset_version_id"]),
@@ -602,6 +603,7 @@ class ManualFactorService:
         allowed = {
             "name",
             "category",
+            "asset_class",
             "formula",
             "input_fields",
             "direction",

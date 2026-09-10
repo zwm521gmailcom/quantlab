@@ -1,7 +1,7 @@
 # QuantLab 页面设计标准核对记录
 
 日期：2026-09-02  
-范围：`/Volumes/T2/vnpy/.worktrees/quantlab-platform`  代码与页面路由  
+范围：当时的 `quantlab-platform` worktree  代码与页面路由  
 性质：源码和本机浏览器视觉核对记录；动态详情页因当前运行时数据库没有模型、策略、研究或回测记录，无法完成含真实内容的详情截图。
 
 ## 截图核对环境

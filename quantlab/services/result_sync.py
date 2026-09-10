@@ -466,8 +466,79 @@ def import_result_manifests(settings: Settings, database: Database) -> list[str]
     return imported
 
 
+def attach_imported_runs_to_plans(database: Database) -> int:
+    """Link finished synced runs onto pending plan items with the same name."""
+
+    attached = 0
+    stamp = _utc_now()
+    with database.transaction() as connection:
+        used = {
+            str(row["run_id"])
+            for row in connection.execute(
+                "SELECT run_id FROM backtest_plan_items WHERE run_id IS NOT NULL AND TRIM(run_id) != ''"
+            )
+        }
+        available: dict[str, list[tuple[str, str]]] = {}
+        for row in connection.execute(
+            "SELECT run_id, status, json_extract(config_json, '$.name') AS name "
+            "FROM backtest_runs WHERE status IN ('completed', 'failed') "
+            "ORDER BY CASE status WHEN 'completed' THEN 0 ELSE 1 END, run_id DESC"
+        ):
+            run_id = str(row["run_id"] or "")
+            name = str(row["name"] or "").strip()
+            if not run_id or not name or run_id in used:
+                continue
+            available.setdefault(name, []).append((run_id, str(row["status"])))
+        plans = connection.execute(
+            "SELECT plan_id, status FROM backtest_plans WHERE closed=0"
+        ).fetchall()
+        for plan in plans:
+            if str(plan["status"]) == "running":
+                continue
+            items = connection.execute(
+                "SELECT item_id, name, status FROM backtest_plan_items "
+                "WHERE plan_id=? AND status='pending' AND (run_id IS NULL OR TRIM(run_id) = '') "
+                "ORDER BY sort_order, item_id",
+                (plan["plan_id"],),
+            ).fetchall()
+            for item in items:
+                name = str(item["name"] or "").strip()
+                candidates = available.get(name) or []
+                chosen: tuple[str, str] | None = None
+                while candidates:
+                    run_id, status = candidates.pop(0)
+                    if run_id in used:
+                        continue
+                    chosen = (run_id, status)
+                    break
+                if chosen is None:
+                    continue
+                run_id, status = chosen
+                used.add(run_id)
+                connection.execute(
+                    "UPDATE backtest_plan_items SET status=?, run_id=?, finished_at=?, updated_at=? "
+                    "WHERE item_id=?",
+                    (status, run_id, stamp, stamp, item["item_id"]),
+                )
+                attached += 1
+            leftover = connection.execute(
+                "SELECT COUNT(*) AS n FROM backtest_plan_items "
+                "WHERE plan_id=? AND status IN ('pending', 'queued', 'running')",
+                (plan["plan_id"],),
+            ).fetchone()
+            if leftover is not None and int(leftover["n"] or 0) == 0:
+                connection.execute(
+                    "UPDATE backtest_plans SET status='completed', updated_at=? "
+                    "WHERE plan_id=? AND status IN ('draft', 'stopped', 'completed')",
+                    (stamp, plan["plan_id"]),
+                )
+    return attached
+
+
 def sync_result_catalog(settings: Settings, database: Database) -> list[str]:
     apply_deleted_markers(settings, database)
     backfill_missing_machine_ids(settings, database)
     export_missing_manifests(settings, database)
-    return import_result_manifests(settings, database)
+    imported = import_result_manifests(settings, database)
+    attach_imported_runs_to_plans(database)
+    return imported

@@ -398,6 +398,13 @@ class DatasetCatalog:
         "suspend_d": "每日停复牌信息",
         "trade_cal": "交易日历",
     }
+    ASSET_CLASS_LABELS = {
+        "cn_a": "A股",
+        "hk": "港股",
+        "us": "美股",
+        "crypto": "数字货币",
+    }
+    _RAW_INTERFACE_ASSET_CLASS: dict[str, str] = {}
 
 
     def _resolve_raw_root(self) -> Path:
@@ -450,6 +457,7 @@ class DatasetCatalog:
                 except OSError:
                     pass
         date_min, date_max = self._raw_file_date_range(files) if files else (None, None)
+        asset_class = self._asset_class_for(interface_name)
         return {
             "entity_id": f"raw_{interface_name}",
             "name": interface_name,
@@ -465,9 +473,18 @@ class DatasetCatalog:
             "date_max": date_max,
             "quality_status": "passed" if files else "warning",
             "category": "raw",
+            "asset_class": asset_class,
+            "asset_class_label": self.ASSET_CLASS_LABELS[asset_class],
             "path_alias": f"raw/{interface_name}",
             "quality_reason": None if files else "尚未下载任何文件",
         }
+
+    @classmethod
+    def _asset_class_for(cls, interface_name: str) -> str:
+        code = cls._RAW_INTERFACE_ASSET_CLASS.get(interface_name, "cn_a")
+        if code not in cls.ASSET_CLASS_LABELS:
+            return "cn_a"
+        return code
 
     def _raw_signature(self, root: Path) -> tuple[object, ...]:
         entries = []

@@ -17,11 +17,14 @@ async function loadDatasets() {
   const params = new URLSearchParams();
   const query = document.getElementById("dataset-query").value.trim();
   const category = document.getElementById("dataset-category").value;
+  const assetSelect = document.getElementById("dataset-asset-class");
+  const assetClass = assetSelect ? assetSelect.value : "";
   const quality = document.getElementById("dataset-quality").value;
   const pageSize = tablePageSize(DATASET_PAGE_KEY, 50);
   const pager = tablePager();
   if (query) params.set("q", query);
   if (category) params.set("category", category);
+  if (assetClass) params.set("asset_class", assetClass);
   if (quality) params.set("quality_status", quality);
   params.set("page", String(datasetPage));
   params.set("page_size", String(pageSize));
@@ -40,6 +43,7 @@ async function loadDatasets() {
     header.setAttribute("role", "row");
     appendText(header, "span", null, "数据名称");
     appendText(header, "span", null, "中文名称");
+    appendText(header, "span", null, "资产分类");
     appendText(header, "span", null, "类型 / 版本");
     appendText(header, "span", null, "文件 / 日期范围");
     appendText(header, "span", null, "总行数");
@@ -58,6 +62,7 @@ async function loadDatasets() {
       nameButton.addEventListener("click", () => showRawInterfaceFiles(item.entity_id, item.name_cn || item.name));
       nameCell.append(nameButton);
       appendText(row, "span", "dataset-cn-name", item.name_cn || item.name);
+      appendText(row, "span", "dataset-asset-class", item.asset_class_label || "A股");
       appendText(row, "span", null, `${item.category} · ${item.version_id}`);
       const count = item.file_count != null ? `${item.file_count} 个文件` : (item.row_count == null ? "—" : `${new Intl.NumberFormat("zh-CN").format(item.row_count)} 行`);
       appendText(row, "span", null, `${count} · ${item.date_min ?? "—"} 至 ${item.date_max ?? "—"}`);

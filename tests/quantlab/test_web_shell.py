@@ -100,7 +100,8 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     html = _page("backtest_plan.html")
     js = _first_party_js()
     source = html + js
-    assert "app.css?v=20260909plan13" in html
+    assert "app.css?v=20260911planretry" in html
+    assert "plan.js?v=20260911retry" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
     assert "QuantLabPager.mount" in js
@@ -330,10 +331,30 @@ def test_backtest_run_status_module_tracks_steps_and_log() -> None:
 
 def test_data_center_page_shows_only_raw_table_without_quality_panels() -> None:
     html = _page("data.html")
+    js = Path("quantlab/web/assets/data/datasets.js").read_text(encoding="utf-8")
     assert 'id="quality-overview"' not in html
     assert 'id="dataset-detail"' not in html
     assert 'class="data-quality-area"' not in html
     assert 'id="factor-table"' not in html
+    assert 'id="dataset-asset-class"' in html
+    assert 'value="cn_a">A股' in html
+    assert 'value="hk">港股' in html
+    assert 'value="us">美股' in html
+    assert 'value="crypto">数字货币' in html
+    assert "资产分类" in html
+    assert 'appendText(header, "span", null, "资产分类")' in js
+    assert "asset_class" in js
+
+
+def test_file_config_dialog_shows_asset_directory_plan() -> None:
+    js = Path("quantlab/web/assets/bootstrap.js").read_text(encoding="utf-8")
+    css = Path("quantlab/web/assets/app.css").read_text()
+    assert 'openButton.id = "file-config-open"' in js
+    assert "文件目录配置" in js
+    assert "directory_plan" in js
+    assert "资产分类目录规划" in js
+    assert "file-config-plan" in js
+    assert ".file-config-plan" in css
 
 
 def test_factor_workflow_pages_share_back_path_and_step_state() -> None:
@@ -461,9 +482,12 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     assert "每页最大显示数量" in html
     assert 'data-factor-page-size="1"' in html
     assert 'class="factor-data-page"' in html
-    assert "app.css?v=20260909cat" in html
+    assert "app.css?v=20260911factorac" in html
     assert 'id="factor-category-filter"' in html
     assert "因子分类" in html
+    assert 'id="factor-asset-class"' in html
+    assert "资产分类" in html
+    assert 'appendFactorText(header, "span", null, "资产分类")' in app
     assert 'id="factor-symbol"' not in html
     assert 'id="factor-sample-pagination"' in html
     assert "每页默认 10 行" in html
@@ -474,7 +498,7 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     assert "function factorPageSizeSelects" in app
     assert ".factor-page-size" in css
     assert ".factor-data-page" in css
-    assert "min-width: 760px" in css
+    assert "min-width: 860px" in css
     assert "factor-column-header" in app
     assert "function openFactorInfoPopover" in app
     assert "factor-formula-expression" in app
@@ -616,6 +640,22 @@ def test_result_archive_filters_use_model_not_strategy_labels() -> None:
     assert 'id="archive-pagination"' in html
     assert "table-pager.js" in html
     assert "quantlab-archive-page-size" in js
+    assert 'class="archive-page"' in html
+    assert "app.css?v=20260911archivecols" in html
+    assert "archive.js?v=20260911archivecols" in html
+
+
+def test_result_archive_table_fills_card_with_even_columns() -> None:
+    css = Path("quantlab/web/assets/app.css").read_text()
+    assert ".archive-table { width: 100%; max-width: 100%; overflow-x: auto; margin-top: 4px; }" in css
+    assert ".archive-grid { width: 100%; min-width: 0; border-collapse: collapse; table-layout: fixed; }" in css
+    assert ".archive-grid:not(.plan-grid) th:nth-child(1) { width: 18%; }" in css
+    assert ".archive-grid:not(.plan-grid) th:nth-child(n+4):nth-child(-n+8) { width: 8%; }" in css
+    assert ".archive-grid:not(.plan-grid) th { width: 10%; }" not in css
+    assert ".archive-grid th:nth-child(1) { width: 24%; }" not in css
+    assert 'name.title = name.textContent' in Path("quantlab/web/assets/backtest/archive.js").read_text()
+    assert ".archive-page .data-toolbar" in css
+    assert ".archive-grid { width: 100%; min-width: 1080px" not in css
 
 
 def test_table_pages_share_page_size_pager() -> None:

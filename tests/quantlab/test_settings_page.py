@@ -23,6 +23,9 @@ def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> Non
     assert body["paths"]["calibration_root"] == "cal"
     assert body["paths"]["results_root"] == "runtime/results"
     assert all(not Path(value).is_absolute() for value in body["paths"].values())
+    assert body["directory_plan"]["asset_classes"][0]["code"] == "cn_a"
+    assert body["directory_plan"]["asset_classes"][0]["paths"]["canonical"] == "data/canonical.parquet"
+    assert body["directory_plan"]["asset_classes"][1]["paths"]["raw"] == "data/hk/raw/"
     assert body["secrets"] == {"tushare_token": False}
     assert body["compute"] == {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
     assert body["lan"] == {"market_sync_at_0400": False}

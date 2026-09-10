@@ -251,6 +251,22 @@ function renderTable() {
       err.textContent = item.error_message;
       status.append(err);
     }
+    if (
+      ["failed", "skipped"].includes(item.status)
+      && current.status !== "running"
+      && !current.closed
+    ) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "btn plan-retry";
+      retry.textContent = "重算";
+      retry.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        startPlan([item.item_id]);
+      });
+      status.append(retry);
+    }
     const run = document.createElement("td");
     if (item.run_id) {
       const link = document.createElement("a");
@@ -299,11 +315,14 @@ function renderTable() {
       }
     });
   }
+  const failed = current.items.filter((item) => item.status === "failed").length;
   setBanner(
     current.closed
       ? "这份计划已完结。不能再加入任务或开始，回测中心下拉框也不会再列出它。"
       : current.status === "running"
       ? "正在按勾选顺序串行运行。可以离开这个页面，运算仍会继续。"
+      : failed
+        ? `这份计划有 ${failed} 笔失败。可点该行的「重算」，不必全选重跑。`
       : current.status === "completed"
         ? "这份计划已跑完。结果在结果档案里，看完再点完结即可。"
         : "勾选要跑的任务，点全选再点开始或删除任务。不会并行开多笔回测。",
@@ -338,6 +357,25 @@ function startPoll() {
       setBanner(error.message, true);
     }
   }, 2000);
+}
+
+async function startPlan(itemIds) {
+  if (!current) return;
+  $("start").disabled = true;
+  try {
+    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/start`, {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({item_ids: itemIds}),
+    });
+    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
+    if (index >= 0) plans[index] = current;
+    render();
+    startPoll();
+  } catch (error) {
+    setBanner(error.message, true);
+    syncButtons();
+  }
 }
 
 async function load() {
@@ -408,21 +446,7 @@ $("delete-items").addEventListener("click", async () => {
 $("start").addEventListener("click", async () => {
   if (!current) return;
   const itemIds = current.items.filter((item) => item.selected).map((item) => item.item_id);
-  $("start").disabled = true;
-  try {
-    current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/start`, {
-      method: "POST",
-      headers: {"content-type": "application/json"},
-      body: JSON.stringify({item_ids: itemIds}),
-    });
-    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
-    if (index >= 0) plans[index] = current;
-    render();
-    startPoll();
-  } catch (error) {
-    setBanner(error.message, true);
-    syncButtons();
-  }
+  await startPlan(itemIds);
 });
 
 $("stop").addEventListener("click", async () => {

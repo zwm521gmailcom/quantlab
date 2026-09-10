@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 数据中心</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909pager">
+    <link rel="stylesheet" href="/assets/app.css?v=20260911layout">
   </head>
   <body>
     <div class="shell">
@@ -30,6 +30,7 @@
           <div id="data-error-state" class="state error hidden"></div>
           <div class="data-toolbar">
             <label>关键字 <input id="dataset-query" type="search" autocomplete="off"></label>
+            <label>资产分类 <select id="dataset-asset-class"><option value="">全部</option><option value="cn_a">A股</option><option value="hk">港股</option><option value="us">美股</option><option value="crypto">数字货币</option></select></label>
             <label>类别 <select id="dataset-category"><option value="">全部</option><option value="source_tables">来源整理表</option><option value="raw">raw</option></select></label>
             <label>质量 <select id="dataset-quality"><option value="">全部</option><option value="passed">passed</option><option value="warning">warning</option><option value="needs_review">needs_review</option><option value="failed">failed</option></select></label>
             <button id="apply-dataset-filters" class="primary" type="button">筛选</button>
@@ -46,7 +47,7 @@
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
     <script src="/assets/shared/pager.js"></script>
-    <script src="/assets/data/datasets.js"></script>
-    <script src="/assets/bootstrap.js"></script>
+    <script src="/assets/data/datasets.js?v=20260911asset"></script>
+    <script src="/assets/bootstrap.js?v=20260911layout"></script>
   <script src="/assets/nav.js?v=20260907a"></script></body>
 </html>
