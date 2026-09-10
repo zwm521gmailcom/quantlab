@@ -3,6 +3,61 @@ function fileConfigAllowedPath() {
   return path === "/data" || path === "/research/factors" || path === "/factors" || path === "/factors/new/manual" || path === "/research/factor-mining";
 }
 
+function renderDirectoryPlan(container, plan) {
+  container.replaceChildren();
+  if (!plan) return;
+  const heading = document.createElement("h4");
+  heading.textContent = "资产分类目录规划";
+  const lead = document.createElement("p");
+  lead.className = "file-config-plan-lead";
+  lead.textContent = plan.lead || "";
+  container.append(heading, lead);
+  const roles = Array.isArray(plan.path_roles) && plan.path_roles.length
+    ? plan.path_roles
+    : Object.keys((plan.asset_classes && plan.asset_classes[0] && plan.asset_classes[0].paths) || {}).map((key) => ({key, label: key}));
+  (plan.asset_classes || []).forEach((item) => {
+    const block = document.createElement("div");
+    block.className = "file-config-class";
+    const head = document.createElement("div");
+    head.className = "file-config-class-head";
+    const title = document.createElement("strong");
+    title.textContent = `${item.label}（${item.code}）`;
+    const badge = document.createElement("span");
+    badge.className = "file-config-badge";
+    badge.textContent = item.status || (item.current ? "现行" : "尚未使用");
+    head.append(title, badge);
+    block.append(head);
+    if (item.note) {
+      const note = document.createElement("p");
+      note.className = "file-config-class-note";
+      note.textContent = item.note;
+      block.append(note);
+    }
+    roles.forEach((role) => {
+      const value = (item.paths || {})[role.key];
+      if (!value) return;
+      const row = document.createElement("div");
+      row.className = "file-config-path";
+      const name = document.createElement("span");
+      name.textContent = role.label;
+      const pathText = document.createElement("code");
+      pathText.textContent = value;
+      pathText.title = value;
+      row.append(name, pathText);
+      block.append(row);
+    });
+    container.append(block);
+  });
+  const rules = document.createElement("ul");
+  rules.className = "file-config-rules";
+  (plan.rules || []).forEach((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    rules.append(item);
+  });
+  if (rules.childElementCount) container.append(rules);
+}
+
 function setupFileConfigDialog() {
   if (!fileConfigAllowedPath() || document.getElementById("file-config-dialog")) return;
   const main = document.querySelector("main");
@@ -37,7 +92,8 @@ function setupFileConfigDialog() {
     const list = document.createElement("div");
     list.className = "file-config-list";
     list.textContent = "正在加载路径…";
-    panel.append(list);
+    const plan = document.createElement("section");
+    plan.className = "file-config-plan";
     const editRow = document.createElement("div");
     editRow.className = "file-config-edit";
     const editLabel = document.createElement("label");
@@ -51,7 +107,7 @@ function setupFileConfigDialog() {
     const editStatus = document.createElement("span");
     editStatus.className = "state";
     editRow.append(editLabel, editInput, editButton, editStatus);
-    panel.append(editRow);
+    panel.append(list, plan, editRow);
     overlay.append(panel);
     document.body.append(overlay);
     async function load() {
@@ -70,6 +126,7 @@ function setupFileConfigDialog() {
         row.append(name, pathText);
         list.append(row);
       });
+      renderDirectoryPlan(plan, payload.directory_plan);
       editInput.value = paths.raw_root || "";
       editStatus.textContent = "";
     }

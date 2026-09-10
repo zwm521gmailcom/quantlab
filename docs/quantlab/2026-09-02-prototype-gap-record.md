@@ -1,8 +1,8 @@
 # QuantLab 原型差异记录与补做顺序
 
 日期：2026-09-02
-范围：`/Volumes/T2/vnpy/.worktrees/quantlab-platform`
-原型目录：`/Volumes/T2/vnpy/.codex/brainstorm/20260901`
+范围：当时的 `quantlab-platform` worktree
+原型目录：当时的 Codex brainstorm 目录 `20260901`
 
 ## 核对原则
 

@@ -96,6 +96,7 @@ def raw_interface_files(
 def raw_datasets(
     request: Request,
     category: str | None = None,
+    asset_class: str | None = None,
     status: str | None = None,
     quality_status: str | None = None,
     date_from: str | None = None,
@@ -107,8 +108,11 @@ def raw_datasets(
     raw = request.app.state.dataset_catalog.raw_items()
     items = []
     query = (q or "").strip().lower()
+    wanted_asset = (asset_class or "").strip()
     for item in raw:
         if category and item.get("category") != category:
+            continue
+        if wanted_asset and item.get("asset_class") != wanted_asset:
             continue
         if quality_status and item.get("quality_status") != quality_status:
             continue

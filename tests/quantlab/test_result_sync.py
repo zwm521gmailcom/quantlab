@@ -242,6 +242,58 @@ def _write_completed_manifest(settings: Settings, run_id: str, *, machine_id: st
     return folder
 
 
+def test_sync_result_catalog_attaches_imported_runs_to_pending_plan_items(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    database = Database(settings.database_path)
+    database.initialize()
+    run_id = "20260910-120000-8808"
+    _write_completed_manifest(settings, run_id, machine_id="d23135c5")
+    payload = json.loads((settings.runtime_root / "results" / run_id / "run.json").read_text(encoding="utf-8"))
+    payload["config"]["name"] = "2026 · 价格60加低估值 · Top4"
+    (settings.runtime_root / "results" / run_id / "run.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    stamp = "2026-09-10T12:00:00+00:00"
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO backtest_plans(plan_id, name, status, closed, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            ("plan-test", "96笔扫描", "stopped", 0, stamp, stamp),
+        )
+        connection.execute(
+            "INSERT INTO backtest_plan_items("
+            "item_id, plan_id, sort_order, selected, name, config_json, status, "
+            "run_id, error_message, started_at, finished_at, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                "item-pending",
+                "plan-test",
+                1,
+                1,
+                "2026 · 价格60加低估值 · Top4",
+                json.dumps({"name": "2026 · 价格60加低估值 · Top4", "top_n": 4}),
+                "pending",
+                None,
+                None,
+                None,
+                None,
+                stamp,
+                stamp,
+            ),
+        )
+    imported = sync_result_catalog(settings, database)
+    assert run_id in imported
+    with database.connect() as connection:
+        item = connection.execute(
+            "SELECT status, run_id FROM backtest_plan_items WHERE item_id='item-pending'"
+        ).fetchone()
+        plan = connection.execute("SELECT status FROM backtest_plans WHERE plan_id='plan-test'").fetchone()
+    assert item["status"] == "completed"
+    assert item["run_id"] == run_id
+    assert plan["status"] == "completed"
+    assert sync_result_catalog(settings, database) == []
+
+
 def test_delete_writes_tombstone_and_blocks_reimport(tmp_path: Path) -> None:
     settings = _settings(tmp_path)
     database = Database(settings.database_path)

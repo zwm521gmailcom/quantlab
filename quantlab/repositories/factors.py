@@ -14,6 +14,7 @@ import pyarrow.parquet as pq
 from quantlab.config import Settings
 from quantlab.domain.status import LifecycleStatus, transition
 from quantlab.repositories.database import Database
+from quantlab.services.asset_layout import asset_class_fields, normalize_asset_class
 from quantlab.services.factor_data import FEATURE_FIELDS
 
 
@@ -40,6 +41,7 @@ _DEFINITION_FIELDS = {
     "entity_id",
     "name",
     "category",
+    "asset_class",
     "version_id",
     "dataset_id",
     "dataset_version_id",
@@ -180,6 +182,7 @@ class FactorRepository:
         if not isinstance(quality, dict):
             raise ValueError("quality must be an object")
         normalized["quality"] = quality
+        normalized.update(asset_class_fields(definition.get("asset_class")))
         return normalized
 
     @staticmethod
@@ -188,6 +191,7 @@ class FactorRepository:
             "entity_id": row["entity_id"],
             "name": row["name"],
             "category": row["category"],
+            "asset_class": normalize_asset_class(row["asset_class"] if "asset_class" in row.keys() else None),
             "version_id": row["version_id"],
             "dataset_id": row["dataset_id"],
             "dataset_version_id": row["dataset_version_id"],
@@ -281,7 +285,7 @@ class FactorRepository:
         connection = connection or self.database.connect()
         try:
             return connection.execute(
-                "SELECT f.entity_id, f.name, f.category, f.status AS factor_status, "
+                "SELECT f.entity_id, f.name, f.category, f.asset_class, f.status AS factor_status, "
                 "fv.version_id, fv.dataset_id, fv.dataset_version_id, fv.formula, fv.input_fields_json, "
                 "fv.source, fv.direction, fv.frequency, fv.missing_policy, fv.pit_policy, "
                 "fv.pit_lineage_json, fv.upstream_factor_versions_json, fv.origin, fv.author, fv.code_hash, "
@@ -451,6 +455,7 @@ class FactorRepository:
         quality = json.loads(row["quality_json"] or "{}")
         return {
             **definition,
+            **asset_class_fields(definition.get("asset_class")),
             "factor_entity_id": row["entity_id"],
             "factor_version_id": row["version_id"],
             "factor_status": row["factor_status"],
@@ -484,6 +489,7 @@ class FactorRepository:
         *,
         query: str | None = None,
         category: str | None = None,
+        asset_class: str | None = None,
         source: str | None = None,
         lifecycle: str | None = None,
         quality: str | None = None,
@@ -502,7 +508,9 @@ class FactorRepository:
             conditions.append("(f.name LIKE ? OR f.entity_id LIKE ? OR fv.formula LIKE ?)")
             needle = f"%{query.strip()}%"
             params.extend([needle, needle, needle])
-        for column, value in (("f.category", category), ("fv.source", source), ("fv.status", lifecycle), ("fv.quality_status", quality)):
+        if asset_class:
+            asset_class = normalize_asset_class(asset_class)
+        for column, value in (("f.category", category), ("f.asset_class", asset_class), ("fv.source", source), ("fv.status", lifecycle), ("fv.quality_status", quality)):
             if value:
                 conditions.append(f"{column}=?")
                 params.append(value)
@@ -517,7 +525,7 @@ class FactorRepository:
                 params,
             ).fetchone()[0]
             rows = connection.execute(
-                "SELECT f.entity_id, f.name, f.category, f.status AS factor_status, "
+                "SELECT f.entity_id, f.name, f.category, f.asset_class, f.status AS factor_status, "
                 "fv.version_id, fv.dataset_id, fv.dataset_version_id, fv.formula, fv.input_fields_json, "
                 "fv.source, fv.direction, fv.frequency, fv.missing_policy, fv.pit_policy, fv.pit_lineage_json, "
                 "fv.upstream_factor_versions_json, fv.origin, fv.author, fv.code_hash, fv.generation_run_id, fv.artifact_id, "
@@ -557,9 +565,9 @@ class FactorRepository:
                 require_published_upstream=False,
             )
             connection.execute(
-                "INSERT INTO factors(entity_id, name, category, status) VALUES (?, ?, ?, 'draft') "
-                "ON CONFLICT(entity_id) DO UPDATE SET name=excluded.name, category=excluded.category",
-                (normalized["entity_id"], normalized["name"], normalized["category"]),
+                "INSERT INTO factors(entity_id, name, category, asset_class, status) VALUES (?, ?, ?, ?, 'draft') "
+                "ON CONFLICT(entity_id) DO UPDATE SET name=excluded.name, category=excluded.category, asset_class=excluded.asset_class",
+                (normalized["entity_id"], normalized["name"], normalized["category"], normalized["asset_class"]),
             )
             connection.execute(
                 "INSERT INTO factor_versions(entity_id, version_id, dataset_id, dataset_version_id, formula, input_fields_json, "
@@ -593,8 +601,8 @@ class FactorRepository:
         with self.database.transaction() as connection:
             self._validate_definition(normalized, connection, require_published_dataset=False, require_published_upstream=False)
             connection.execute(
-                "UPDATE factors SET name=?, category=? WHERE entity_id=?",
-                (normalized["name"], normalized["category"], entity_id),
+                "UPDATE factors SET name=?, category=?, asset_class=? WHERE entity_id=?",
+                (normalized["name"], normalized["category"], normalized["asset_class"], entity_id),
             )
             connection.execute(
                 "UPDATE factor_versions SET dataset_id=?, dataset_version_id=?, formula=?, input_fields_json=?, source=?, direction=?, "

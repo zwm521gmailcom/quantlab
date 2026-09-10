@@ -164,6 +164,8 @@ def test_raw_items_lists_suspend_d_before_download(tmp_path):
     assert item["file_count"] == 0
     assert item["quality_status"] == "warning"
     assert item["tushare_url"] == "https://tushare.pro/document/2?doc_id=214"
+    assert item["asset_class"] == "cn_a"
+    assert item["asset_class_label"] == "A股"
 
 
 def test_raw_items_lists_index_weight_before_download(tmp_path):

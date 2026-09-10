@@ -201,6 +201,7 @@ def test_manual_draft_save_diagnose_and_publish_require_real_quality_gate(
         }
     )
     assert draft["status"] == "draft"
+    assert draft["asset_class"] == "cn_a"
     assert draft["pit_lineage"]["window_mode"] == "per_instrument_observation"
     with pytest.raises(ValueError, match="quality"):
         service.publish(draft["factor_entity_id"], draft["factor_version_id"])

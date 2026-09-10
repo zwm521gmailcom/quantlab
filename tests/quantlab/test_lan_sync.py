@@ -67,6 +67,39 @@ def test_pull_market_copies_missing_and_overwrites_different(tmp_path: Path) -> 
     assert (left.data_root / "raw" / "only-left.parquet").read_bytes() == b"keep"
 
 
+def test_pull_results_skips_queued_remote_and_upgrades_local_stub(tmp_path: Path) -> None:
+    from quantlab.services.lan_sync import LocalLanSource, pull_results
+
+    dest = _settings(tmp_path / "dst")
+    source = _settings(tmp_path / "src")
+    queued_id = "20260910-120000-4101"
+    done_id = "20260910-120000-4202"
+    (source.runtime_root / "results" / queued_id).mkdir(parents=True)
+    (source.runtime_root / "results" / queued_id / "run.json").write_text(
+        json.dumps({"run_id": queued_id, "status": "queued", "config": {"name": "还在排队"}}),
+        encoding="utf-8",
+    )
+    stub = dest.runtime_root / "results" / done_id
+    stub.mkdir(parents=True)
+    (stub / "run.json").write_text(
+        json.dumps({"run_id": done_id, "status": "queued", "config": {"name": "空目录"}}),
+        encoding="utf-8",
+    )
+    done = source.runtime_root / "results" / done_id
+    done.mkdir(parents=True)
+    (done / "run.json").write_text(
+        json.dumps({"run_id": done_id, "status": "completed", "config": {"name": "空目录"}}),
+        encoding="utf-8",
+    )
+    (done / "metrics.json").write_text('{"return":0.3}', encoding="utf-8")
+    stats = pull_results(dest, LocalLanSource(source))
+    assert queued_id not in stats["pulled_runs"]
+    assert not (dest.runtime_root / "results" / queued_id).exists()
+    assert done_id in stats["pulled_runs"]
+    assert json.loads((stub / "run.json").read_text(encoding="utf-8"))["status"] == "completed"
+    assert (stub / "metrics.json").read_text(encoding="utf-8") == '{"return":0.3}'
+
+
 def test_coordinate_results_copies_from_source_and_asks_peers(tmp_path: Path) -> None:
     from quantlab.services.lan_sync import coordinate_results_sync
 

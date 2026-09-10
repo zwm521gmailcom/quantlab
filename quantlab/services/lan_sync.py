@@ -1,6 +1,7 @@
 """Copy result and market files between QuantLab trees. No SQLite merge."""
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -18,6 +19,7 @@ from quantlab.services.result_sync import sync_result_catalog
 MAX_SYNC_ROUNDS = 8
 DELETED_DIR = "_deleted"
 HTTP_TIMEOUT = 300.0
+_FINISHED_STATUSES = {"completed", "failed"}
 _SYNC_LOCK = threading.Lock()
 
 
@@ -133,22 +135,47 @@ def local_deleted_ids(results_root: Path) -> set[str]:
     return found
 
 
+def _manifest_status(payload: object) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("status") or "").strip()
+
+
+def local_result_status(folder: Path) -> str:
+    path = Path(folder) / "run.json"
+    if not path.is_file():
+        return ""
+    try:
+        return _manifest_status(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, json.JSONDecodeError):
+        return ""
+
+
+def source_result_status(source: LanSource, run_id: str) -> str:
+    try:
+        raw = source.read_result_file(run_id, "run.json")
+        return _manifest_status(json.loads(raw.decode("utf-8")))
+    except Exception:
+        return ""
+
+
 def pull_results(settings: Settings, source: LanSource) -> dict[str, list[str]]:
     results = settings.require_write_path(settings.runtime_root / "results")
     results.mkdir(parents=True, exist_ok=True)
     index = source.results_index()
     pulled_runs: list[str] = []
     pulled_deleted: list[str] = []
-    have_runs = local_run_ids(results)
     have_deleted = local_deleted_ids(results)
     for run_id in index.get("runs") or []:
         try:
             run_id = validate_run_id(str(run_id))
         except ValueError:
             continue
-        if run_id in have_runs:
+        if source_result_status(source, run_id) not in _FINISHED_STATUSES:
             continue
         folder = results / run_id
+        if local_result_status(folder) in _FINISHED_STATUSES:
+            continue
         folder.mkdir(parents=True, exist_ok=True)
         for item in source.result_tree(run_id):
             rel = str(item.get("rel") or "")
@@ -158,7 +185,6 @@ def pull_results(settings: Settings, source: LanSource) -> dict[str, list[str]]:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(source.read_result_file(run_id, rel))
         pulled_runs.append(run_id)
-        have_runs.add(run_id)
     deleted_root = results / DELETED_DIR
     for run_id in index.get("deleted") or []:
         try:

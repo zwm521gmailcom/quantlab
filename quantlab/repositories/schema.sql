@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS factors (
     entity_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     category TEXT NOT NULL DEFAULT '未分类',
-    status TEXT NOT NULL CHECK (status IN ('draft', 'validated', 'published', 'deprecated'))
+    status TEXT NOT NULL CHECK (status IN ('draft', 'validated', 'published', 'deprecated')),
+    asset_class TEXT NOT NULL DEFAULT 'cn_a'
 );
 CREATE TABLE IF NOT EXISTS factor_versions (
     entity_id TEXT NOT NULL,

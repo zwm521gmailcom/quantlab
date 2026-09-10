@@ -11,6 +11,7 @@ def factor_library_list(
     request: Request,
     q: str | None = None,
     category: str | None = None,
+    asset_class: str | None = None,
     source: str | None = None,
     lifecycle: str | None = None,
     quality: str | None = None,
@@ -19,7 +20,7 @@ def factor_library_list(
 ) -> dict[str, object]:
     try:
         return request.app.state.factor_repository.list(
-            query=q, category=category, source=source, lifecycle=lifecycle,
+            query=q, category=category, asset_class=asset_class, source=source, lifecycle=lifecycle,
             quality=quality, page=page, page_size=page_size,
         )
     except ValueError as error:

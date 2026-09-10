@@ -14,6 +14,9 @@ def test_factor_page_shows_versioned_catalog_without_selection_sidebar(
     momentum_row = page.locator("#factor-table .factor-row").filter(has_text="momentum_5").first
     momentum_row.wait_for()
     assert "五日动量" in momentum_row.inner_text()
+    assert page.locator("#factor-table .factor-header").get_by_text("资产分类").is_visible()
+    assert "A股" in momentum_row.inner_text()
+    assert page.locator("#factor-asset-class").is_visible()
     assert page.locator("#factor-table .factor-row").count() == 8
     assert "hfq_close[t]" not in page.locator("#factor-table").inner_text()
     assert page.locator("#factor-table").get_by_text("100.00%").count() >= 1

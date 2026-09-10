@@ -137,6 +137,7 @@ async function load() {
     const name = document.createElement("div");
     name.className = "archive-name";
     name.textContent = item.name || "未命名回测";
+    name.title = name.textContent;
     const meta = document.createElement("div");
     meta.className = "archive-meta";
     meta.textContent = "创建 " + fmtTime(item.created_at);
@@ -152,6 +153,7 @@ async function load() {
     const factors = document.createElement("small");
     const factorText = (item.factors || []).filter(Boolean).join("、");
     factors.textContent = factorText || "未选因子";
+    factors.title = factors.textContent;
     stack.append(strategyName, factors);
     strategy.append(stack);
     row.append(strategy);

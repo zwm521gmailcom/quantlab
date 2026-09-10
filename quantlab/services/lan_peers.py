@@ -14,8 +14,12 @@ from quantlab.services.machine_identity import load_machine_identity
 
 LAN_PORT = 8766
 UI_PORT = 8765
-PEER_TTL_SECONDS = 15.0
+PEER_TTL_SECONDS = 45.0
 BEACON_INTERVAL_SECONDS = 5.0
+PROBE_INTERVAL_SECONDS = 8.0
+HELLO_PROBE_TIMEOUT = 0.4
+SUBNET_PROBE_EVERY = 3
+_IPV4 = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
 
 
 @dataclass(frozen=True)
@@ -116,6 +120,73 @@ def local_lan_ip() -> str:
     return prefer_lan_ip(found)
 
 
+def subnet_broadcast(ip: str) -> str:
+    text = str(ip or "").strip()
+    if not _is_rfc1918(text):
+        return "255.255.255.255"
+    parts = text.split(".")
+    return f"{parts[0]}.{parts[1]}.{parts[2]}.255"
+
+
+def beacon_targets(ip: str) -> list[str]:
+    targets = ["255.255.255.255"]
+    subnet = subnet_broadcast(ip)
+    if subnet not in targets:
+        targets.append(subnet)
+    return targets
+
+
+def same_subnet_hosts(ip: str, *, self_ip: str | None = None) -> list[str]:
+    text = str(ip or "").strip()
+    if not _is_rfc1918(text):
+        return []
+    parts = text.split(".")
+    prefix = f"{parts[0]}.{parts[1]}.{parts[2]}"
+    skip = {str(self_ip or text).strip(), f"{prefix}.0", f"{prefix}.255"}
+    return [f"{prefix}.{octet}" for octet in range(1, 255) if f"{prefix}.{octet}" not in skip]
+
+
+def probe_ips_from_arp(text: str, self_ip: str) -> list[str]:
+    found: list[str] = []
+    skip = str(self_ip or "").strip()
+    for match in _IPV4.finditer(text or ""):
+        ip = match.group(1)
+        if ip == skip or ip.startswith("127.") or ip.startswith("198.18.") or ip.startswith("198.19."):
+            continue
+        if not _is_rfc1918(ip):
+            continue
+        if ip.endswith(".0") or ip.endswith(".255"):
+            continue
+        if ip not in found:
+            found.append(ip)
+    return found
+
+
+def read_arp_table() -> str:
+    for command in (["arp", "-an"], ["ip", "neigh"]):
+        try:
+            return subprocess.check_output(command, timeout=1, text=True, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return ""
+
+
+def discovery_probe_ips(self_ip: str, arp_text: str) -> list[str]:
+    ordered: list[str] = []
+    for ip in probe_ips_from_arp(arp_text, self_ip) + same_subnet_hosts(self_ip, self_ip=self_ip):
+        if ip not in ordered:
+            ordered.append(ip)
+    return ordered
+
+
+def _usable_peer_host(announced: str, probed: str) -> str:
+    announced_host = str(announced or "").strip()
+    probed_host = str(probed or "").strip()
+    if announced_host and _is_rfc1918(announced_host):
+        return announced_host
+    return probed_host
+
+
 def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer | None:
     try:
         payload = json.loads(raw.decode("utf-8"))
@@ -148,6 +219,29 @@ def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer 
         last_seen=float(now if now is not None else time.time()),
         ui_port=ui_port,
     )
+
+
+def parse_hello(payload: object, host: str, *, now: float | None = None) -> LanPeer | None:
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("service") not in {"quantlab", "quantlab-lan"}:
+        return None
+    machine_id = str(payload.get("machine_id") or "").strip()
+    if not machine_id:
+        return None
+    announced = _usable_peer_host(str(payload.get("host") or ""), host)
+    if not announced:
+        return None
+    beacon = {
+        "service": "quantlab",
+        "machine_id": machine_id,
+        "serial_prefix": payload.get("serial_prefix") or 10,
+        "sync_port": payload.get("sync_port") or LAN_PORT,
+        "ui_port": payload.get("ui_port") or UI_PORT,
+        "host": announced,
+        "hostname": payload.get("hostname") or announced,
+    }
+    return parse_beacon(json.dumps(beacon).encode("utf-8"), host, now=now)
 
 
 def beacon_payload(

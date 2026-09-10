@@ -54,6 +54,10 @@ class Database:
                 connection.execute(
                     "ALTER TABLE factors ADD COLUMN category TEXT NOT NULL DEFAULT '未分类'"
                 )
+            if "asset_class" not in factor_entity_columns:
+                connection.execute(
+                    "ALTER TABLE factors ADD COLUMN asset_class TEXT NOT NULL DEFAULT 'cn_a'"
+                )
             factor_version_migrations = {
                 "pit_lineage_json": "ALTER TABLE factor_versions ADD COLUMN pit_lineage_json TEXT NOT NULL DEFAULT '{}'",
                 "upstream_factor_versions_json": "ALTER TABLE factor_versions ADD COLUMN upstream_factor_versions_json TEXT NOT NULL DEFAULT '[]'",

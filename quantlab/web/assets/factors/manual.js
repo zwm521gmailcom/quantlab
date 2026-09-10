@@ -11,6 +11,7 @@ function manualFactorBody() {
   return {
     name: document.getElementById("manual-factor-name").value.trim(),
     category: document.getElementById("manual-factor-category").value.trim(),
+    asset_class: document.getElementById("manual-factor-asset-class")?.value || "cn_a",
     dataset_id: document.getElementById("manual-factor-dataset").value.trim(),
     dataset_version_id: document.getElementById("manual-factor-dataset-version").value.trim(),
     input_fields: document.getElementById("manual-factor-fields").value.split(",").map(value => value.trim()).filter(Boolean),

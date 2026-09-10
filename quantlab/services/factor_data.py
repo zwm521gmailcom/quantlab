@@ -20,6 +20,7 @@ import pyarrow.parquet as pq
 
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
+from quantlab.services.asset_layout import asset_class_fields
 from quantlab.repositories.research_runs import ResearchRunRepository
 
 
@@ -246,8 +247,8 @@ class FactorDataService:
                     (f"factor_{factor_id}", spec["name"]),
                 )
                 connection.execute(
-                    "UPDATE factors SET category=? WHERE entity_id=?",
-                    (_FACTOR_CATEGORIES.get(factor_id, "未分类"), f"factor_{factor_id}"),
+                    "UPDATE factors SET category=?, asset_class=? WHERE entity_id=?",
+                    (_FACTOR_CATEGORIES.get(factor_id, "未分类"), "cn_a", f"factor_{factor_id}"),
                 )
                 existing = connection.execute(
                     "SELECT 1 FROM factor_versions WHERE entity_id=? AND version_id='v1'",
@@ -296,11 +297,14 @@ class FactorDataService:
 
     def catalog(self) -> list[dict[str, Any]]:
         self.sync_factor_versions()
-        stored_names: dict[str, str] = {}
+        stored: dict[str, dict[str, str]] = {}
         with self.database.connect() as connection:
-            stored_names = {
-                str(row["entity_id"]): str(row["name"])
-                for row in connection.execute("SELECT entity_id, name FROM factors")
+            stored = {
+                str(row["entity_id"]): {
+                    "name": str(row["name"]),
+                    "asset_class": str(row["asset_class"] or "cn_a"),
+                }
+                for row in connection.execute("SELECT entity_id, name, asset_class FROM factors")
             }
         items: list[dict[str, Any]] = []
         for factor_id in FEATURE_FIELDS:
@@ -315,11 +319,13 @@ class FactorDataService:
                 stats = {"row_count": binding["row_count"], "missing_rows": None, "coverage": None}
                 quality_status = binding["quality_status"] if binding["quality_status"] in {"passed", "warning"} else "needs_review"
             spec = _FACTOR_SPECS[factor_id]
+            entity_id = f"factor_{factor_id}"
             items.append({
                 "factor_id": factor_id,
-                "factor_entity_id": f"factor_{factor_id}",
-                "name": stored_names.get(f"factor_{factor_id}", spec["name"]),
+                "factor_entity_id": entity_id,
+                "name": stored.get(entity_id, {}).get("name", spec["name"]),
                 "category": _FACTOR_CATEGORIES.get(factor_id, "未分类"),
+                **asset_class_fields(stored.get(entity_id, {}).get("asset_class")),
                 "version_id": binding["version_id"],
                 "factor_version_id": binding["version_id"],
                 "dataset_id": binding["dataset_id"],
@@ -341,7 +347,7 @@ class FactorDataService:
         builtin_entities = {f"factor_{factor_id}" for factor_id in FEATURE_FIELDS}
         with self.database.connect() as connection:
             extra_rows = connection.execute(
-                "SELECT f.entity_id AS entity_id, f.name AS name, f.category AS category, "
+                "SELECT f.entity_id AS entity_id, f.name AS name, f.category AS category, f.asset_class AS asset_class, "
                 "f.status AS factor_status, fv.version_id, fv.dataset_id, fv.dataset_version_id, "
                 "fv.formula, fv.source, fv.direction, fv.frequency, fv.missing_policy, fv.pit_policy, "
                 "fv.status AS version_status, fv.quality_status, dv.path, dv.row_count, dv.metadata_json "
@@ -371,6 +377,7 @@ class FactorDataService:
                 "factor_entity_id": factor_entity_id,
                 "name": row["name"],
                 "category": row["category"] or "未分类",
+                **asset_class_fields(row["asset_class"]),
                 "version_id": row["version_id"],
                 "factor_version_id": row["version_id"],
                 "dataset_id": row["dataset_id"],

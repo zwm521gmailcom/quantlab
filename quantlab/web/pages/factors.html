@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 因子数据</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260909cat">
+    <link rel="stylesheet" href="/assets/app.css?v=20260911factorac">
   </head>
   <body>
     <div class="shell">
@@ -32,6 +32,7 @@
             <div class="data-toolbar">
               <label>因子 <select id="factor-filter"><option value="">全部因子</option></select></label>
               <label>名称/代码搜索 <input id="factor-name-search" type="search" placeholder="输入中文名或代码" autocomplete="off"></label>
+              <label>资产分类 <select id="factor-asset-class"><option value="">全部</option><option value="cn_a">A股</option><option value="hk">港股</option><option value="us">美股</option><option value="crypto">数字货币</option></select></label>
               <div class="toolbar-field">
                 <span id="factor-category-label">因子分类</span>
                 <div class="multi-select" id="factor-category-filter" data-empty="未选择分类" data-all="全部分类">
@@ -53,7 +54,7 @@
                 </select>
               </label>
             </div>
-            <p id="factor-note" class="state">因子定义与已计算任务统一管理；表格 IC 列展示所选计算任务结果，未运行时显示“未诊断”。行情来源为 data/canonical.parquet。</p>
+            <p id="factor-note" class="state">因子定义与已计算任务统一管理；表格 IC 列展示所选计算任务结果，未运行时显示“未诊断”。现行因子均为 A 股；行情来源是对应资产分类的标准宽表（A 股现为 data/canonical.parquet）。</p>
             <div id="factor-table" class="factor-table" role="table" aria-label="正式因子目录"></div>
             <div id="factor-empty" class="state hidden">没有匹配的因子。</div>
             <div class="factor-pagination">
@@ -91,8 +92,8 @@
     <script src="/assets/shared/theme.js"></script>
     <script src="/assets/shared/pager.js"></script>
     <script src="/assets/shared/multiselect.js"></script>
-    <script src="/assets/factors/catalog.js?v=20260909cat"></script>
-    <script src="/assets/factors/detail.js"></script>
-    <script src="/assets/bootstrap.js"></script>
+    <script src="/assets/factors/catalog.js?v=20260911factorac"></script>
+    <script src="/assets/factors/detail.js?v=20260911factorac"></script>
+    <script src="/assets/bootstrap.js?v=20260911layout"></script>
   <script src="/assets/nav.js?v=20260907a"></script></body>
 </html>

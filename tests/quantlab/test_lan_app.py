@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from fastapi.testclient import TestClient
 
@@ -31,6 +32,34 @@ def test_prefer_lan_ip_skips_vpn_fakeip() -> None:
     assert prefer_lan_ip(["198.18.0.1", "127.0.0.1"]) == "127.0.0.1"
 
 
+def test_subnet_broadcast_and_hello_peer() -> None:
+    from quantlab.services.lan_peers import beacon_targets, parse_hello, probe_ips_from_arp, subnet_broadcast
+
+    assert subnet_broadcast("192.168.1.39") == "192.168.1.255"
+    assert subnet_broadcast("10.0.0.2") == "10.0.0.255"
+    assert subnet_broadcast("8.8.8.8") == "255.255.255.255"
+    assert beacon_targets("192.168.1.39") == ["255.255.255.255", "192.168.1.255"]
+    peer = parse_hello(
+        {"service": "quantlab-lan", "machine_id": "d23135c5", "serial_prefix": 99, "hostname": "zwm-M395"},
+        "192.168.1.188",
+        now=50.0,
+    )
+    assert peer is not None
+    assert peer.host == "192.168.1.188"
+    assert peer.hostname == "zwm-M395"
+    assert peer.serial_prefix == 99
+    assert peer.ui_port == 8765
+    loopback = parse_hello(
+        {"service": "quantlab-lan", "machine_id": "abc", "host": "127.0.0.1", "hostname": "x"},
+        "192.168.1.188",
+        now=1.0,
+    )
+    assert loopback is not None
+    assert loopback.host == "192.168.1.188"
+    text = "? (192.168.1.188) at a2:37:ee:88:31:3b on en1\n? (198.18.0.1) at 0:0:0:0:0:0 on utun\n"
+    assert probe_ips_from_arp(text, "192.168.1.39") == ["192.168.1.188"]
+
+
 def test_lan_app_serves_results_and_rejects_escape(tmp_path: Path) -> None:
     settings = Settings(project_root=tmp_path, data_root=tmp_path / "data", calibration_root=tmp_path / "cal", runtime_root=tmp_path / "runtime")
     (settings.data_root).mkdir(parents=True)
@@ -44,6 +73,7 @@ def test_lan_app_serves_results_and_rejects_escape(tmp_path: Path) -> None:
     hello = client.get("/hello")
     assert hello.status_code == 200
     assert hello.json()["machine_id"]
+    assert int(hello.json()["ui_port"]) == 8765
     assert run_id in client.get("/results/index").json()["runs"]
     assert client.get(f"/results/{run_id}/file", params={"rel": "metrics.json"}).content == b"{}"
     assert client.get("/data/file", params={"rel": "../runtime/config/machine.json"}).status_code == 400
@@ -72,6 +102,10 @@ def test_http_source_pulls_via_lan_app(tmp_path: Path) -> None:
     folder = source.runtime_root / "results" / run_id
     folder.mkdir(parents=True)
     (folder / "metrics.json").write_bytes(b"ok")
+    (folder / "run.json").write_text(
+        json.dumps({"schema": 1, "run_id": run_id, "status": "completed", "config": {"name": "对端"}}),
+        encoding="utf-8",
+    )
     (source.data_root / "mkt.parquet").write_bytes(b"mkt")
     client = TestClient(create_lan_app(source))
     remote = HttpLanSource("http://testserver", client=client)

@@ -18,6 +18,14 @@
           <div class="factor-form-fields">
             <label>因子名称<input id="manual-factor-name" required placeholder="例如：一步动量"></label>
             <label>分类<input id="manual-factor-category" value="技术" required></label>
+            <label>资产分类
+              <select id="manual-factor-asset-class">
+                <option value="cn_a" selected>A股</option>
+                <option value="hk">港股</option>
+                <option value="us">美股</option>
+                <option value="crypto">数字货币</option>
+              </select>
+            </label>
           </div>
           <p class="form-note">因子代码由“factor_ + 字段名”命名，页面保存后由服务端返回；当前登记模型暂不提供因子说明字段。</p>
         </section>
@@ -60,5 +68,5 @@
         <div class="factor-form-actions"><button id="manual-factor-preview" type="button">校验并预览</button><button type="submit">保存草稿</button></div>
       </form>
       <section id="manual-factor-preview-box" class="card hidden"><h3>真实预览</h3><pre id="manual-factor-preview-output" class="config-block"></pre><button id="manual-factor-diagnose" type="button" class="hidden">运行诊断</button><button id="manual-factor-publish" type="button" class="hidden">发布版本</button></section>
-    </main></div><script src="/assets/shared/dom.js"></script><script src="/assets/shared/fetch.js"></script><script src="/assets/shared/multiselect.js"></script><script src="/assets/factors/manual.js"></script><script src="/assets/bootstrap.js"></script><script src="/assets/nav.js?v=20260907a"></script></body>
+    </main></div><script src="/assets/shared/dom.js"></script><script src="/assets/shared/fetch.js"></script><script src="/assets/shared/multiselect.js"></script><script src="/assets/factors/manual.js?v=20260911factorac"></script><script src="/assets/bootstrap.js?v=20260911layout"></script><script src="/assets/nav.js?v=20260907a"></script></body>
 </html>

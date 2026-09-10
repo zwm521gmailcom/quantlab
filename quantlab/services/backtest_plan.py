@@ -176,7 +176,7 @@ class BacktestPlanService:
         sql = "SELECT plan_id FROM backtest_plans"
         if open_only:
             sql += " WHERE closed=0"
-        sql += " ORDER BY updated_at DESC, plan_id DESC"
+        sql += " ORDER BY created_at DESC, plan_id DESC"
         with self.database.connect() as connection:
             rows = connection.execute(sql).fetchall()
         return {"items": [self.get(row["plan_id"]) for row in rows]}
