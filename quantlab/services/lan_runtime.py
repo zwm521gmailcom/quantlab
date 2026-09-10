@@ -10,7 +10,7 @@ from typing import Any
 import uvicorn
 
 from quantlab.api.lan_app import create_lan_app
-from quantlab.services.lan_peers import BEACON_INTERVAL_SECONDS, LAN_PORT, PeerRegistry, beacon_payload, parse_beacon, self_peer
+from quantlab.services.lan_peers import BEACON_INTERVAL_SECONDS, LAN_PORT, UI_PORT, PeerRegistry, beacon_payload, parse_beacon, self_peer
 from quantlab.services.lan_sync import coordinate_market_sync
 from quantlab.services.machine_identity import load_machine_identity
 
@@ -70,7 +70,7 @@ def _udp_beacon(settings: Any, registry: PeerRegistry, stop: threading.Event) ->
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         while not stop.is_set():
-            peer = self_peer(settings.runtime_root)
+            peer = self_peer(settings.runtime_root, ui_port=settings.port)
             if peer.machine_id:
                 registry.note(peer)
             payload = beacon_payload(
@@ -78,6 +78,7 @@ def _udp_beacon(settings: Any, registry: PeerRegistry, stop: threading.Event) ->
                 int(machine.get("serial_prefix") or peer.serial_prefix),
                 host=peer.host,
                 hostname=peer.hostname,
+                ui_port=int(getattr(settings, "port", UI_PORT) or UI_PORT),
             )
             try:
                 sock.sendto(payload, ("255.255.255.255", LAN_PORT))
@@ -107,7 +108,7 @@ def _market_scheduler(app: Any, stop: threading.Event) -> None:
             registry = app.state.peer_registry
             machine = load_machine_identity(settings.runtime_root)
             self_id = str(machine.get("machine_id") or "")
-            peer = self_peer(settings.runtime_root)
+            peer = self_peer(settings.runtime_root, ui_port=settings.port)
             if peer.machine_id:
                 registry.note(peer)
             coordinate_market_sync(

@@ -13,9 +13,13 @@ def test_parse_beacon_and_ttl() -> None:
     peer = parse_beacon(raw, "10.0.0.9", now=100.0)
     assert peer is not None
     assert peer.host == "10.0.0.2"
+    assert peer.ui_port == 8765
     registry = PeerRegistry(ttl=15)
     registry.note(peer)
-    assert registry.online(now=110, self_id="other")[0]["machine_id"] == "abcd1234"
+    listed = registry.online(now=110, self_id="other")[0]
+    assert listed["machine_id"] == "abcd1234"
+    assert listed["ui_port"] == 8765
+    assert listed["ui_url"] == "http://10.0.0.2:8765/"
     assert registry.online(now=120, self_id="other") == []
 
 

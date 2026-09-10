@@ -134,6 +134,8 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert "局域网" in page.text
     assert "GitHub" in page.text
     assert "git pull" in page.text
+    assert "打开页面" in page.text or "打开页面" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "8765" in page.text
     assert "同时回测固定 1 条" in page.text or "同时回测固定 1 条" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
 
 
@@ -163,6 +165,9 @@ def test_lan_peers_include_self_and_market_sync_rejects_unknown_machine(tmp_path
     assert len(peers) == 1
     assert peers[0]["self"] is True
     assert peers[0]["machine_id"] == api.get("/api/settings").json()["machine"]["machine_id"]
+    assert int(peers[0]["ui_port"]) == 8765
+    assert str(peers[0]["ui_url"]).startswith("http://")
+    assert str(peers[0]["ui_url"]).endswith(":8765/")
     missing = api.post("/api/lan/sync/market", json={"machine_id": "deadbeef"})
     assert missing.status_code == 404
     local = api.post("/api/lan/sync/market", json={})

@@ -48,7 +48,7 @@
         </section>
         <section class="card">
           <h3>局域网</h3>
-          <p class="settings-help">程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启 QuantLab，才会出现在下面的列表里。浏览器仍只打开本机 <code>127.0.0.1:8765</code>。机器之间另走 <code>8766</code>（HTTP + UDP 宣告）同步文件，不提供页面、不开库、不传 Token。请在系统防火墙放行 UDP/TCP 8766。没开 QuantLab 的机器不会出现，也不会被推到。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>，源头覆盖同路径且内容不同的文件，对端多出来的不删。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。</p>
+          <p class="settings-help">三台都要监听局域网，不能只绑 127.0.0.1。启动后默认 <code>0.0.0.0:8765</code>，请在防火墙放行 TCP 8765 和 UDP/TCP 8766。在这台电脑的浏览器里，用下面列表的「打开页面」进入各机 QuantLab，依次点开始回测；回到本机设置页再点「同步回测产物」和同步行情。程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启。没开 QuantLab 的机器不会出现。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。</p>
           <div id="lan-peers"></div>
           <div class="settings-actions">
             <button id="lan-sync-results" type="button">同步回测产物</button>
@@ -122,7 +122,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260910lan1"></script>
+    <script src="/assets/settings.js?v=20260911lanui"></script>
     <script src="/assets/nav.js?v=20260907a"></script>
   </body>
 </html>

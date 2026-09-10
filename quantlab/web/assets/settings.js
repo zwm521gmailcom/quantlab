@@ -120,7 +120,7 @@ function renderPeers(peers) {
   if (!peers.length) {
     const empty = document.createElement("p");
     empty.className = "lan-empty";
-    empty.textContent = "还没有发现开着的 QuantLab。请确认各机已启动，且防火墙放行 8766。";
+    empty.textContent = "还没有发现开着的 QuantLab。请确认各机已用默认地址启动（监听 0.0.0.0:8765），且防火墙放行 TCP 8765 和 UDP/TCP 8766。";
     root.appendChild(empty);
     return;
   }
@@ -128,7 +128,7 @@ function renderPeers(peers) {
   table.className = "lan-peers";
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
-  for (const label of ["主机", "机器码", "地址", "序号前缀", ""]) {
+  for (const label of ["主机", "机器码", "地址", "序号前缀", "页面", ""]) {
     const th = document.createElement("th");
     th.textContent = label;
     headRow.appendChild(th);
@@ -146,13 +146,20 @@ function renderPeers(peers) {
     address.textContent = `${peer.host}:${peer.port}`;
     const prefix = document.createElement("td");
     prefix.textContent = String(peer.serial_prefix ?? "");
+    const page = document.createElement("td");
+    const open = document.createElement("a");
+    open.href = String(peer.ui_url || `http://${peer.host}:8765/`);
+    open.target = "_blank";
+    open.rel = "noopener";
+    open.textContent = "打开页面";
+    page.appendChild(open);
     const action = document.createElement("td");
     const button = document.createElement("button");
     button.type = "button";
     button.textContent = "以此机为源头同步行情";
     button.addEventListener("click", () => syncMarket(peer.machine_id));
     action.appendChild(button);
-    row.append(hostname, machine, address, prefix, action);
+    row.append(hostname, machine, address, prefix, page, action);
     body.appendChild(row);
   }
   table.appendChild(body);

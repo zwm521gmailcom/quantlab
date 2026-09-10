@@ -55,9 +55,39 @@ def _inside(path: Path, roots: tuple[Path, ...]) -> bool:
     return any(candidate == root or root in candidate.parents for root in roots)
 
 
+def _is_private_ipv4(host: str) -> bool:
+    parts = host.split(".")
+    if len(parts) != 4:
+        return False
+    try:
+        first, second = int(parts[0]), int(parts[1])
+        third = int(parts[2])
+        fourth = int(parts[3])
+    except ValueError:
+        return False
+    if not all(0 <= value <= 255 for value in (first, second, third, fourth)):
+        return False
+    if first == 10:
+        return True
+    if first == 192 and second == 168:
+        return True
+    return first == 172 and 16 <= second <= 31
+
+
+def allowed_service_host(host: str) -> str:
+    text = str(host or "").strip()
+    if text in {"127.0.0.1", "localhost"}:
+        return "127.0.0.1"
+    if text == "0.0.0.0":
+        return "0.0.0.0"
+    if _is_private_ipv4(text):
+        return text
+    raise ValueError("QuantLab only binds 127.0.0.1, 0.0.0.0, or a private LAN address")
+
+
 @dataclass(frozen=True)
 class Settings:
-    """Resolved local paths and the loopback-only service setting."""
+    """Resolved local paths and the LAN-reachable service setting."""
 
     project_root: Path = field(default_factory=_default_project_root)
     data_root: Path | None = None
@@ -93,8 +123,7 @@ class Settings:
             or Path("quantlab_runtime"),
             base=project_root,
         )
-        if self.host != "127.0.0.1":
-            raise ValueError("QuantLab only accepts host 127.0.0.1")
+        object.__setattr__(self, "host", allowed_service_host(self.host))
         if self.port < 1 or self.port > 65535:
             raise ValueError("port must be between 1 and 65535")
         object.__setattr__(self, "project_root", project_root)
@@ -163,6 +192,4 @@ class Settings:
         return resolved
 
     def with_host(self, host: str) -> Settings:
-        if host != "127.0.0.1":
-            raise ValueError("QuantLab only accepts host 127.0.0.1")
-        return replace(self, host=host)
+        return replace(self, host=allowed_service_host(host))

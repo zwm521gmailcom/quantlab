@@ -221,8 +221,8 @@ class SettingsService:
         }
 
     def update(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if "host" in payload and payload["host"] != "127.0.0.1":
-            raise ValueError("QuantLab only accepts host 127.0.0.1")
+        if "host" in payload and payload["host"] != self.settings.host:
+            raise ValueError("host is startup-controlled")
         if "paths" in payload:
             raise ValueError("authoritative and runtime paths are startup-controlled")
         defaults = payload.get("defaults", {})
