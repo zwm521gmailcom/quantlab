@@ -107,7 +107,7 @@ quantlab materialize-pack-factors     # compute the formula-pack factors from ca
 
 Every subcommand accepts `--project-root`, `--data-root`, `--calibration-root`, and `--runtime-root`. `serve` also accepts `--asset` (`a_share` or `crypto`), `--port`, and `--lan-port`.
 
-Backtest parallelism (also editable on the settings page; no service restart required). These are per-run request values; the runtime may lower them when RAM is tight. They do not mean multiple backtests at once. Concurrent backtests stay fixed at 1.
+Backtest parallelism (also editable on the settings page; no service restart required). Fold and bucket workers are per-run request values; the runtime may lower them when RAM is tight. Concurrent backtests are computed from installed RAM and CPU cores; there is no manual slot control. 16 GB machines stay at 1.
 
 - `QUANTLAB_FOLD_WORKERS`: parallel walk-forward folds
 - `QUANTLAB_BUCKET_WORKERS`: bucket-equity worker count

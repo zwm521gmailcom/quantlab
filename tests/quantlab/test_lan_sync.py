@@ -367,6 +367,90 @@ def test_pull_results_copies_plan_snapshot_even_when_run_already_exists(tmp_path
     copied = dest.runtime_root / "results" / PLANS_DIR_NAME / f"{plan_id}.json"
     assert copied.is_file()
     assert json.loads(copied.read_text(encoding="utf-8"))["name"] == "对端计划"
+    again = pull_results(dest, LocalLanSource(source))
+    assert again["pulled_plans"] == []
+    assert again["pulled_runs"] == []
+
+
+def test_pull_results_skips_source_status_when_local_run_already_finished(tmp_path: Path) -> None:
+    dest = _settings(tmp_path / "dst")
+    source = _settings(tmp_path / "src")
+    done_id = "20260910-120000-7711"
+    for settings in (dest, source):
+        folder = settings.runtime_root / "results" / done_id
+        folder.mkdir(parents=True)
+        (folder / "run.json").write_text(
+            json.dumps({"run_id": done_id, "status": "completed", "config": {"name": "已有"}}),
+            encoding="utf-8",
+        )
+        (folder / "metrics.json").write_text("{}", encoding="utf-8")
+    inner = LocalLanSource(source)
+    reads: list[str] = []
+
+    class CountingSource:
+        def results_index(self):
+            return inner.results_index()
+
+        def result_tree(self, run_id):
+            reads.append(f"tree:{run_id}")
+            return inner.result_tree(run_id)
+
+        def read_result_file(self, run_id, rel):
+            reads.append(f"file:{run_id}:{rel}")
+            return inner.read_result_file(run_id, rel)
+
+        def read_deleted(self, run_id):
+            return inner.read_deleted(run_id)
+
+        def read_plan(self, plan_id):
+            return inner.read_plan(plan_id)
+
+    stats = pull_results(dest, CountingSource())
+    assert stats["pulled_runs"] == []
+    assert not any(item.startswith("file:") or item.startswith("tree:") for item in reads)
+
+
+def test_coordinate_results_stops_after_unchanged_plan_round(tmp_path: Path) -> None:
+    from quantlab.services.lan_sync import coordinate_results_sync
+    from quantlab.services.result_sync import PLANS_DIR_NAME
+
+    left = _settings(tmp_path / "a")
+    right = _settings(tmp_path / "b")
+    load_machine_identity(left.runtime_root)
+    load_machine_identity(right.runtime_root)
+    run_id = "20260910-120000-8811"
+    plan_id = "plan-alreadyhere01"
+    payload = json.dumps({"schema": 1, "plan_id": plan_id, "name": "已有计划", "status": "completed", "items": []})
+    for settings in (left, right):
+        folder = settings.runtime_root / "results" / run_id
+        folder.mkdir(parents=True)
+        (folder / "run.json").write_text(
+            json.dumps({"run_id": run_id, "status": "completed", "config": {"name": "已有"}}),
+            encoding="utf-8",
+        )
+        plans = settings.runtime_root / "results" / PLANS_DIR_NAME
+        plans.mkdir(parents=True)
+        (plans / f"{plan_id}.json").write_text(payload, encoding="utf-8")
+    asks = {"n": 0}
+
+    def ask(peer, sources):
+        asks["n"] += 1
+        return {}
+
+    database = Database(left.database_path)
+    database.initialize()
+    stats = coordinate_results_sync(
+        left,
+        database,
+        [{"machine_id": "peer", "host": "peer-host", "port": 8766, "self": False}],
+        self_host="10.0.0.1",
+        source_for=lambda host, port: LocalLanSource(right),
+        ask_peer=ask,
+    )
+    assert stats["rounds"] == 1
+    assert stats["pulled_runs"] == []
+    assert stats["pulled_plans"] == []
+    assert asks["n"] == 1
 
 
 def test_sync_progress_survives_reset_via_file(tmp_path: Path) -> None:

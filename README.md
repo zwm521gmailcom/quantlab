@@ -107,7 +107,7 @@ quantlab materialize-pack-factors     # 从 canonical.parquet 计算并落地公
 
 每个子命令都接受 `--project-root`、`--data-root`、`--calibration-root`、`--runtime-root`。`serve` 另接受 `--asset`（`a_share` 或 `crypto`）、`--port`、`--lan-port`。
 
-回测并行相关环境变量（也可在设置页保存，不必重启服务）。这些是一条回测内部的请求值，内存不够时运行时会再降；它们不是同时多条回测。同时回测固定为 1 条。
+回测并行相关环境变量（也可在设置页保存，不必重启服务）。折并行和分层进程是一条回测内部的请求值，内存不够时运行时会再降。同时回测条数按本机内存和核数自动算，没有手动档；16GB 仍是 1 条。
 
 - `QUANTLAB_FOLD_WORKERS`：定长回看折并行数
 - `QUANTLAB_BUCKET_WORKERS`：分层净值进程数

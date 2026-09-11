@@ -22,7 +22,7 @@ async function load() {
   $("fold-workers").placeholder = autoPlaceholder(x.compute_hint);
   $("bucket-workers").placeholder = autoPlaceholder(x.compute_hint);
   $("bucket-pool").value = x.compute.bucket_pool || "process";
-  $("compute-hint").textContent = `本机 ${x.compute_hint.cpu_count} 核、约 ${x.compute_hint.ram_gb} GB 内存。折并行建议不超过 ${x.compute_hint.safe_fold_workers}；分层净值建议 ${x.compute_hint.safe_bucket_workers}。同时回测固定 1 条，不会根据历史消耗自动加路。留空时的自动核数（${x.compute_hint.auto_workers}）只适合折训练，不要用到分层进程。`;
+  $("compute-hint").textContent = `本机 ${x.compute_hint.cpu_count} 核、约 ${x.compute_hint.ram_gb} GB 内存。折并行建议不超过 ${x.compute_hint.safe_fold_workers}；分层净值建议 ${x.compute_hint.safe_bucket_workers}。同时回测 ${x.compute_hint.max_concurrent_backtests} 条（按内存和核数自动算，没有手动档）。留空时的自动核数（${x.compute_hint.auto_workers}）只适合折训练，不要用到分层进程。`;
   const machine = x.machine || {};
   if ($("machine-id")) $("machine-id").value = machine.machine_id || "";
   if ($("serial-prefix")) $("serial-prefix").value = machine.serial_prefix == null ? "" : String(machine.serial_prefix);

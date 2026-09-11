@@ -101,7 +101,7 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     js = _first_party_js()
     source = html + js
     assert "app.css?v=20260911navadapt3" in html
-    assert "plan.js?v=20260911retry5" in html
+    assert "plan.js?v=20260911slots3" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
     assert "QuantLabPager.mount" in js

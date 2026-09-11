@@ -41,7 +41,8 @@ def memory_safe_process_workers(nbytes: int, requested: int, ram: int | None = N
     used = max(0, int(nbytes or 0))
     if total <= 0 or used <= 0:
         return min(requested, 2)
-    budget = int(total * 0.40)
+    slots = max(1, max_concurrent_backtests(total))
+    budget = int(total * 0.40 / slots)
     copies = max(1, budget // used)
     if copies <= 1:
         return 1
@@ -65,8 +66,20 @@ def compute_hint() -> dict[str, Any]:
         "ram_gb": round(ram_gb, 1),
         "safe_bucket_workers": safe_bucket,
         "safe_fold_workers": min(4, auto),
-        "max_concurrent_backtests": 1,
+        "max_concurrent_backtests": max_concurrent_backtests(ram, cpu=int(cpu)),
     }
+
+
+def max_concurrent_backtests(ram: int | None = None, cpu: int | None = None) -> int:
+    total = int(ram if ram is not None else total_ram_bytes() or 0)
+    gb = total / (1024**3) if total else 0.0
+    cores = max(1, int(cpu if cpu is not None else (cpu_count() or 1)))
+    if gb <= 0:
+        by_ram = 1
+    else:
+        by_ram = max(1, int(max(0.0, gb - 8.0) // 28))
+    by_cpu = max(1, cores // 4)
+    return min(by_ram, by_cpu, 8)
 
 
 def resolve_worker_count(env_name: str, setting_key: str, task_count: int, cpu_fn: Callable[[], int | None]) -> int:
