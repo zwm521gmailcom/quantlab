@@ -21,9 +21,10 @@ _lock = threading.Lock()
 _workers: dict[str, Any] = {}
 _stop_requested: set[str] = set()
 _gate_lock = threading.Lock()
-_gate_owner: int | str | None = None
-_gate_depth = 0
 _gate_label: str | None = None
+_plan_reserved: str | None = None
+_depths: dict[int, int] = {}
+_plan_worker = threading.local()
 
 
 def settings_payload(settings: Settings) -> dict[str, Any]:
@@ -58,60 +59,77 @@ def _spawn_backtest_worker(project_root: str, payload: dict[str, Any], run_id: s
 
 
 def reset_execution_gate() -> None:
-    global _gate_owner, _gate_depth, _gate_label
+    global _gate_label, _plan_reserved
     with _gate_lock:
-        _gate_owner = None
-        _gate_depth = 0
         _gate_label = None
+        _plan_reserved = None
+        _depths.clear()
 
 
 def execution_busy_label() -> str | None:
     with _gate_lock:
-        return _gate_label
+        if _plan_reserved or _depths:
+            return _gate_label
+        return None
+
+
+def mark_plan_worker() -> None:
+    _plan_worker.active = True
 
 
 def reserve_execution(label: str) -> None:
-    global _gate_owner, _gate_depth, _gate_label
+    global _gate_label, _plan_reserved
     with _gate_lock:
-        if _gate_owner is not None:
+        if _plan_reserved is not None or _depths:
             raise ValueError(f"已有回测在运行（{_gate_label}），请等当前任务结束或先停止。")
-        _gate_owner = "pending"
-        _gate_depth = 1
+        _plan_reserved = label
         _gate_label = label
 
 
 def bind_execution_thread() -> None:
-    global _gate_owner
-    with _gate_lock:
-        _gate_owner = threading.get_ident()
+    return
 
 
 def acquire_execution(label: str) -> None:
-    global _gate_owner, _gate_depth, _gate_label
+    global _gate_label
     ident = threading.get_ident()
+    is_plan = bool(getattr(_plan_worker, "active", False))
+    from quantlab.services.settings import max_concurrent_backtests
+
     with _gate_lock:
-        if _gate_owner == "pending" or (_gate_owner is not None and _gate_owner != ident):
+        if ident in _depths:
+            _depths[ident] += 1
+            return
+        if _plan_reserved and not is_plan:
             raise ValueError(f"已有回测在运行（{_gate_label}），请等当前任务结束或先停止。")
-        _gate_owner = ident
-        _gate_depth += 1
+        if len(_depths) >= max_concurrent_backtests():
+            raise ValueError(f"已有回测在运行（{_gate_label}），请等当前任务结束或先停止。")
+        _depths[ident] = 1
         if _gate_label is None:
             _gate_label = label
 
 
 def release_execution() -> None:
-    global _gate_owner, _gate_depth, _gate_label
+    global _gate_label
     ident = threading.get_ident()
     with _gate_lock:
-        if _gate_owner != ident:
+        depth = _depths.get(ident)
+        if not depth:
             return
-        _gate_depth = max(0, _gate_depth - 1)
-        if _gate_depth == 0:
-            _gate_owner = None
+        if depth > 1:
+            _depths[ident] = depth - 1
+            return
+        _depths.pop(ident, None)
+        if not _depths and _plan_reserved is None:
             _gate_label = None
 
 
 def release_reservation() -> None:
-    reset_execution_gate()
+    global _gate_label, _plan_reserved
+    with _gate_lock:
+        _plan_reserved = None
+        if not _depths:
+            _gate_label = None
 
 
 def register_worker(run_id: str, proc: Any) -> None:

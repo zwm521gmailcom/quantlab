@@ -31,7 +31,8 @@ def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> Non
     assert body["lan"] == {"market_sync_at_0400": False}
     assert body["compute_hint"]["cpu_count"] >= 1
     assert body["compute_hint"]["auto_workers"] >= 1
-    assert body["compute_hint"]["max_concurrent_backtests"] == 1
+    from quantlab.services.settings import max_concurrent_backtests
+    assert body["compute_hint"]["max_concurrent_backtests"] == max_concurrent_backtests()
     assert "safe_fold_workers" in body["compute_hint"]
     assert body["machine"]["machine_id"]
     assert 10 <= int(body["machine"]["serial_prefix"]) <= 99
@@ -39,6 +40,19 @@ def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> Non
     assert saved.status_code == 200
     assert saved.json()["defaults"]["top_n"] == 20
     assert api.get("/api/settings").json()["defaults"]["rebalance_days"] == 3
+
+
+def test_max_concurrent_backtests_follows_installed_ram_and_cpu() -> None:
+    from quantlab.services.settings import max_concurrent_backtests
+
+    gb = 1024**3
+    assert max_concurrent_backtests(16 * gb, cpu=10) == 1
+    assert max_concurrent_backtests(16 * gb, cpu=32) == 1
+    assert max_concurrent_backtests(64 * gb, cpu=8) == 2
+    assert max_concurrent_backtests(96 * gb, cpu=16) == 3
+    assert max_concurrent_backtests(128 * gb, cpu=8) == 2
+    assert max_concurrent_backtests(128 * gb, cpu=32) == 4
+    assert max_concurrent_backtests(256 * gb, cpu=64) == 8
 
 
 def test_settings_persist_compute_workers_without_touching_draft_defaults(tmp_path: Path) -> None:
@@ -154,7 +168,9 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert "git pull" in page.text
     assert "打开页面" in page.text or "打开页面" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
     assert "8765" in page.text
-    assert "同时回测固定 1 条" in page.text or "同时回测固定 1 条" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "同时回测" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "max_concurrent_backtests" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "内存和核数" in Path("quantlab/web/pages/settings.html").read_text(encoding="utf-8")
 
 
 def test_settings_can_update_serial_prefix_but_not_machine_id(tmp_path: Path) -> None:

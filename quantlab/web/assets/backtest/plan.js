@@ -154,9 +154,10 @@ function renderTable() {
   }
   if (pagerHost) pagerHost.hidden = false;
   const running = current.items.filter((item) => item.status === "running").length;
+  const queued = current.items.filter((item) => item.status === "queued").length;
   const pending = current.items.filter((item) => item.status === "pending").length;
   const done = current.items.filter((item) => item.status === "completed").length;
-  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${running ? "，正在跑 1 笔" : ""}`;
+  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}`;
   const table = document.createElement("table");
   table.className = "archive-grid plan-grid";
   const head = document.createElement("thead");

@@ -1,10 +1,11 @@
-"""Serial backtest plan queue: save configs first, run selected items one by one."""
+"""Backtest plan queue: save configs first, then run selected items with a machine-sized slot cap."""
 
 from __future__ import annotations
 
 import json
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,6 +13,7 @@ from quantlab.config import Settings
 from quantlab.repositories.database import Database
 from quantlab.services.backtest_control import (
     bind_execution_thread,
+    mark_plan_worker,
     release_reservation,
     reserve_execution,
     run_isolated,
@@ -20,6 +22,7 @@ from quantlab.services.backtest_control import (
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
 from quantlab.services.result_sync import delete_plan_snapshot, sync_result_catalog, write_plan_snapshot
+from quantlab.services.settings import max_concurrent_backtests
 
 
 _runtime_lock = threading.Lock()
@@ -471,19 +474,24 @@ class BacktestPlanService:
             daemon=True,
         )
         with _runtime_lock:
-            _runtime[plan_id] = {"stop": stop, "thread": thread, "current_run_id": None}
+            _runtime[plan_id] = {"stop": stop, "thread": thread, "current_run_id": None, "current_run_ids": set()}
         thread.start()
         self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def stop(self, plan_id: str) -> dict[str, Any]:
         self.get(plan_id)
+        run_ids: list[str] = []
         with _runtime_lock:
             state = _runtime.get(plan_id)
-            run_id = state.get("current_run_id") if state else None
             if state and state.get("stop"):
                 state["stop"].set()
-        if run_id:
+            if state:
+                run_ids = [str(item) for item in (state.get("current_run_ids") or set())]
+                current = state.get("current_run_id")
+                if current and str(current) not in run_ids:
+                    run_ids.append(str(current))
+        for run_id in run_ids:
             try:
                 stop_run(self.job, run_id)
             except ValueError:
@@ -505,10 +513,21 @@ class BacktestPlanService:
     def _run_loop(self, plan_id: str, item_ids: list[str], stop: threading.Event) -> None:
         try:
             bind_execution_thread()
-            for item_id in item_ids:
-                if stop.is_set():
-                    break
-                self._run_item(plan_id, item_id, stop)
+            workers = max(1, int(max_concurrent_backtests()))
+            if workers <= 1:
+                for item_id in item_ids:
+                    if stop.is_set():
+                        break
+                    self._run_item(plan_id, item_id, stop)
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = []
+                    for item_id in item_ids:
+                        if stop.is_set():
+                            break
+                        futures.append(pool.submit(self._run_item, plan_id, item_id, stop))
+                    for future in as_completed(futures):
+                        future.result()
         finally:
             stamp = _now()
             with self.database.transaction() as connection:
@@ -532,6 +551,7 @@ class BacktestPlanService:
             self._export_snapshot(plan_id)
 
     def _run_item(self, plan_id: str, item_id: str, stop: threading.Event) -> None:
+        mark_plan_worker()
         if stop.is_set():
             return
         stamp = _now()
@@ -559,6 +579,7 @@ class BacktestPlanService:
             state = _runtime.get(plan_id)
             if state is not None:
                 state["current_run_id"] = run_id
+                state.setdefault("current_run_ids", set()).add(run_id)
         with self.database.transaction() as connection:
             connection.execute(
                 "UPDATE backtest_plan_items SET run_id=?, updated_at=? WHERE item_id=?",
@@ -613,5 +634,8 @@ class BacktestPlanService:
             for state in _runtime.values():
                 if state.get("current_run_id") == run_id:
                     state["current_run_id"] = None
+                ids = state.get("current_run_ids")
+                if isinstance(ids, set) and run_id in ids:
+                    ids.discard(run_id)
         if row is not None:
             self._export_snapshot(str(row["plan_id"]))

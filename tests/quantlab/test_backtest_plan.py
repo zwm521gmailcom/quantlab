@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -10,6 +11,14 @@ from fastapi.testclient import TestClient
 from quantlab.api.app import create_app
 
 from tests.quantlab.test_backtest_workbench import config, setup_env
+
+
+def _patch_slots(monkeypatch: pytest.MonkeyPatch, slots: int) -> None:
+    def _slots(ram=None, value: int = slots) -> int:
+        return value
+
+    monkeypatch.setattr("quantlab.services.backtest_plan.max_concurrent_backtests", _slots)
+    monkeypatch.setattr("quantlab.services.settings.max_concurrent_backtests", _slots)
 
 
 def _wait_plan(client: TestClient, plan_id: str, timeout: float = 20.0) -> dict:
@@ -57,7 +66,8 @@ def test_create_plan_stores_items_without_running(tmp_path: Path) -> None:
         assert connection.execute("SELECT COUNT(*) FROM backtest_runs").fetchone()[0] == 0
 
 
-def test_start_runs_selected_items_serially(tmp_path: Path) -> None:
+def test_start_runs_selected_items_serially(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_slots(monkeypatch, 1)
     settings, database = setup_env(tmp_path)
     client = TestClient(create_app(settings, database))
     plan_id = client.post(
@@ -98,6 +108,97 @@ def test_start_runs_selected_items_serially(tmp_path: Path) -> None:
     assert metrics["return"]["display"] == "12.34%"
     assert metrics["max_drawdown"]["value"] == pytest.approx(-0.0567)
     assert metrics["max_drawdown"]["display"] == "-5.67%"
+
+
+def test_start_runs_two_items_in_parallel_when_machine_allows_two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_slots(monkeypatch, 2)
+    from quantlab.services import backtest_control
+
+    barrier = threading.Barrier(2, timeout=8)
+    original = backtest_control.run_isolated
+
+    def together(settings, job, run_id):
+        barrier.wait()
+        return original(settings, job, run_id)
+
+    monkeypatch.setattr("quantlab.services.backtest_plan.run_isolated", together)
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    plan_id = client.post(
+        "/api/backtest-plans",
+        json={
+            "name": "并行计划",
+            "items": [
+                {"name": "第一笔", "config": config("one")},
+                {"name": "第二笔", "config": config("two")},
+            ],
+        },
+    ).json()["plan_id"]
+    started = client.post(f"/api/backtest-plans/{plan_id}/start", json={})
+    assert started.status_code == 202
+    finished = _wait_plan(client, plan_id)
+    assert finished["status"] == "completed"
+    assert [item["status"] for item in finished["items"]] == ["completed", "completed"]
+    started_at = [item["started_at"] for item in finished["items"]]
+    finished_at = [item["finished_at"] for item in finished["items"]]
+    assert all(started_at) and all(finished_at)
+    assert min(finished_at) >= max(started_at)
+
+
+def test_plan_workers_can_hold_two_slots_and_still_block_workbench(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_slots(monkeypatch, 2)
+    from quantlab.services.backtest_control import (
+        acquire_execution,
+        mark_plan_worker,
+        release_execution,
+        release_reservation,
+        reserve_execution,
+    )
+
+    reserve_execution("plan:slots")
+    barrier = threading.Barrier(3, timeout=5)
+    hold = threading.Event()
+    errors: list[BaseException] = []
+
+    def worker(label: str) -> None:
+        mark_plan_worker()
+        try:
+            acquire_execution(label)
+            barrier.wait()
+            hold.wait(timeout=5)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            release_execution()
+
+    threads = [threading.Thread(target=worker, args=(f"run:{index}",)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    barrier.wait()
+    with pytest.raises(ValueError, match="已有回测在运行"):
+        acquire_execution("run:workbench")
+    overflow: list[str] = []
+
+    def extra_plan_worker() -> None:
+        mark_plan_worker()
+        try:
+            acquire_execution("run:extra")
+            overflow.append("acquired")
+            release_execution()
+        except ValueError as error:
+            overflow.append(str(error))
+
+    extra = threading.Thread(target=extra_plan_worker)
+    extra.start()
+    extra.join(timeout=5)
+    assert extra.is_alive() is False
+    assert overflow and "已有回测在运行" in overflow[0]
+    hold.set()
+    for thread in threads:
+        thread.join(timeout=5)
+        assert thread.is_alive() is False
+    assert errors == []
+    release_reservation()
 
 
 def test_start_skips_unselected_and_completed_items(tmp_path: Path) -> None:
@@ -369,6 +470,8 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     plan_js = Path("quantlab/web/assets/backtest/plan.js").read_text(encoding="utf-8")
     source = html + plan_js
     assert "回测计划" in html
+    assert "内存和核数" in html
+    assert "正在跑 ${running} 笔" in plan_js
     assert "全选" in html
     assert "开始" in html
     assert "停止计划" in html
