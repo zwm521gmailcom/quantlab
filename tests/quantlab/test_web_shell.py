@@ -100,8 +100,8 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     html = _page("backtest_plan.html")
     js = _first_party_js()
     source = html + js
-    assert "app.css?v=20260911planretry4" in html
-    assert "plan.js?v=20260911retry4" in html
+    assert "app.css?v=20260911navadapt3" in html
+    assert "plan.js?v=20260911retry5" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
     assert "QuantLabPager.mount" in js
@@ -125,8 +125,10 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert "function setSort(key)" in js
     assert 'metricCell(item, "return", "return")' in js
     assert "table-layout: auto" in css
+    assert "vertical-align: top;" in css
     assert "plan-col-retry" in js
     assert '{key: "retry", label: "重算"' in js
+    assert '<div class="archive-meta">' in js
     assert ".plan-factors { display: flex; flex-wrap: wrap;" in css
     assert ".plan-factors span" in css
     assert "th.plan-sortable" in css
@@ -407,12 +409,16 @@ def test_sidebar_declares_autohide_toggle() -> None:
     assert "nav-autohide-toggle" in nav
     assert "holdCollapse" in nav
     assert "nav-expanded" in nav
-    assert "--nav-width: 184px" in css
-    assert "grid-template-columns: var(--nav-width) 1fr" in css
+    assert "--nav-width: 220px" in css
+    assert "grid-template-columns: var(--nav-width) minmax(0, 1fr)" in css
     assert "html.nav-autohide .shell" in css
     assert "html.nav-autohide .shell > aside.nav-expanded" in css
     assert "html.nav-autohide aside {" not in css
     assert ".nav-autohide-toggle" in css
+    assert "nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }" not in css
+    assert ".shell > aside nav" in css
+    assert "isCompactNav" in nav
+    assert 'matchMedia("(max-width: 960px)")' in nav
 
 
 def test_hidden_utility_overrides_flex_toolbars() -> None:
@@ -484,7 +490,7 @@ def test_factor_data_page_declares_ic_annotations_and_calculation_history() -> N
     assert "每页最大显示数量" in html
     assert 'data-factor-page-size="1"' in html
     assert 'class="factor-data-page"' in html
-    assert "app.css?v=20260911factorac" in html
+    assert "app.css?v=20260911navadapt3" in html
     assert 'id="factor-category-filter"' in html
     assert "因子分类" in html
     assert 'id="factor-asset-class"' in html
@@ -643,7 +649,7 @@ def test_result_archive_filters_use_model_not_strategy_labels() -> None:
     assert "table-pager.js" in html
     assert "quantlab-archive-page-size" in js
     assert 'class="archive-page"' in html
-    assert "app.css?v=20260911archivecols" in html
+    assert "app.css?v=20260911navadapt3" in html
     assert "archive.js?v=20260911archivecols" in html
 
 

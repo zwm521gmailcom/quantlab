@@ -79,6 +79,7 @@
       label.className = "nav-label";
       label.textContent = item.label;
       anchor.append(icon, " ", label);
+      anchor.title = item.label;
     }
     if (current) anchor.setAttribute("aria-current", "page");
     return anchor;
@@ -124,6 +125,8 @@
     };
     let holdCollapse = false;
     const autohideOn = () => document.documentElement.classList.contains("nav-autohide");
+    const compactNav = window.matchMedia("(max-width: 960px)");
+    const isCompactNav = () => autohideOn() || compactNav.matches;
     const setExpanded = (on) => aside.classList.toggle("nav-expanded", Boolean(on));
     hideToggle.addEventListener("mousedown", (event) => event.preventDefault());
     hideToggle.addEventListener("click", () => {
@@ -178,9 +181,11 @@
       const dark = document.documentElement.classList.contains("dark");
       themeIcon.textContent = dark ? "☀" : "☾";
       themeLabel.textContent = dark ? "浅色模式" : "深色模式";
+      themeToggle.title = themeLabel.textContent;
     };
     syncThemeButton();
     themeToggle.append(themeIcon, " ", themeLabel);
+    themeToggle.title = themeLabel.textContent;
     themeToggle.addEventListener("click", () => {
       const goingDark = !document.documentElement.classList.contains("dark");
       document.documentElement.classList.toggle("dark", goingDark);
@@ -197,14 +202,14 @@
     aside.append(foot);
 
     aside.addEventListener("mouseenter", () => {
-      if (autohideOn() && !holdCollapse) setExpanded(true);
+      if (isCompactNav() && !holdCollapse) setExpanded(true);
     });
     aside.addEventListener("mouseleave", () => {
       holdCollapse = false;
       setExpanded(false);
     });
     aside.addEventListener("focusin", () => {
-      if (!autohideOn() || holdCollapse) return;
+      if (!isCompactNav() || holdCollapse) return;
       const active = document.activeElement;
       if (active === hideToggle || active === themeToggle) return;
       setExpanded(true);

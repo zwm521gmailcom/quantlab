@@ -221,7 +221,7 @@ function renderTable() {
     check.className = "plan-col-check";
     const name = document.createElement("td");
     name.className = "plan-col-name";
-    name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><span class="archive-meta"></span></div>`;
+    name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><div class="archive-meta"></div></div>`;
     name.querySelector(".archive-name").textContent = item.name;
     name.querySelector(".archive-meta").textContent = item.item_id;
     const factors = document.createElement("td");
@@ -261,12 +261,12 @@ function renderTable() {
     }
     const windowCell = document.createElement("td");
     windowCell.className = "archive-window plan-col-window";
-    windowCell.innerHTML = `<div></div><div></div>`;
+    windowCell.innerHTML = `<div></div><div class="archive-meta"></div>`;
     windowCell.children[0].textContent = item.summary?.train || "—";
     windowCell.children[1].textContent = item.summary?.test || "—";
     const model = document.createElement("td");
     model.className = "archive-window plan-col-model";
-    model.innerHTML = `<div></div><div></div>`;
+    model.innerHTML = `<div></div><div class="archive-meta"></div>`;
     model.children[0].textContent = item.summary?.model_name || item.summary?.kind || "—";
     model.children[1].textContent = item.summary?.walk_forward === "rolling" ? "定长回看" : "一次训练";
     const status = document.createElement("td");
