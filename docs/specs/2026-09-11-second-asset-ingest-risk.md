@@ -112,27 +112,48 @@ Mac 启动脚本先跑 `init-db`，所以整夹拷到 `/Volumes/T2/quantlab` 会
 
 **修正：** 派生包按 `dataset_id` 分目录，例如 `data/derived/<asset>/`。资源闸门仍是同时 1 条回测。
 
+## 回测与宽表：一次回测只走一张表
+
+把现有 `canonical.parquet` 按资产拆开或挪到子目录，**会把已有回测弄断**，原因：
+
+1. **已发布路径不可改。** `ds_canonical_market` / `current` 已把 `path` 冻在当前文件。挪文件后库里的路径还指向旧位置，历史 `backtest_runs` 全部读不到。
+2. **作业其实已经按数据集取文件。** `BacktestJobService._path_and_row` 用本次运行的 `dataset_id` + `dataset_version_id` 去 `dataset_versions.path` 读 parquet。并不是扫 `data/` 下所有宽表。
+3. **工作台把数据集锁死在因子上。** 下拉只放「所选因子绑定的那张表」，默认 `ds_canonical_market::current`。现有已发布因子全绑 A 股，所以界面上看起来「回测都走现在的宽表」。
+4. **公式包旁路按宽表父目录拼路径。** `default_sidecar_path` = `{宽表目录}/derived/canonical_pack_factors.parquet`。若第二资产也放在 `data/` 根下，会和 A 股抢同一份 sidecar。
+
+因此：**第一资产文件原地不动。** 分开文件只表示「第二资产另起一张表」，不是把现在这张表切开。一次回测仍然只绑一张宽表；要跑第二资产，选第二套因子/数据集，作业就会改读新 path。不要把两张表拼进同一次回测。
+
+```text
+# 作业取数（已有）
+backtest_runs.dataset_id + dataset_version_id
+  → dataset_versions.path
+  → 只读这一份 parquet（外加该表自己的 derived sidecar）
+```
+
 ## 修正后的入库形状
 
 ```text
 data/
-  canonical.parquet              # 第一资产，只读
-  canonical_<asset>.parquet       # 第二资产，新文件
+  canonical.parquet                    # 第一资产，原地不动；已有回测继续走这里
+  canonical_<asset>.parquet            # 第二资产，新文件，禁止与上一行同名
   derived/
-    <asset>/                     # 第二资产派生，不混入现有 derived 根文件
-  raw_<asset>/                    # 可选；不要写入 raw/daily 等 A 股日更目录
+    canonical_pack_factors.parquet     # 仅服务第一资产（现有 sidecar 也不动）
+    composite_pack_factors.parquet
+    <asset>/                           # 第二资产自己的 sidecar，禁止写回上一层同名文件
+  raw_<asset>/                         # 可选；不要写入 raw/daily 等 A 股日更目录
+```
 
-datasets.json 增一条：
-  entity_id: ds_canonical_<asset>
-  path: canonical_<asset>.parquet
-  version_id: current            # 仅在该 entity 内唯一
-  metadata.market_scope: <asset>
-  metadata.calendar_id: ...
-  metadata.default_benchmark: ...
+`datasets.json` 增一条，**不改** `ds_canonical_market` 的 path：
+
+```text
+entity_id: ds_canonical_<asset>
+path: canonical_<asset>.parquet
+version_id: current
+metadata.market_scope / calendar_id / default_benchmark: 随该资产
 ```
 
 因子：`factor_<asset>_<field>`，`dataset_id=ds_canonical_<asset>`。  
-页面：数据中心能看到第二条；K 线/回测下拉必须能选，且选中后不再套用 `.SH/.SZ` 与涨跌停默认。
+工作台：选这些因子后，数据集下拉锁到第二张表，那次回测读新文件；未选因子时仍默认 A 股，旧回测不受影响。
 
 ## 入库前检查清单
 
@@ -150,14 +171,16 @@ datasets.json 增一条：
 ## 建议实施顺序
 
 1. **闸门修复（必须先做）**：`catalog._register_entry` 不更新已发布 `path`；`Settings.resolve_user_path` 重定位外机绝对路径。没有这项，第二台机器无法稳定启动，更谈不上入库。
-2. **登记通道**：`datasets.json` 允许多条 canonical 类数据集；目录/K 线/回测的数据集选择不再写死单 ID。
-3. **市场策略**：`market_scope`、代码规则、过滤器、日历、基准随数据集走。
-4. **因子命名空间**：第二资产因子独立 entity_id，不走 A 股 `sync_factor_versions`。
-5. **最后才拷数据文件** 并 `init-db`/`rescan` 插入新版本。
+2. **登记通道**：只新增 Dataset，不改 `ds_canonical_market` 的 path；工作台靠因子锁定切表，而不是拆现有宽表。
+3. **市场策略**：`market_scope`、代码规则、过滤器、日历、基准随数据集走；A 股回测的沪深/涨跌停默认保持不变。
+4. **因子命名空间**：第二资产因子独立 entity_id，不走 A 股 `sync_factor_versions`。没有第二套已发布因子时，回测入口不会切到新表。
+5. **最后才拷第二资产文件** 并 INSERT 新 DatasetVersion。禁止 rename/移动 `canonical.parquet`。
 
 ## 明确不做
 
 - 不把第二资产行混进现有 1028 万行宽表
+- 不把现有 `canonical.parquet` 拆目录、改名或改已发布 path
+- 不把两张宽表拼进同一次回测
 - 不改已发布 A 股 DatasetVersion 的哈希、字段、行数
 - 不把 `features.parquet` 或因子派生包冒充第二行情资产
 - 不在本阶段做跨资产组合或跨日历回测
