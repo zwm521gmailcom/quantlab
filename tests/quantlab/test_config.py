@@ -146,6 +146,27 @@ def test_settings_accept_relative_roots_and_round_trip_stored_paths(tmp_path: Pa
     ).resolve()
 
 
+def test_settings_relocate_absolute_paths_from_copied_project(tmp_path: Path) -> None:
+    project = tmp_path / "quantlab"
+    data_root = project / "data"
+    data_root.mkdir(parents=True)
+    (data_root / "canonical.parquet").write_bytes(b"parquet")
+    (data_root / "calibration").mkdir()
+    settings = Settings(
+        project_root=project,
+        data_root=data_root,
+        calibration_root=data_root / "calibration",
+        runtime_root=project / "quantlab_runtime",
+    )
+    foreign = Path("/Volumes/T2/quantlab/data/canonical.parquet")
+    nested = Path("/home/zwm521/桌面/quantlab/data/calibration/run.json")
+    assert settings.require_read_path(foreign) == (data_root / "canonical.parquet").resolve()
+    assert settings.require_read_path(nested) == (data_root / "calibration/run.json").resolve()
+    assert settings.require_artifact_path("/old/quantlab/quantlab_runtime/results/run-1") == (
+        project / "quantlab_runtime/results/run-1"
+    ).resolve()
+
+
 def test_cli_accepts_relative_roots_for_init_db(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()

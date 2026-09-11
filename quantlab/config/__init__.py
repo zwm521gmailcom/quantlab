@@ -145,12 +145,28 @@ class Settings:
         return self.runtime_root / "baselines"
 
     def resolve_user_path(self, path: Path | str) -> Path:
-        value = Path(path).expanduser()
-        if not str(path).strip():
+        text = str(path).strip()
+        if not text:
             raise ValueError("path is required")
+        value = Path(path).expanduser()
         if not value.is_absolute():
-            value = self.project_root / value
-        return value.resolve()
+            return (self.project_root / value).resolve()
+        resolved = value.resolve()
+        allowed = (self.data_root, self.calibration_root, self.raw_root, self.runtime_root)
+        if _inside(resolved, allowed):
+            return resolved
+        relocated = self._relocate_foreign_path(value)
+        return relocated if relocated is not None else resolved
+
+    def _relocate_foreign_path(self, value: Path) -> Path | None:
+        parts = value.parts
+        start = 1 if value.is_absolute() else 0
+        allowed = (self.data_root, self.calibration_root, self.raw_root, self.runtime_root)
+        for index in range(start, len(parts)):
+            candidate = (self.project_root / Path(*parts[index:])).resolve()
+            if _inside(candidate, allowed):
+                return candidate
+        return None
 
     def display_path(self, path: Path | str) -> str:
         return posix_relative(self.resolve_user_path(path), self.project_root)
