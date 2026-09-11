@@ -29,8 +29,16 @@ def test_run_signature_stable_for_same_window() -> None:
 
 
 def test_cap_workers_without_prior_matches_cpu_request() -> None:
-    assert cap_workers(requested=8, task_count=90, ram_bytes=16 * 1024**3, unit_bytes=0, kind="fold") == 8
-    assert cap_workers(requested=8, task_count=3, ram_bytes=16 * 1024**3, unit_bytes=0, kind="fold") == 3
+    assert cap_workers(requested=8, task_count=90, ram_bytes=16 * 1024**3, unit_bytes=0, kind="fold") == 1
+    assert cap_workers(requested=8, task_count=3, ram_bytes=16 * 1024**3, unit_bytes=0, kind="fold") == 1
+
+
+def test_cap_workers_fold_shares_budget_across_concurrent_slots(monkeypatch) -> None:
+    ram = 128 * 1024**3
+    monkeypatch.setattr("quantlab.services.settings.max_concurrent_backtests", lambda ram=None, cpu=None: 4)
+    assert cap_workers(requested=4, task_count=90, ram_bytes=ram, unit_bytes=0, kind="fold") == 1
+    monkeypatch.setattr("quantlab.services.settings.max_concurrent_backtests", lambda ram=None, cpu=None: 1)
+    assert cap_workers(requested=4, task_count=90, ram_bytes=ram, unit_bytes=0, kind="fold") == 4
 
 
 def test_cap_workers_fold_collapses_when_prior_peak_is_half_of_ram() -> None:

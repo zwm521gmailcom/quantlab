@@ -7,6 +7,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
+from quantlab import __version__
 from quantlab.config import Settings, asset_label, load_instance_file, save_instance_file
 from quantlab.services.asset_layout import directory_plan
 from quantlab.services.machine_identity import load_machine_identity, save_serial_prefix
@@ -15,6 +16,7 @@ DEFAULTS: dict[str, Any] = {"top_n": 10, "rebalance_days": 2, "capital": 1_000_0
 COMPUTE_DEFAULTS: dict[str, Any] = {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
 LAN_DEFAULTS: dict[str, Any] = {"market_sync_at_0400": False}
 _ACTIVE_COMPUTE: dict[str, Any] = dict(COMPUTE_DEFAULTS)
+FOLD_PROCESS_BYTES = 8 * 1024**3
 
 
 def apply_compute(compute: dict[str, Any] | None) -> None:
@@ -65,7 +67,7 @@ def compute_hint() -> dict[str, Any]:
         "auto_workers": auto,
         "ram_gb": round(ram_gb, 1),
         "safe_bucket_workers": safe_bucket,
-        "safe_fold_workers": min(4, auto),
+        "safe_fold_workers": memory_safe_process_workers(FOLD_PROCESS_BYTES, min(4, auto), ram=ram),
         "max_concurrent_backtests": max_concurrent_backtests(ram, cpu=int(cpu)),
     }
 
@@ -264,6 +266,7 @@ class SettingsService:
                 "asset": str(self.settings.asset),
                 "asset_label": self.settings.asset_label,
                 "service": "local-only",
+                "version": __version__,
             },
             "instance": self._instance_public(),
             "defaults": value["defaults"],

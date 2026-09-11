@@ -10,9 +10,15 @@ from quantlab.services.backtest_job import BacktestJobService, fold_worker_count
 from quantlab.services.model_training import booster_thread_count
 
 
+def _plenty_of_ram(monkeypatch) -> None:
+    monkeypatch.setattr("quantlab.services.backtest_job.total_ram_bytes", lambda: 256 * 1024**3)
+    monkeypatch.setattr("quantlab.services.settings.max_concurrent_backtests", lambda ram=None, cpu=None: 1)
+
+
 def test_fold_worker_count_uses_eighty_percent_of_cpus(monkeypatch) -> None:
     monkeypatch.delenv("QUANTLAB_FOLD_WORKERS", raising=False)
     monkeypatch.setattr("quantlab.services.backtest_job.cpu_count", lambda: 10)
+    _plenty_of_ram(monkeypatch)
     assert fold_worker_count(90) == 8
     assert fold_worker_count(3) == 3
     assert fold_worker_count(1) == 1
@@ -33,12 +39,13 @@ def test_fold_worker_count_collapses_when_budget_says_process_is_fat(monkeypatch
         prior_peak_rss_bytes=9 * 1024**3,
     ) == 1
     assert fold_worker_count(90, prior_peak_rss_bytes=9 * 1024**3) == 1
-    assert fold_worker_count(90) == 8
+    assert fold_worker_count(90) == 1
 
 
 def test_fold_worker_count_env_overrides_cpu_percent(monkeypatch) -> None:
     monkeypatch.setenv("QUANTLAB_FOLD_WORKERS", "4")
     monkeypatch.setattr("quantlab.services.backtest_job.cpu_count", lambda: 10)
+    _plenty_of_ram(monkeypatch)
     assert fold_worker_count(90) == 4
 
 
@@ -47,6 +54,7 @@ def test_fold_worker_count_uses_settings_when_env_unset(monkeypatch) -> None:
 
     monkeypatch.delenv("QUANTLAB_FOLD_WORKERS", raising=False)
     monkeypatch.setattr("quantlab.services.backtest_job.cpu_count", lambda: 10)
+    _plenty_of_ram(monkeypatch)
     apply_compute({"fold_workers": 4})
     assert fold_worker_count(90) == 4
     apply_compute({"fold_workers": 0})
@@ -134,6 +142,7 @@ def _run(job: BacktestJobService, frame: pd.DataFrame):
 
 def test_rolling_predictions_run_independent_folds_in_parallel(monkeypatch) -> None:
     monkeypatch.setenv("QUANTLAB_FOLD_WORKERS", "4")
+    _plenty_of_ram(monkeypatch)
     frame = _panel()
     job = BacktestJobService.__new__(BacktestJobService)
     lock = threading.Lock()
@@ -162,6 +171,7 @@ def test_rolling_predictions_run_independent_folds_in_parallel(monkeypatch) -> N
 
 
 def test_rolling_predictions_parallel_scores_match_serial(monkeypatch) -> None:
+    _plenty_of_ram(monkeypatch)
     frame = _panel()
     job = BacktestJobService.__new__(BacktestJobService)
     monkeypatch.setenv("QUANTLAB_FOLD_WORKERS", "1")

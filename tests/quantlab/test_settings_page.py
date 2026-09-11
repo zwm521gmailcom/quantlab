@@ -29,6 +29,8 @@ def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> Non
     assert body["secrets"] == {"tushare_token": False}
     assert body["compute"] == {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
     assert body["lan"] == {"market_sync_at_0400": False}
+    from quantlab import __version__
+    assert body["environment"]["version"] == __version__
     assert body["compute_hint"]["cpu_count"] >= 1
     assert body["compute_hint"]["auto_workers"] >= 1
     from quantlab.services.settings import max_concurrent_backtests
@@ -101,6 +103,8 @@ def test_saved_compute_is_used_by_worker_counts(tmp_path: Path, monkeypatch) -> 
     monkeypatch.delenv("QUANTLAB_BUCKET_WORKERS", raising=False)
     monkeypatch.setattr("quantlab.services.backtest_job.cpu_count", lambda: 10)
     monkeypatch.setattr("quantlab.services.bucket_equity.cpu_count", lambda: 10)
+    monkeypatch.setattr("quantlab.services.backtest_job.total_ram_bytes", lambda: 256 * 1024**3)
+    monkeypatch.setattr("quantlab.services.settings.max_concurrent_backtests", lambda ram=None, cpu=None: 1)
     api = client(tmp_path)
     api.put("/api/settings", json={"compute": {"fold_workers": 3, "bucket_workers": 4}})
     assert fold_worker_count(90) == 3
@@ -143,6 +147,7 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert 'id="serial-prefix" type="number" min="10" max="99"' in page.text
     assert "readonly" not in page.text.split('id="serial-prefix"')[1].split(">")[0]
     assert 'id="lan-peers"' in page.text
+    assert 'id="app-version"' in page.text
     assert 'id="lan-sync-results"' in page.text
     assert 'id="lan-sync-market"' in page.text
     assert 'id="lan-progress-results"' in page.text
@@ -171,6 +176,7 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert "同时回测" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
     assert "max_concurrent_backtests" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
     assert "内存和核数" in Path("quantlab/web/pages/settings.html").read_text(encoding="utf-8")
+    assert '"版本"' in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
 
 
 def test_settings_can_update_serial_prefix_but_not_machine_id(tmp_path: Path) -> None:
