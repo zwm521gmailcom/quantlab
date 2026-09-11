@@ -12,7 +12,12 @@ from os import cpu_count
 from typing import Any
 
 from quantlab.services.machine_identity import load_machine_identity
-from quantlab.services.settings import memory_safe_process_workers, resolve_bucket_pool, total_ram_bytes
+from quantlab.services.settings import (
+    FOLD_PROCESS_BYTES,
+    memory_safe_process_workers,
+    resolve_bucket_pool,
+    total_ram_bytes,
+)
 
 _ACTIVE_RESOURCE_PRIOR: ContextVar[dict[str, Any] | None] = ContextVar(
     "quantlab_resource_prior",
@@ -56,7 +61,12 @@ def cap_workers(
     if kind == "fold":
         if prior_peak_rss_bytes and ram_bytes and prior_peak_rss_bytes > ram_bytes * 0.45:
             return 1
-        return requested
+        cost = int(FOLD_PROCESS_BYTES)
+        if prior_peak_rss_bytes and prior_workers:
+            cost = max(cost, int(prior_peak_rss_bytes) // max(1, int(prior_workers)))
+        elif prior_peak_rss_bytes:
+            cost = max(cost, int(prior_peak_rss_bytes))
+        return memory_safe_process_workers(cost, requested, ram=ram_bytes)
     cost = max(int(unit_bytes or 0), 0)
     if prior_peak_rss_bytes and prior_workers:
         cost = max(cost, int(prior_peak_rss_bytes) // max(1, int(prior_workers)))

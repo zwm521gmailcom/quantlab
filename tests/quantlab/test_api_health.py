@@ -23,6 +23,8 @@ def test_health_endpoint_returns_local_service_status(tmp_path: Path) -> None:
     assert response.json()["asset_label"] == "A股"
     assert response.json()["port"] == 8765
     assert response.json()["lan_port"] == 8766
+    from quantlab import __version__
+    assert response.json()["version"] == __version__
 
 
 def test_health_endpoint_reports_crypto_instance(tmp_path: Path) -> None:

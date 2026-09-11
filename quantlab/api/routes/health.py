@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Request
 
+from quantlab import __version__
+
 router = APIRouter(tags=["health"])
 
 
@@ -9,6 +11,7 @@ def health(request: Request) -> dict[str, object]:
     return {
         "status": "ok",
         "service": "quantlab",
+        "version": __version__,
         "asset": str(settings.asset),
         "asset_label": settings.asset_label,
         "port": int(settings.port),

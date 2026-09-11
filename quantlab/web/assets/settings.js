@@ -12,6 +12,11 @@ function autoPlaceholder(hint) {
 async function load() {
   const r = await fetch("/api/settings");
   const x = await r.json();
+  if ($("app-version")) {
+    $("app-version").textContent = x.environment && x.environment.version
+      ? `当前版本 ${x.environment.version}。功能更新后改这一号，三台 pull 并重启后数字应相同。`
+      : "当前版本未知";
+  }
   $("settings-paths").textContent = JSON.stringify({paths: x.paths, environment: x.environment, secrets: x.secrets}, null, 2);
   $("top-n").value = x.defaults.top_n;
   $("rebalance-days").value = x.defaults.rebalance_days;
@@ -262,7 +267,7 @@ function renderPeers(peers, meta) {
   table.className = "lan-peers";
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
-  for (const label of ["主机", "机器码", "资产", "地址", "序号前缀", "页面", ""]) {
+  for (const label of ["主机", "机器码", "版本", "资产", "地址", "序号前缀", "页面", ""]) {
     const th = document.createElement("th");
     th.textContent = label;
     headRow.appendChild(th);
@@ -276,6 +281,8 @@ function renderPeers(peers, meta) {
     hostname.textContent = peer.self ? `${peer.hostname}（本机）` : String(peer.hostname || "");
     const machine = document.createElement("td");
     machine.textContent = String(peer.machine_id || "");
+    const version = document.createElement("td");
+    version.textContent = String(peer.version || "—");
     const asset = document.createElement("td");
     asset.textContent = ASSET_LABELS[peer.asset] || String(peer.asset || "");
     const address = document.createElement("td");
@@ -295,7 +302,7 @@ function renderPeers(peers, meta) {
     button.textContent = "以此机为源头同步行情";
     button.addEventListener("click", () => syncMarket(peer.machine_id));
     action.append(button, createPeerProgress(peer.machine_id));
-    row.append(hostname, machine, asset, address, prefix, page, action);
+    row.append(hostname, machine, version, asset, address, prefix, page, action);
     body.appendChild(row);
   }
   table.appendChild(body);

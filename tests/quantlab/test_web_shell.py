@@ -699,6 +699,7 @@ def test_nav_exposes_rule_backtest_page() -> None:
     assert "规则回测" in nav
     assert "/api/health" in nav
     assert "asset_label" in nav
+    assert "health.version" in nav
 
 
 def test_backtest_new_does_not_embed_rule_strategy() -> None:

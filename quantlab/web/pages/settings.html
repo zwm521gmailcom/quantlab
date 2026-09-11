@@ -26,6 +26,7 @@
       <main>
         <div class="eyebrow">系统设置</div>
         <h2>系统设置</h2>
+        <p id="app-version" class="muted">当前版本加载中…</p>
         <p>草稿默认参数只影响新建草稿，不会改已保存草稿或历史运行。运算资源保存后对下一次「开始回测」生效，不必重启页面服务。数据扫描必须手动触发。</p>
         <div id="settings-error" class="state error hidden"></div>
         <section class="card">
@@ -122,7 +123,7 @@
             <div class="settings-fields">
               <label>定长回看折并行
                 <input id="fold-workers" type="number" min="0" max="256" placeholder="留空=自动">
-                <span class="field-help">对应 <code>QUANTLAB_FOLD_WORKERS</code>。定长回看时各折同时训。16GB 机器建议 2–4。开多路时每折占用的树模型线程会自动拆开，避免 8 路各占满 10 核。设 1 则一折接一折。</span>
+                <span class="field-help">对应 <code>QUANTLAB_FOLD_WORKERS</code>。定长回看时各折同时训。这是请求值：同时回测开了多路时，运行时会按内存再降，避免 4 条滚动回测再各开 4 个训练进程把内存顶满。设 1 则一折接一折。</span>
               </label>
               <label>分层净值进程数
                 <input id="bucket-workers" type="number" min="0" max="256" placeholder="留空=自动">
@@ -162,7 +163,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260911slots3"></script>
-    <script src="/assets/nav.js?v=20260911navadapt"></script>
+    <script src="/assets/settings.js?v=20260911ver"></script>
+    <script src="/assets/nav.js?v=20260911ver"></script>
   </body>
 </html>

@@ -16,6 +16,7 @@ from quantlab.repositories.database import Database
 from quantlab.services.backtest_job import BacktestJobService
 
 STOPPED_MESSAGE = "已强行停止"
+KILLED_MESSAGE = "进程被系统中止（内存不足或服务重启）"
 
 _lock = threading.Lock()
 _workers: dict[str, Any] = {}
@@ -191,7 +192,7 @@ def _terminate(proc: Any) -> None:
             pass
 
 
-def mark_stopped(database: Database, run_id: str) -> None:
+def mark_stopped(database: Database, run_id: str, message: str = STOPPED_MESSAGE) -> None:
     timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     with database.transaction() as connection:
         row = connection.execute(
@@ -211,12 +212,12 @@ def mark_stopped(database: Database, run_id: str) -> None:
                 next_status = transition(current, BacktestRunStatus.FAILED).value
                 connection.execute(
                     "UPDATE backtest_runs SET status=?, error_message=? WHERE run_id=? AND status='running'",
-                    (next_status, STOPPED_MESSAGE, run_id),
+                    (next_status, message, run_id),
                 )
         connection.execute(
             "UPDATE backtest_steps SET status='failed', finished_at=COALESCE(finished_at, ?), error_message=? "
             "WHERE run_id=? AND status='running'",
-            (timestamp, STOPPED_MESSAGE, run_id),
+            (timestamp, message, run_id),
         )
         connection.execute(
             "UPDATE backtest_steps SET status='skipped', finished_at=COALESCE(finished_at, ?) "
@@ -278,7 +279,9 @@ def run_isolated(settings: Settings, job: BacktestJobService, run_id: str) -> di
                 _workers.pop(run_id, None)
         result = job.get(run_id)
         if proc.exitcode not in (0,) and result and result.get("status") == "running":
-            mark_stopped(job.database, run_id)
+            with _lock:
+                user_stop = run_id in _stop_requested
+            mark_stopped(job.database, run_id, STOPPED_MESSAGE if user_stop else KILLED_MESSAGE)
             result = job.get(run_id)
         return result
     finally:

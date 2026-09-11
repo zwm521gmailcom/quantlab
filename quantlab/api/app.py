@@ -10,6 +10,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from quantlab import __version__
 from quantlab.config import Settings
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
@@ -68,7 +69,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     settings_service = SettingsService(resolved_settings)
     tushare_download = TushareDownloadService(resolved_settings)
     research_runs = ResearchRunRepository(resolved_settings, resolved_database)
-    app = FastAPI(title="QuantLab", version="0.1.0")
+    app = FastAPI(title="QuantLab", version=__version__)
     app.state.overview_service = overview
     app.state.kline_service = kline
     app.state.factor_data_service = factor_data
