@@ -11,7 +11,13 @@
 .venv/bin/python -m quantlab.cli serve
 ```
 
-默认监听 `0.0.0.0:8765`。本机打开 `http://127.0.0.1:8765/`，局域网其他电脑打开 `http://<局域网IP>:8765/`。`--host` 只接受 `127.0.0.1`、`0.0.0.0` 或 RFC1918，不能绑公网 IP。程序更新仍走 GitHub（`git pull` 后重启）；机器之间的行情和回测产物走 `8766`，不要用 git 同步 `data/` 或 `quantlab_runtime/`。请在防火墙放行 TCP 8765 和 UDP/TCP 8766。
+默认本实例是 A 股，监听 `0.0.0.0:8765`，局域网同步 `8766`。本机打开 `http://127.0.0.1:8765/`，局域网其他电脑打开 `http://<局域网IP>:8765/`。页面端口和同步端口可自行设定：
+
+```bash
+.venv/bin/python -m quantlab.cli serve --asset crypto --port 8775 --lan-port 8776
+```
+
+也可在设置页保存到 `quantlab_runtime/config/instance.json`（重启后生效）。优先级：命令行 `>` `QUANTLAB_ASSET` / `QUANTLAB_PORT` / `QUANTLAB_LAN_PORT` `>` `instance.json` `>` 默认。两个端口必须不同。`--host` 只接受 `127.0.0.1`、`0.0.0.0` 或 RFC1918，不能绑公网 IP。程序更新仍走 GitHub（`git pull` 后重启）；机器之间的行情和回测产物走同步端口，且只发现同一资产版本。不要用 git 同步 `data/` 或 `quantlab_runtime/`。请在防火墙放行你实际使用的页面端口和同步端口。
 
 K 线页位于 `http://127.0.0.1:8765/kline`，只读取已登记的
 `ds_hfq_market_st_v1` 不可变版本。提供以下只读接口：

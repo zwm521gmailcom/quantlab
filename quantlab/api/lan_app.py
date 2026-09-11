@@ -32,6 +32,8 @@ def _hello(settings: Settings) -> dict[str, object]:
         "machine_id": machine.get("machine_id") or "",
         "serial_prefix": int(machine.get("serial_prefix") or 10),
         "hostname": socket.gethostname(),
+        "asset": str(settings.asset),
+        "lan_port": int(settings.lan_port),
     }
 
 

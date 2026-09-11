@@ -10,7 +10,7 @@ from typing import Any
 import uvicorn
 
 from quantlab.api.lan_app import create_lan_app
-from quantlab.services.lan_peers import BEACON_INTERVAL_SECONDS, LAN_PORT, UI_PORT, PeerRegistry, beacon_payload, parse_beacon, self_peer
+from quantlab.services.lan_peers import BEACON_INTERVAL_SECONDS, PeerRegistry, beacon_payload, parse_beacon, self_peer
 from quantlab.services.lan_sync import coordinate_market_sync
 from quantlab.services.machine_identity import load_machine_identity
 
@@ -32,17 +32,19 @@ def start_lan_sidecar(app: Any) -> None:
     stop = threading.Event()
     app.state.lan_stop = stop
     lan_app = create_lan_app(settings, app.state.database)
-    threading.Thread(target=_udp_listen, args=(registry, stop), name="quantlab-lan-udp", daemon=True).start()
+    threading.Thread(target=_udp_listen, args=(settings, registry, stop), name="quantlab-lan-udp", daemon=True).start()
     threading.Thread(target=_udp_beacon, args=(settings, registry, stop), name="quantlab-lan-beacon", daemon=True).start()
-    threading.Thread(target=_lan_http, args=(lan_app,), name="quantlab-lan-http", daemon=True).start()
+    threading.Thread(target=_lan_http, args=(lan_app, int(settings.lan_port)), name="quantlab-lan-http", daemon=True).start()
     threading.Thread(target=_market_scheduler, args=(app, stop), name="quantlab-lan-0400", daemon=True).start()
 
 
-def _udp_listen(registry: PeerRegistry, stop: threading.Event) -> None:
+def _udp_listen(settings: Any, registry: PeerRegistry, stop: threading.Event) -> None:
+    lan_port = int(settings.lan_port)
+    asset = str(settings.asset)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("0.0.0.0", LAN_PORT))
+        sock.bind(("0.0.0.0", lan_port))
         sock.settimeout(1.0)
         while not stop.is_set():
             try:
@@ -55,10 +57,10 @@ def _udp_listen(registry: PeerRegistry, stop: threading.Event) -> None:
                 LOGGER.warning("LAN UDP listen failed", exc_info=True)
                 break
             peer = parse_beacon(raw, addr[0])
-            if peer is not None:
+            if peer is not None and peer.asset == asset:
                 registry.note(peer)
     except OSError:
-        LOGGER.warning("cannot bind UDP %s; LAN discovery will not receive peers", LAN_PORT, exc_info=True)
+        LOGGER.warning("cannot bind UDP %s; LAN discovery will not receive peers", lan_port, exc_info=True)
     finally:
         sock.close()
 
@@ -68,9 +70,15 @@ def _udp_beacon(settings: Any, registry: PeerRegistry, stop: threading.Event) ->
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    lan_port = int(settings.lan_port)
     try:
         while not stop.is_set():
-            peer = self_peer(settings.runtime_root, ui_port=settings.port)
+            peer = self_peer(
+                settings.runtime_root,
+                ui_port=settings.port,
+                lan_port=settings.lan_port,
+                asset=str(settings.asset),
+            )
             if peer.machine_id:
                 registry.note(peer)
             payload = beacon_payload(
@@ -78,10 +86,12 @@ def _udp_beacon(settings: Any, registry: PeerRegistry, stop: threading.Event) ->
                 int(machine.get("serial_prefix") or peer.serial_prefix),
                 host=peer.host,
                 hostname=peer.hostname,
-                ui_port=int(getattr(settings, "port", UI_PORT) or UI_PORT),
+                ui_port=int(settings.port),
+                sync_port=lan_port,
+                asset=str(settings.asset),
             )
             try:
-                sock.sendto(payload, ("255.255.255.255", LAN_PORT))
+                sock.sendto(payload, ("255.255.255.255", lan_port))
             except OSError:
                 LOGGER.debug("LAN beacon send failed", exc_info=True)
             stop.wait(BEACON_INTERVAL_SECONDS)
@@ -89,11 +99,11 @@ def _udp_beacon(settings: Any, registry: PeerRegistry, stop: threading.Event) ->
         sock.close()
 
 
-def _lan_http(lan_app: Any) -> None:
+def _lan_http(lan_app: Any, lan_port: int) -> None:
     try:
-        uvicorn.run(lan_app, host="0.0.0.0", port=LAN_PORT, log_level="warning")
+        uvicorn.run(lan_app, host="0.0.0.0", port=lan_port, log_level="warning")
     except OSError:
-        LOGGER.warning("cannot bind TCP %s; other machines cannot pull files from this host", LAN_PORT, exc_info=True)
+        LOGGER.warning("cannot bind TCP %s; other machines cannot pull files from this host", lan_port, exc_info=True)
 
 
 def _market_scheduler(app: Any, stop: threading.Event) -> None:
@@ -108,12 +118,17 @@ def _market_scheduler(app: Any, stop: threading.Event) -> None:
             registry = app.state.peer_registry
             machine = load_machine_identity(settings.runtime_root)
             self_id = str(machine.get("machine_id") or "")
-            peer = self_peer(settings.runtime_root, ui_port=settings.port)
+            peer = self_peer(
+                settings.runtime_root,
+                ui_port=settings.port,
+                lan_port=settings.lan_port,
+                asset=str(settings.asset),
+            )
             if peer.machine_id:
                 registry.note(peer)
             coordinate_market_sync(
                 settings,
-                registry.online(self_id=self_id),
+                registry.online(self_id=self_id, asset=str(settings.asset)),
                 self_id,
                 self_id=self_id,
             )

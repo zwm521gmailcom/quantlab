@@ -7,7 +7,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
-from quantlab.config import Settings
+from quantlab.config import Settings, asset_label, load_instance_file, save_instance_file
 from quantlab.services.machine_identity import load_machine_identity, save_serial_prefix
 
 DEFAULTS: dict[str, Any] = {"top_n": 10, "rebalance_days": 2, "capital": 1_000_000, "benchmark": "000300.SH", "buy_fee": 0.0003, "sell_fee": 0.0005, "slippage": 0.0005}
@@ -200,6 +200,32 @@ class SettingsService:
         override_file.write_text(json.dumps({"path": stored, "updated_at": __import__("datetime").datetime.now().isoformat()}, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"raw_root": stored, "saved": True}
 
+    def _saved_instance(self) -> dict[str, object]:
+        saved = load_instance_file(self.settings.runtime_root)
+        return {
+            "asset": str(saved.get("asset") or self.settings.asset),
+            "port": int(saved.get("port") if saved.get("port") is not None else self.settings.port),
+            "lan_port": int(saved.get("lan_port") if saved.get("lan_port") is not None else self.settings.lan_port),
+        }
+
+    def _instance_public(self) -> dict[str, object]:
+        saved = self._saved_instance()
+        live_asset = str(self.settings.asset)
+        live_port = int(self.settings.port)
+        live_lan = int(self.settings.lan_port)
+        restart_required = (
+            str(saved["asset"]) != live_asset
+            or int(saved["port"]) != live_port
+            or int(saved["lan_port"]) != live_lan
+        )
+        return {
+            "asset": str(saved["asset"]),
+            "asset_label": asset_label(str(saved["asset"])),
+            "port": int(saved["port"]),
+            "lan_port": int(saved["lan_port"]),
+            "restart_required": restart_required,
+        }
+
     def public(self) -> dict[str, Any]:
         value = self._read()
         return {
@@ -211,7 +237,15 @@ class SettingsService:
                 "raw_root": self.raw_path(),
                 "results_root": self.settings.display_path(self.settings.runtime_root / "results"),
             },
-            "environment": {"host": self.settings.host, "port": self.settings.port, "service": "local-only"},
+            "environment": {
+                "host": self.settings.host,
+                "port": int(self.settings.port),
+                "lan_port": int(self.settings.lan_port),
+                "asset": str(self.settings.asset),
+                "asset_label": self.settings.asset_label,
+                "service": "local-only",
+            },
+            "instance": self._instance_public(),
             "defaults": value["defaults"],
             "compute": value["compute"],
             "lan": value["lan"],
@@ -229,6 +263,7 @@ class SettingsService:
         compute = payload.get("compute", {})
         machine = payload.get("machine", {})
         lan = payload.get("lan", {})
+        instance = payload.get("instance", {})
         if defaults and not isinstance(defaults, dict):
             raise ValueError("unsupported settings: defaults")
         if compute and not isinstance(compute, dict):
@@ -237,15 +272,19 @@ class SettingsService:
             raise ValueError("unsupported settings: machine")
         if lan and not isinstance(lan, dict):
             raise ValueError("unsupported settings: lan")
+        if instance and not isinstance(instance, dict):
+            raise ValueError("unsupported settings: instance")
         defaults = defaults if isinstance(defaults, dict) else {}
         compute = compute if isinstance(compute, dict) else {}
         machine = machine if isinstance(machine, dict) else {}
         lan = lan if isinstance(lan, dict) else {}
+        instance = instance if isinstance(instance, dict) else {}
         unknown = (
             (set(defaults) - set(DEFAULTS))
             | (set(compute) - set(COMPUTE_DEFAULTS))
             | (set(machine) - {"serial_prefix"})
             | (set(lan) - set(LAN_DEFAULTS))
+            | (set(instance) - {"asset", "port", "lan_port"})
         )
         if unknown:
             raise ValueError(f"unsupported settings: {sorted(unknown)}")
@@ -257,6 +296,14 @@ class SettingsService:
         merged_lan = _coerce_lan({**current["lan"], **lan})
         if "serial_prefix" in machine:
             save_serial_prefix(self.settings.runtime_root, machine["serial_prefix"])
+        if instance:
+            current_instance = self._saved_instance()
+            save_instance_file(
+                self.settings.runtime_root,
+                asset=str(instance.get("asset", current_instance["asset"])),
+                port=int(instance.get("port", current_instance["port"])),
+                lan_port=int(instance.get("lan_port", current_instance["lan_port"])),
+            )
         self._write(merged, merged_compute, merged_lan)
         return self.public()
 

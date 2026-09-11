@@ -24,7 +24,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     serve = subparsers.add_parser("serve")
     _add_root_arguments(serve)
     serve.add_argument("--host", default="0.0.0.0")
-    serve.add_argument("--port", type=int, default=8765)
+    serve.add_argument("--port", type=int, help="页面端口，默认 8765，或读取 instance.json")
+    serve.add_argument("--lan-port", dest="lan_port", type=int, help="局域网同步端口，默认 8766，须与页面端口不同")
+    serve.add_argument("--asset", help="本实例资产：a_share（A股）或 crypto（数字货币）")
     init_db = subparsers.add_parser("init-db")
     _add_root_arguments(init_db)
     snapshot = subparsers.add_parser("snapshot-data-baseline")
@@ -42,7 +44,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     extra: dict[str, object] = {}
     if args.command == "serve":
         extra["host"] = args.host
-        extra["port"] = args.port
+        if args.port is not None:
+            extra["port"] = args.port
+        if getattr(args, "lan_port", None) is not None:
+            extra["lan_port"] = args.lan_port
+        if getattr(args, "asset", None):
+            extra["asset"] = args.asset
     try:
         settings = Settings(**explicit_roots, **extra)
     except ValueError as error:

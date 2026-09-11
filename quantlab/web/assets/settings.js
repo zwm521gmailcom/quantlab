@@ -27,6 +27,12 @@ async function load() {
   if ($("machine-id")) $("machine-id").value = machine.machine_id || "";
   if ($("serial-prefix")) $("serial-prefix").value = machine.serial_prefix == null ? "" : String(machine.serial_prefix);
   if ($("lan-market-0400")) $("lan-market-0400").checked = !!(x.lan && x.lan.market_sync_at_0400);
+  if ($("instance-asset")) $("instance-asset").value = (x.instance && x.instance.asset) || "a_share";
+  if ($("instance-port")) $("instance-port").value = x.instance && x.instance.port != null ? String(x.instance.port) : "";
+  if ($("instance-lan-port")) $("instance-lan-port").value = x.instance && x.instance.lan_port != null ? String(x.instance.lan_port) : "";
+  if ($("instance-saved") && x.instance && x.instance.restart_required) {
+    $("instance-saved").textContent = "已保存，重启 QuantLab 后切换资产与端口";
+  }
 }
 $("settings-form").onsubmit = async e => {
   e.preventDefault();
@@ -76,6 +82,21 @@ $("serial-prefix-save").onclick = async () => {
   $("serial-prefix-saved").textContent = r.ok ? "已保存（下一次开始回测生效）" : "保存失败，请填 10–99";
   if (r.ok) load();
 };
+if ($("instance-save")) $("instance-save").onclick = async () => {
+  const r = await fetch("/api/settings", {
+    method: "PUT",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({
+      instance: {
+        asset: $("instance-asset").value,
+        port: Number($("instance-port").value),
+        lan_port: Number($("instance-lan-port").value),
+      },
+    }),
+  });
+  $("instance-saved").textContent = r.ok ? "已保存，重启 QuantLab 后切换资产与端口" : "保存失败，两个端口必须不同且在 1–65535";
+  if (r.ok) load();
+};
 $("scan").onclick = async () => {
   const x = await (await fetch("/api/settings/scan", {method: "POST"})).json();
   $("scan-result").textContent = ` 已扫描 ${x.roots.length} 个目录`;
@@ -113,14 +134,18 @@ function lanStatus(text, ok) {
   node.classList.toggle("error", !ok);
 }
 
-function renderPeers(peers) {
+const ASSET_LABELS = {a_share: "A股", crypto: "数字货币"};
+function renderPeers(peers, meta) {
   const root = $("lan-peers");
   if (!root) return;
   root.replaceChildren();
+  meta = meta || {};
   if (!peers.length) {
     const empty = document.createElement("p");
     empty.className = "lan-empty";
-    empty.textContent = "还没有发现开着的 QuantLab。请确认各机已用默认地址启动（监听 0.0.0.0:8765），且防火墙放行 TCP 8765 和 UDP/TCP 8766。";
+    const ui = meta.port != null ? meta.port : 8765;
+    const lan = meta.lan_port != null ? meta.lan_port : 8766;
+    empty.textContent = `还没有发现同一资产的 QuantLab。请确认各机已启动（本机监听 0.0.0.0:${ui}），且防火墙放行 TCP ${ui} 和 UDP/TCP ${lan}。`;
     root.appendChild(empty);
     return;
   }
@@ -128,7 +153,7 @@ function renderPeers(peers) {
   table.className = "lan-peers";
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
-  for (const label of ["主机", "机器码", "地址", "序号前缀", "页面", ""]) {
+  for (const label of ["主机", "机器码", "资产", "地址", "序号前缀", "页面", ""]) {
     const th = document.createElement("th");
     th.textContent = label;
     headRow.appendChild(th);
@@ -142,6 +167,8 @@ function renderPeers(peers) {
     hostname.textContent = peer.self ? `${peer.hostname}（本机）` : String(peer.hostname || "");
     const machine = document.createElement("td");
     machine.textContent = String(peer.machine_id || "");
+    const asset = document.createElement("td");
+    asset.textContent = ASSET_LABELS[peer.asset] || String(peer.asset || "");
     const address = document.createElement("td");
     address.textContent = `${peer.host}:${peer.port}`;
     const prefix = document.createElement("td");
@@ -159,7 +186,7 @@ function renderPeers(peers) {
     button.textContent = "以此机为源头同步行情";
     button.addEventListener("click", () => syncMarket(peer.machine_id));
     action.appendChild(button);
-    row.append(hostname, machine, address, prefix, page, action);
+    row.append(hostname, machine, asset, address, prefix, page, action);
     body.appendChild(row);
   }
   table.appendChild(body);
@@ -171,7 +198,7 @@ async function refreshPeers() {
   try {
     const r = await fetch("/api/lan/peers");
     const x = await r.json();
-    renderPeers(x.peers || []);
+    renderPeers(x.peers || [], x);
   } catch {
     lanStatus("无法读取局域网机器列表", false);
   }

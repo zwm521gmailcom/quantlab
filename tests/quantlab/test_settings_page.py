@@ -132,6 +132,11 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert "8766" in page.text
     assert "防火墙" in page.text
     assert "局域网" in page.text
+    assert "资产版本与端口" in page.text
+    assert 'id="instance-asset"' in page.text
+    assert 'id="instance-port"' in page.text
+    assert 'id="instance-lan-port"' in page.text
+    assert 'id="instance-save"' in page.text
     assert "GitHub" in page.text
     assert "git pull" in page.text
     assert "打开页面" in page.text or "打开页面" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
@@ -156,12 +161,43 @@ def test_settings_can_update_serial_prefix_but_not_machine_id(tmp_path: Path) ->
     assert api.get("/api/settings").json()["machine"]["serial_prefix"] == 42
 
 
+def test_settings_persist_asset_and_ports_for_next_start(tmp_path: Path) -> None:
+    api = client(tmp_path)
+    body = api.get("/api/settings").json()
+    assert body["instance"]["asset"] == "a_share"
+    assert body["instance"]["port"] == 8765
+    assert body["instance"]["lan_port"] == 8766
+    assert body["instance"]["restart_required"] is False
+    saved = api.put(
+        "/api/settings",
+        json={"instance": {"asset": "crypto", "port": 8775, "lan_port": 8776}},
+    )
+    assert saved.status_code == 200
+    instance = saved.json()["instance"]
+    assert instance["asset"] == "crypto"
+    assert instance["port"] == 8775
+    assert instance["lan_port"] == 8776
+    assert instance["restart_required"] is True
+    assert saved.json()["environment"]["port"] == 8765
+    assert api.get("/api/settings").json()["instance"]["asset_label"] == "数字货币"
+    reset = api.post("/api/settings/reset")
+    assert reset.status_code == 200
+    assert reset.json()["instance"]["asset"] == "crypto"
+    assert reset.json()["instance"]["port"] == 8775
+    assert reset.json()["instance"]["lan_port"] == 8776
+    same = api.put("/api/settings", json={"instance": {"port": 8775, "lan_port": 8775}})
+    assert same.status_code == 400
+
+
 def test_lan_peers_include_self_and_market_sync_rejects_unknown_machine(tmp_path: Path) -> None:
     api = client(tmp_path)
     listed = api.get("/api/lan/peers")
     assert listed.status_code == 200
     peers = listed.json()["peers"]
+    assert listed.json()["port"] == 8765
     assert listed.json()["lan_port"] == 8766
+    assert listed.json()["asset"] == "a_share"
+    assert listed.json()["asset_label"] == "A股"
     assert len(peers) == 1
     assert peers[0]["self"] is True
     assert peers[0]["machine_id"] == api.get("/api/settings").json()["machine"]["machine_id"]

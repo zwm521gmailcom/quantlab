@@ -11,9 +11,11 @@
 
 A 股回测把 `stock_scope`、涨跌停、ST、沪深代码、SSE 日历、`000300.SH` 写进了提交校验和工作台默认。数字货币只有价格、市值、份数。塞进同一进程，不是加一张表就完，而是每条默认都要分叉，还容易把已有回测跑空。
 
-另起一套的含义是：**另一份工作目录 + 另一份 `data/` + 另一份 `quantlab_runtime/` + 另一组端口。** 不是在同一目录再开一个 `serve`，也不是两套程序去 LAN 互相同步 `data/`。
+另起一套的含义是：**另一份工作目录 + 另一份 `data/` + 另一份 `quantlab_runtime/` + 另一组端口，并且程序上标明本实例 `asset`。** 不是在同一目录再开一个 `serve`，也不是两套程序去 LAN 互相同步 `data/`。
 
 A 股仓库保持现状（含已修好的 `init-db` path 闸门）。数字货币在独立目录里改过滤、日历、代码规则和宽表契约。
+
+每个进程启动时确定资产版本：`a_share`（A股）或 `crypto`（数字货币）。默认 A 股、页面 `8765`、同步 `8766`。设置页或 `quantlab_runtime/config/instance.json` 可改；命令行 `--asset` / `--port` / `--lan-port` 和环境变量 `QUANTLAB_ASSET` / `QUANTLAB_PORT` / `QUANTLAB_LAN_PORT` 可覆盖。局域网 beacon 带 `asset`，只发现同一资产；旧宣告无该字段视为 A 股。
 
 ## 第一资产现状
 
@@ -171,22 +173,24 @@ metadata.default_benchmark: BTC-USDT   # 入库时按实际基准改
   quantlab_runtime/
 ```
 
-启动币实例时显式分开根目录和端口：
+启动币实例时显式标明资产，并分开根目录和端口：
 
 ```bash
 quantlab serve --project-root ~/quantlab-crypto \
   --data-root data --runtime-root quantlab_runtime \
-  --host 0.0.0.0 --port 8775
+  --host 0.0.0.0 --asset crypto --port 8775 --lan-port 8776
 ```
 
-LAN 的 8766 只给「同一资产的多台机器」互相同步。A 股实例和币实例不要点对方的「同步行情」：相对路径都叫 `canonical.parquet` 时会互相覆盖。
+也可在该目录的设置页保存资产与端口，写入 `quantlab_runtime/config/instance.json`，下次 `quantlab serve` 即可。页面端口和同步端口必须不同。
+
+LAN 只给「同一资产的多台机器」互相同步（宣告里带 `asset`）。A 股实例和币实例不要点对方的「同步行情」：相对路径都叫 `canonical.parquet` 时会互相覆盖。
 
 代码上优先 **复制目录后只改币这一份**，不要从 A 股 `main` 里开 `market_scope` 分叉。两套程序会分叉，这是有意的：先保 A 股回测不被改坏。以后若要合并，再单独做，不作为入库前提。
 
 ## 建议实施顺序
 
 1. A 股 QuantLab 维持现状，不再为数字货币改回测默认。
-2. 复制或单独 clone 到 `quantlab-crypto/`，换端口和 `quantlab_runtime/`，不要共用 A 股的库和 `data/`。
+2. 复制或单独 clone 到 `quantlab-crypto/`，设 `--asset crypto` 并换端口和 `quantlab_runtime/`，不要共用 A 股的库和 `data/`。
 3. 在币目录里用最小字段做自己的 `canonical.parquet`，关掉涨跌停/ST/沪深范围（只改这一份代码）。
 4. 两套实例不要互相点 LAN「同步行情」。
 
