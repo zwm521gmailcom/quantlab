@@ -131,6 +131,16 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert 'id="lan-peers"' in page.text
     assert 'id="lan-sync-results"' in page.text
     assert 'id="lan-sync-market"' in page.text
+    assert 'id="lan-progress-results"' in page.text
+    assert 'id="lan-progress-market"' in page.text
+    assert "总进度" in page.text
+    assert 'data-role="percent"' in page.text
+    js = Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "/api/lan/sync/progress" in js
+    assert "data-peer-progress" in js
+    assert "总进度" in js
+    assert "quantlab-lan-sync-progress" in js
+    assert "sessionStorage" in js
     assert 'id="lan-market-0400"' in page.text
     assert "8766" in page.text
     assert "防火墙" in page.text
@@ -215,3 +225,20 @@ def test_lan_peers_include_self_and_market_sync_rejects_unknown_machine(tmp_path
     results = api.post("/api/lan/sync/results")
     assert results.status_code == 200
     assert results.json()["pulled_runs"] == []
+    idle = api.get("/api/lan/sync/progress")
+    assert idle.status_code == 200
+    body = idle.json()
+    assert body["status"] in {"completed", "idle"}
+    assert "percent" in body
+    assert "done" in body
+    assert "total" in body
+    assert body["percent"] == 100 or body["status"] == "idle"
+    local_progress = api.get("/api/lan/sync/progress")
+    assert local_progress.json()["kind"] in {"market", "results", None}
+    from quantlab.services.lan_sync import sync_progress
+
+    sync_progress().reset()
+    restored = api.get("/api/lan/sync/progress").json()
+    assert restored["status"] == "completed"
+    assert restored["percent"] == 100
+    assert restored["kind"] in {"market", "results"}

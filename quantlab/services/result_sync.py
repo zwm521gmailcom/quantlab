@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import shutil
 from datetime import datetime, timezone
@@ -22,6 +23,10 @@ _ARTIFACT_FILES = (
     ("equity_curve", "equity_curve.json", "权益曲线"),
 )
 _DELETED_DIR_NAME = "_deleted"
+PLANS_DIR_NAME = "_plans"
+_PLAN_SNAPSHOT_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+_IMPORT_PLAN_STATUSES = {"draft", "completed", "stopped"}
+_IMPORT_ITEM_STATUSES = {"pending", "completed", "failed", "skipped"}
 
 
 def _utc_now() -> str:
@@ -65,6 +70,17 @@ def _row_token(row: Any) -> str:
         return str(row["submission_token"] or "")
     except (KeyError, IndexError, TypeError):
         return ""
+
+
+def validate_plan_snapshot_id(plan_id: str) -> str:
+    text = str(plan_id or "").strip()
+    if not text or ".." in text or not _PLAN_SNAPSHOT_ID.fullmatch(text):
+        raise ValueError("invalid plan id")
+    return text
+
+
+def plans_root(settings: Settings) -> Path:
+    return Path(settings.runtime_root) / "results" / PLANS_DIR_NAME
 
 
 def deleted_root(settings: Settings) -> Path:
@@ -193,6 +209,13 @@ def write_run_manifest(settings: Settings, database: Database, run_id: str) -> P
             "FROM backtest_steps WHERE run_id=? ORDER BY ordinal",
             (run_id,),
         ).fetchall()
+        plan_row = connection.execute(
+            "SELECT i.item_id, i.plan_id, i.sort_order, i.name AS item_name, "
+            "p.name AS plan_name, p.status AS plan_status, p.closed "
+            "FROM backtest_plan_items i JOIN backtest_plans p ON p.plan_id = i.plan_id "
+            "WHERE i.run_id=? ORDER BY i.updated_at DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
     try:
         config = json.loads(row["config_json"] or "{}")
     except (TypeError, json.JSONDecodeError):
@@ -223,6 +246,16 @@ def write_run_manifest(settings: Settings, database: Database, run_id: str) -> P
         "steps": [dict(step) for step in steps],
         "artifacts": artifacts,
     }
+    if plan_row is not None:
+        payload["plan"] = {
+            "plan_id": str(plan_row["plan_id"]),
+            "plan_name": str(plan_row["plan_name"] or ""),
+            "plan_status": str(plan_row["plan_status"] or ""),
+            "closed": bool(plan_row["closed"]),
+            "item_id": str(plan_row["item_id"]),
+            "item_name": str(plan_row["item_name"] or ""),
+            "sort_order": int(plan_row["sort_order"] or 0),
+        }
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "run.json"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -535,10 +568,209 @@ def attach_imported_runs_to_plans(database: Database) -> int:
     return attached
 
 
+def write_plan_snapshot(settings: Settings, database: Database, plan_id: str) -> Path | None:
+    try:
+        plan_id = validate_plan_snapshot_id(plan_id)
+    except ValueError:
+        return None
+    with database.connect() as connection:
+        row = connection.execute("SELECT * FROM backtest_plans WHERE plan_id=?", (plan_id,)).fetchone()
+        if row is None:
+            return None
+        items = connection.execute(
+            "SELECT * FROM backtest_plan_items WHERE plan_id=? ORDER BY sort_order, item_id",
+            (plan_id,),
+        ).fetchall()
+    payload = {
+        "schema": 1,
+        "plan_id": plan_id,
+        "name": str(row["name"] or ""),
+        "status": str(row["status"] or "draft"),
+        "closed": bool(row["closed"]),
+        "created_at": str(row["created_at"] or ""),
+        "updated_at": str(row["updated_at"] or ""),
+        "items": [
+            {
+                "item_id": str(item["item_id"]),
+                "sort_order": int(item["sort_order"] or 0),
+                "selected": bool(item["selected"]),
+                "name": str(item["name"] or ""),
+                "config": _json_object(item["config_json"]),
+                "status": str(item["status"] or "pending"),
+                "run_id": str(item["run_id"] or "").strip() or None,
+                "error_message": item["error_message"],
+                "started_at": item["started_at"],
+                "finished_at": item["finished_at"],
+                "created_at": str(item["created_at"] or ""),
+                "updated_at": str(item["updated_at"] or ""),
+            }
+            for item in items
+        ],
+    }
+    directory = settings.require_write_path(settings.runtime_root / "results" / PLANS_DIR_NAME)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = settings.require_write_path(directory / f"{plan_id}.json")
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def delete_plan_snapshot(settings: Settings, plan_id: str) -> None:
+    try:
+        plan_id = validate_plan_snapshot_id(plan_id)
+    except ValueError:
+        return
+    path = Path(settings.runtime_root) / "results" / PLANS_DIR_NAME / f"{plan_id}.json"
+    if path.is_file():
+        path.unlink()
+
+
+def export_plan_snapshots(settings: Settings, database: Database) -> int:
+    with database.connect() as connection:
+        rows = connection.execute("SELECT plan_id FROM backtest_plans").fetchall()
+    written = 0
+    for row in rows:
+        if write_plan_snapshot(settings, database, str(row["plan_id"])) is not None:
+            written += 1
+    return written
+
+
+def _imported_plan_status(raw: Any) -> str:
+    status = str(raw or "draft").strip()
+    if status == "running":
+        return "stopped"
+    if status in _IMPORT_PLAN_STATUSES:
+        return status
+    return "draft"
+
+
+def _imported_item_status(raw: Any) -> str:
+    status = str(raw or "pending").strip()
+    if status in {"queued", "running"}:
+        return "pending"
+    if status in _IMPORT_ITEM_STATUSES:
+        return status
+    return "pending"
+
+
+def import_plan_snapshots(settings: Settings, database: Database) -> list[str]:
+    root = plans_root(settings)
+    if not root.is_dir():
+        return []
+    imported: list[str] = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            plan_id = validate_plan_snapshot_id(path.stem)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (ValueError, OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("plan_id") or path.stem) != plan_id:
+            plan_id = str(payload.get("plan_id") or plan_id)
+            try:
+                plan_id = validate_plan_snapshot_id(plan_id)
+            except ValueError:
+                continue
+        name = str(payload.get("name") or "").strip() or "同步计划"
+        status = _imported_plan_status(payload.get("status"))
+        closed = 1 if payload.get("closed") else 0
+        created_at = str(payload.get("created_at") or _utc_now())
+        updated_at = str(payload.get("updated_at") or created_at)
+        raw_items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        with database.transaction() as connection:
+            existing = connection.execute(
+                "SELECT status, updated_at FROM backtest_plans WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if existing is None:
+                connection.execute(
+                    "INSERT INTO backtest_plans(plan_id, name, status, closed, created_at, updated_at) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (plan_id, name, status, closed, created_at, updated_at),
+                )
+            elif str(existing["status"]) != "running":
+                connection.execute(
+                    "UPDATE backtest_plans SET name=?, status=?, closed=?, updated_at=? WHERE plan_id=?",
+                    (name, status, closed, updated_at, plan_id),
+                )
+            local_running = existing is not None and str(existing["status"]) == "running"
+            for index, item in enumerate(raw_items):
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    item_id = validate_plan_snapshot_id(str(item.get("item_id") or ""))
+                except ValueError:
+                    continue
+                item_name = str(item.get("name") or "").strip() or item_id
+                item_status = _imported_item_status(item.get("status"))
+                run_id = str(item.get("run_id") or "").strip() or None
+                if run_id:
+                    try:
+                        run_id = validate_run_id(run_id)
+                    except ValueError:
+                        run_id = None
+                config = item.get("config") if isinstance(item.get("config"), dict) else {}
+                sort_order = int(item.get("sort_order") or index + 1)
+                selected = 1 if item.get("selected", True) else 0
+                found = connection.execute(
+                    "SELECT status, run_id FROM backtest_plan_items WHERE item_id=?", (item_id,)
+                ).fetchone()
+                stamp = str(item.get("updated_at") or updated_at)
+                if found is None:
+                    connection.execute(
+                        "INSERT INTO backtest_plan_items("
+                        "item_id, plan_id, sort_order, selected, name, config_json, status, "
+                        "run_id, error_message, started_at, finished_at, created_at, updated_at) "
+                        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (
+                            item_id,
+                            plan_id,
+                            sort_order,
+                            selected,
+                            item_name,
+                            json.dumps(config, ensure_ascii=False),
+                            item_status,
+                            run_id,
+                            item.get("error_message"),
+                            item.get("started_at"),
+                            item.get("finished_at"),
+                            str(item.get("created_at") or created_at),
+                            stamp,
+                        ),
+                    )
+                    continue
+                if local_running or str(found["status"]) in {"queued", "running"}:
+                    continue
+                local_run = str(found["run_id"] or "").strip()
+                if local_run and item_status in {"pending", "failed"} and str(found["status"]) == "completed":
+                    continue
+                connection.execute(
+                    "UPDATE backtest_plan_items SET sort_order=?, selected=?, name=?, config_json=?, "
+                    "status=?, run_id=COALESCE(?, run_id), error_message=?, started_at=?, finished_at=?, "
+                    "updated_at=? WHERE item_id=?",
+                    (
+                        sort_order,
+                        selected,
+                        item_name,
+                        json.dumps(config, ensure_ascii=False),
+                        item_status,
+                        run_id,
+                        item.get("error_message"),
+                        item.get("started_at"),
+                        item.get("finished_at"),
+                        stamp,
+                        item_id,
+                    ),
+                )
+        imported.append(plan_id)
+    return imported
+
+
 def sync_result_catalog(settings: Settings, database: Database) -> list[str]:
     apply_deleted_markers(settings, database)
     backfill_missing_machine_ids(settings, database)
     export_missing_manifests(settings, database)
     imported = import_result_manifests(settings, database)
+    import_plan_snapshots(settings, database)
     attach_imported_runs_to_plans(database)
+    export_plan_snapshots(settings, database)
     return imported

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from fastapi.testclient import TestClient
+
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
 from quantlab.services.machine_identity import load_machine_identity
@@ -332,3 +334,109 @@ def test_sync_applies_peer_tombstone_and_removes_local_run(tmp_path: Path) -> No
     assert marker.is_file()
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone()[0] == 0
+
+
+def test_plan_snapshot_is_imported_into_empty_database(tmp_path: Path) -> None:
+    from quantlab.services.result_sync import PLANS_DIR_NAME, sync_result_catalog
+
+    settings = _settings(tmp_path)
+    database = Database(settings.database_path)
+    database.initialize()
+    run_id = "20260910-120000-9909"
+    _write_completed_manifest(settings, run_id, machine_id="d23135c5")
+    plan_id = "plan-syncedplan01"
+    folder = settings.runtime_root / "results" / PLANS_DIR_NAME
+    folder.mkdir(parents=True)
+    (folder / f"{plan_id}.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plan_id": plan_id,
+                "name": "对端计划",
+                "status": "completed",
+                "closed": False,
+                "created_at": "2026-09-10T12:00:00+00:00",
+                "updated_at": "2026-09-10T12:01:00+00:00",
+                "items": [
+                    {
+                        "item_id": "item-synceditem1",
+                        "sort_order": 1,
+                        "selected": True,
+                        "name": "同步回测",
+                        "config": {"name": "同步回测", "top_n": 4},
+                        "status": "completed",
+                        "run_id": run_id,
+                        "error_message": None,
+                        "started_at": "2026-09-10T12:00:00+00:00",
+                        "finished_at": "2026-09-10T12:01:00+00:00",
+                        "created_at": "2026-09-10T12:00:00+00:00",
+                        "updated_at": "2026-09-10T12:01:00+00:00",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    sync_result_catalog(settings, database)
+    with database.connect() as connection:
+        plan = connection.execute("SELECT name, status FROM backtest_plans WHERE plan_id=?", (plan_id,)).fetchone()
+        item = connection.execute(
+            "SELECT name, status, run_id FROM backtest_plan_items WHERE plan_id=?", (plan_id,)
+        ).fetchone()
+    assert plan is not None
+    assert plan["name"] == "对端计划"
+    assert plan["status"] == "completed"
+    assert item["name"] == "同步回测"
+    assert item["status"] == "completed"
+    assert item["run_id"] == run_id
+
+
+def test_creating_a_plan_writes_snapshot_file(tmp_path: Path) -> None:
+    from quantlab.api.app import create_app
+    from quantlab.services.result_sync import PLANS_DIR_NAME
+    from tests.quantlab.test_backtest_workbench import config, setup_env
+
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    created = client.post(
+        "/api/backtest-plans",
+        json={"name": "本机计划", "items": [{"name": "一笔", "config": config("a")}]},
+    )
+    assert created.status_code == 201
+    plan_id = created.json()["plan_id"]
+    path = settings.runtime_root / "results" / PLANS_DIR_NAME / f"{plan_id}.json"
+    assert path.is_file()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["name"] == "本机计划"
+    assert payload["items"][0]["name"] == "一笔"
+
+
+def test_list_plans_imports_snapshot_written_after_startup(tmp_path: Path) -> None:
+    from quantlab.api.app import create_app
+    from quantlab.services.result_sync import PLANS_DIR_NAME
+    from tests.quantlab.test_backtest_workbench import setup_env
+
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    assert client.get("/api/backtest-plans").json()["items"] == []
+    plan_id = "plan-lateimport01"
+    folder = settings.runtime_root / "results" / PLANS_DIR_NAME
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{plan_id}.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "plan_id": plan_id,
+                "name": "同步后出现",
+                "status": "completed",
+                "closed": False,
+                "created_at": "2026-09-11T04:00:00+00:00",
+                "updated_at": "2026-09-11T04:00:00+00:00",
+                "items": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    names = [plan["name"] for plan in client.get("/api/backtest-plans").json()["items"]]
+    assert "同步后出现" in names

@@ -187,6 +187,10 @@ def test_settings_form_has_responsive_layout_hooks() -> None:
     assert ".settings-actions" in css
     assert ".settings-help" in css
     assert "minmax(0, 1fr)" in css
+    assert ".lan-sync-progress" in css
+    assert ".lan-sync-progress-fill" in css
+    assert 'id="lan-progress-results"' in html
+    assert 'id="lan-progress-market"' in html
 
 
 def test_all_primary_pages_declare_the_grouped_sidebar_contract() -> None:

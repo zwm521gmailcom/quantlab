@@ -5,7 +5,7 @@ from pathlib import Path
 
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
-from quantlab.services.lan_sync import LocalLanSource, pull_market, sync_results
+from quantlab.services.lan_sync import LocalLanSource, SyncProgress, bind_sync_progress, pull_market, pull_results, sync_progress, sync_results
 from quantlab.services.machine_identity import load_machine_identity
 from quantlab.services.result_archive import ResultArchiveService
 
@@ -184,3 +184,149 @@ def test_coordinate_market_self_source_does_not_rewrite_local(tmp_path: Path) ->
     )
     assert stats["local"]["copied"] == 0
     assert (left.data_root / "keep.parquet").read_bytes() == b"mine"
+    snap = sync_progress().snapshot()
+    assert snap["status"] == "completed"
+    assert snap["kind"] == "market"
+    assert snap["percent"] == 100
+    assert snap["total"] >= 0
+    assert snap["done"] == snap["total"]
+
+
+def test_sync_progress_reports_counts_and_percent() -> None:
+    progress = SyncProgress()
+    assert progress.snapshot()["status"] == "idle"
+    assert progress.snapshot()["percent"] == 0
+    progress.start("market", message="正在同步行情…", source_machine_id="peer-1")
+    progress.update(done=1, total=4, detail="raw/a.parquet")
+    snap = progress.snapshot()
+    assert snap["status"] == "running"
+    assert snap["kind"] == "market"
+    assert snap["done"] == 1
+    assert snap["total"] == 4
+    assert snap["percent"] == 25
+    assert snap["source_machine_id"] == "peer-1"
+    progress.tick(detail="raw/b.parquet")
+    assert progress.snapshot()["done"] == 2
+    assert progress.snapshot()["percent"] == 50
+    progress.finish(message="行情已同步")
+    done = progress.snapshot()
+    assert done["status"] == "completed"
+    assert done["done"] == 4
+    assert done["percent"] == 100
+
+
+def test_pull_market_ticks_each_file(tmp_path: Path) -> None:
+    left = _settings(tmp_path / "a")
+    right = _settings(tmp_path / "b")
+    (right.data_root / "raw").mkdir(parents=True)
+    (right.data_root / "raw" / "x.parquet").write_bytes(b"new")
+    (right.data_root / "raw" / "y.parquet").write_bytes(b"yy")
+    (left.data_root / "raw").mkdir(parents=True)
+    (left.data_root / "raw" / "x.parquet").write_bytes(b"old")
+    percents: list[int] = []
+
+    class Recording(SyncProgress):
+        def tick(self, *, detail: str = "") -> None:
+            super().tick(detail=detail)
+            percents.append(int(self.snapshot()["percent"]))
+
+    progress = Recording()
+    progress.start("market")
+    pull_market(left, LocalLanSource(right), progress=progress)
+    assert percents[-1] == 100
+    assert progress.snapshot()["done"] == progress.snapshot()["total"]
+    assert progress.snapshot()["total"] >= 2
+
+
+def test_pull_results_ticks_copied_files(tmp_path: Path) -> None:
+    dest = _settings(tmp_path / "dst")
+    source = _settings(tmp_path / "src")
+    run_id = "20260910-120000-7707"
+    folder = source.runtime_root / "results" / run_id
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text(
+        json.dumps({"run_id": run_id, "status": "completed", "config": {"name": "对端"}}),
+        encoding="utf-8",
+    )
+    (folder / "metrics.json").write_text("{}", encoding="utf-8")
+    progress = SyncProgress()
+    progress.start("results")
+    stats = pull_results(dest, LocalLanSource(source), progress=progress)
+    assert run_id in stats["pulled_runs"]
+    snap = progress.snapshot()
+    assert snap["total"] >= 2
+    assert snap["done"] == snap["total"]
+    assert snap["percent"] == 100
+
+
+def test_coordinate_results_fills_global_progress(tmp_path: Path) -> None:
+    from quantlab.services.lan_sync import coordinate_results_sync
+
+    left = _settings(tmp_path / "a")
+    right = _settings(tmp_path / "b")
+    load_machine_identity(left.runtime_root)
+    run_id = "20260910-120000-8808"
+    folder = right.runtime_root / "results" / run_id
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text(
+        json.dumps({"run_id": run_id, "status": "completed", "config": {"name": "对端"}}),
+        encoding="utf-8",
+    )
+    (folder / "metrics.json").write_text("{}", encoding="utf-8")
+    database = Database(left.database_path)
+    database.initialize()
+    coordinate_results_sync(
+        left,
+        database,
+        [{"machine_id": "peer", "host": "peer-host", "port": 8766, "self": False}],
+        self_host="10.0.0.1",
+        source_for=lambda host, port: LocalLanSource(right),
+        ask_peer=lambda peer, sources: {},
+    )
+    snap = sync_progress().snapshot()
+    assert snap["kind"] == "results"
+    assert snap["status"] == "completed"
+    assert snap["percent"] == 100
+    assert snap["done"] == snap["total"]
+    assert snap["total"] >= 1
+
+
+def test_pull_results_copies_plan_snapshot_even_when_run_already_exists(tmp_path: Path) -> None:
+    from quantlab.services.result_sync import PLANS_DIR_NAME
+
+    dest = _settings(tmp_path / "dst")
+    source = _settings(tmp_path / "src")
+    run_id = "20260910-120000-6611"
+    for settings in (dest, source):
+        folder = settings.runtime_root / "results" / run_id
+        folder.mkdir(parents=True)
+        (folder / "run.json").write_text(
+            json.dumps({"run_id": run_id, "status": "completed", "config": {"name": "已有"}}),
+            encoding="utf-8",
+        )
+    plan_id = "plan-frompeer001"
+    plan_dir = source.runtime_root / "results" / PLANS_DIR_NAME
+    plan_dir.mkdir(parents=True)
+    payload = {"schema": 1, "plan_id": plan_id, "name": "对端计划", "status": "completed", "items": []}
+    (plan_dir / f"{plan_id}.json").write_text(json.dumps(payload), encoding="utf-8")
+    stats = pull_results(dest, LocalLanSource(source))
+    assert plan_id in stats["pulled_plans"]
+    copied = dest.runtime_root / "results" / PLANS_DIR_NAME / f"{plan_id}.json"
+    assert copied.is_file()
+    assert json.loads(copied.read_text(encoding="utf-8"))["name"] == "对端计划"
+
+
+def test_sync_progress_survives_reset_via_file(tmp_path: Path) -> None:
+    left = _settings(tmp_path / "p")
+    progress = SyncProgress()
+    bind_sync_progress(left, progress)
+    progress.start("results", message="正在同步回测产物…")
+    progress.update(done=3, total=10)
+    progress.finish(message="回测产物已同步")
+    sync_progress().reset()
+    restored = bind_sync_progress(left)
+    snap = restored.snapshot()
+    assert snap["status"] == "completed"
+    assert snap["kind"] == "results"
+    assert snap["percent"] == 100
+    assert snap["message"] == "回测产物已同步"

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>QuantLab · 系统设置</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260911navadapt3">
+    <link rel="stylesheet" href="/assets/app.css?v=20260911lanprogress">
   </head>
   <body>
     <div class="shell">
@@ -68,9 +68,31 @@
           <h3>局域网</h3>
           <p class="settings-help">三台都要监听局域网，不能只绑 127.0.0.1。页面端口和同步端口在上面自行设定；默认是 <code>0.0.0.0:8765</code> 和 UDP/TCP 8766，请在防火墙放行这两个端口。列表只显示同一资产版本的机器。程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启。没开 QuantLab 的机器不会出现。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。A 股实例不要和数字货币实例互相点同步。</p>
           <div id="lan-peers"></div>
-          <div class="settings-actions">
-            <button id="lan-sync-results" type="button">同步回测产物</button>
-            <button id="lan-sync-market" type="button">开始同步行情</button>
+          <div class="lan-sync-actions">
+            <div class="lan-sync-item">
+              <button id="lan-sync-results" type="button">同步回测产物</button>
+              <div id="lan-progress-results" class="lan-sync-progress">
+                <div class="lan-sync-progress-head">
+                  <span>总进度 <strong data-role="counts">0 / 0</strong></span>
+                  <strong data-role="percent">0%</strong>
+                </div>
+                <div class="lan-sync-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <span class="lan-sync-progress-fill" data-role="fill"></span>
+                </div>
+              </div>
+            </div>
+            <div class="lan-sync-item">
+              <button id="lan-sync-market" type="button">开始同步行情</button>
+              <div id="lan-progress-market" class="lan-sync-progress">
+                <div class="lan-sync-progress-head">
+                  <span>总进度 <strong data-role="counts">0 / 0</strong></span>
+                  <strong data-role="percent">0%</strong>
+                </div>
+                <div class="lan-sync-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                  <span class="lan-sync-progress-fill" data-role="fill"></span>
+                </div>
+              </div>
+            </div>
           </div>
           <label class="lan-check">
             <input id="lan-market-0400" type="checkbox">
@@ -140,7 +162,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260911asset2"></script>
+    <script src="/assets/settings.js?v=20260911lanprogress2"></script>
     <script src="/assets/nav.js?v=20260911navadapt"></script>
   </body>
 </html>

@@ -2,7 +2,12 @@ from fastapi import APIRouter, HTTPException, Request
 
 from quantlab.api.errors import _error_payload
 from quantlab.services.lan_peers import PeerRegistry, local_lan_ip, self_peer
-from quantlab.services.lan_sync import SyncBusyError, coordinate_market_sync, coordinate_results_sync
+from quantlab.services.lan_sync import (
+    SyncBusyError,
+    bind_sync_progress,
+    coordinate_market_sync,
+    coordinate_results_sync,
+)
 from quantlab.services.machine_identity import load_machine_identity
 
 router = APIRouter(tags=["lan"])
@@ -44,6 +49,11 @@ def list_peers(request: Request) -> dict[str, object]:
         "asset_label": settings.asset_label,
         "peers": registry.online(self_id=str(machine.get("machine_id") or ""), asset=str(settings.asset)),
     }
+
+
+@router.get("/api/lan/sync/progress")
+def sync_progress_api(request: Request) -> dict[str, object]:
+    return bind_sync_progress(request.app.state.settings).snapshot()
 
 
 @router.post("/api/lan/sync/results")
