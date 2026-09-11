@@ -142,3 +142,25 @@ def test_http_source_pulls_via_lan_app(tmp_path: Path) -> None:
     assert (dest.runtime_root / "results" / run_id / "metrics.json").read_bytes() == b"ok"
     assert market["copied"] == 1
     assert (dest.data_root / "mkt.parquet").read_bytes() == b"mkt"
+
+
+def test_lan_index_exports_sqlite_plans(tmp_path: Path) -> None:
+    from quantlab.repositories.database import Database
+
+    settings = Settings(project_root=tmp_path, data_root=tmp_path / "data", calibration_root=tmp_path / "cal", runtime_root=tmp_path / "runtime")
+    settings.data_root.mkdir(parents=True)
+    load_machine_identity(settings.runtime_root)
+    database = Database(settings.database_path)
+    database.initialize()
+    plan_id = "plan-lanexport01"
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO backtest_plans(plan_id, name, status, closed, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+            (plan_id, "未开始计划", "draft", 0, "2026-09-11T00:00:00+00:00", "2026-09-11T00:00:00+00:00"),
+        )
+    client = TestClient(create_lan_app(settings, database))
+    index = client.get("/results/index").json()
+    assert plan_id in index["plans"]
+    snapshot = client.get(f"/plans/{plan_id}")
+    assert snapshot.status_code == 200
+    assert snapshot.json()["name"] == "未开始计划"

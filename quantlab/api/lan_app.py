@@ -23,7 +23,7 @@ from quantlab.services.lan_sync import (
     pull_results,
 )
 from quantlab.services.machine_identity import load_machine_identity
-from quantlab.services.result_sync import PLANS_DIR_NAME, sync_result_catalog, validate_plan_snapshot_id
+from quantlab.services.result_sync import PLANS_DIR_NAME, export_plan_snapshots, sync_result_catalog, validate_plan_snapshot_id
 
 
 def _hello(settings: Settings) -> dict[str, object]:
@@ -52,6 +52,8 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
 
     @app.get("/results/index")
     def results_index() -> dict[str, list[str]]:
+        if database is not None:
+            export_plan_snapshots(settings, database)
         root = settings.runtime_root / "results"
         return {"runs": sorted(local_run_ids(root)), "deleted": sorted(local_deleted_ids(root)), "plans": sorted(local_plan_ids(root))}
 
@@ -138,6 +140,7 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
             raise HTTPException(status_code=400, detail="sources must be a list")
         pulled_runs: list[str] = []
         pulled_deleted: list[str] = []
+        pulled_plans: list[str] = []
         errors: list[str] = []
         with httpx.Client(timeout=HTTP_TIMEOUT) as client:
             for item in raw_sources:
@@ -155,8 +158,15 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
                     continue
                 pulled_runs.extend(stats["pulled_runs"])
                 pulled_deleted.extend(stats["pulled_deleted"])
+                pulled_plans.extend(stats.get("pulled_plans") or [])
         if database is not None:
             sync_result_catalog(settings, database)
-        return {"ok": not errors, "pulled_runs": pulled_runs, "pulled_deleted": pulled_deleted, "errors": errors}
+        return {
+            "ok": not errors,
+            "pulled_runs": pulled_runs,
+            "pulled_deleted": pulled_deleted,
+            "pulled_plans": pulled_plans,
+            "errors": errors,
+        }
 
     return app

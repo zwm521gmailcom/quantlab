@@ -6,6 +6,7 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 import httpx
 
@@ -13,7 +14,7 @@ from quantlab.config import Settings
 from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.database import Database
 from quantlab.services.lan_files import iter_rel_files, safe_under
-from quantlab.services.lan_peers import LAN_PORT, validate_lan_host, validate_lan_port
+from quantlab.services.lan_peers import LAN_PORT, UI_PORT, validate_lan_host, validate_lan_port
 from quantlab.services.result_sync import (
     PLANS_DIR_NAME,
     sync_result_catalog,
@@ -244,12 +245,17 @@ class HttpLanSource:
     def __init__(self, base_url: str, client: httpx.Client | None = None) -> None:
         self.base = str(base_url).rstrip("/")
         self.client = client or httpx.Client(timeout=HTTP_TIMEOUT)
+        self._hello: dict[str, Any] | None = None
 
     def results_index(self) -> dict[str, list[str]]:
         response = self.client.get(f"{self.base}/results/index")
         response.raise_for_status()
         payload = response.json()
-        return payload if isinstance(payload, dict) else {"runs": [], "deleted": []}
+        if not isinstance(payload, dict):
+            payload = {"runs": [], "deleted": []}
+        if not payload.get("plans"):
+            payload["plans"] = self._plan_ids_from_ui()
+        return payload
 
     def result_tree(self, run_id: str) -> list[dict[str, Any]]:
         response = self.client.get(f"{self.base}/results/{validate_run_id(run_id)}/tree")
@@ -270,11 +276,86 @@ class HttpLanSource:
         return response.content
 
     def read_plan(self, plan_id: str) -> bytes | None:
-        response = self.client.get(f"{self.base}/plans/{validate_plan_snapshot_id(plan_id)}")
-        if response.status_code == 404:
+        plan_id = validate_plan_snapshot_id(plan_id)
+        response = self.client.get(f"{self.base}/plans/{plan_id}")
+        if response.status_code == 200:
+            return response.content
+        if response.status_code not in {400, 404}:
+            response.raise_for_status()
+        return self._plan_from_ui(plan_id)
+
+    def _load_hello(self) -> dict[str, Any]:
+        if self._hello is not None:
+            return self._hello
+        try:
+            response = self.client.get(f"{self.base}/hello")
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            self._hello = {}
+            return self._hello
+        self._hello = payload if isinstance(payload, dict) else {}
+        return self._hello
+
+    def _ui_origin(self) -> str | None:
+        host = urlparse(self.base).hostname
+        if not host:
             return None
-        response.raise_for_status()
-        return response.content
+        try:
+            port = validate_lan_port(self._load_hello().get("ui_port") or UI_PORT)
+        except ValueError:
+            return None
+        return f"http://{host}:{port}"
+
+    def _plan_ids_from_ui(self) -> list[str]:
+        origin = self._ui_origin()
+        if not origin:
+            return []
+        try:
+            response = self.client.get(f"{origin}/api/backtest-plans")
+            if response.status_code == 404:
+                return []
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return []
+        items = payload.get("items") if isinstance(payload, dict) else []
+        found: list[str] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                found.append(validate_plan_snapshot_id(str(item.get("plan_id") or "")))
+            except ValueError:
+                continue
+        return found
+
+    def _plan_from_ui(self, plan_id: str) -> bytes | None:
+        origin = self._ui_origin()
+        if not origin:
+            return None
+        try:
+            response = self.client.get(f"{origin}/api/backtest-plans/{plan_id}")
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            payload = response.json()
+        except Exception:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        items = payload.get("items") if isinstance(payload.get("items"), list) else []
+        snapshot = {
+            "schema": 1,
+            "plan_id": payload.get("plan_id") or plan_id,
+            "name": payload.get("name") or "",
+            "status": payload.get("status") or "draft",
+            "closed": bool(payload.get("closed")),
+            "created_at": payload.get("created_at") or "",
+            "updated_at": payload.get("updated_at") or "",
+            "items": [item for item in items if isinstance(item, dict)],
+        }
+        return json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
 
     def data_tree(self) -> list[dict[str, Any]]:
         response = self.client.get(f"{self.base}/data/tree")
@@ -496,7 +577,7 @@ def sync_results(settings: Settings, database: Database, sources: list[LanSource
         changed = False
         for source in sources:
             stats = pull_results(settings, source)
-            if stats["pulled_runs"] or stats["pulled_deleted"]:
+            if stats["pulled_runs"] or stats["pulled_deleted"] or stats.get("pulled_plans"):
                 changed = True
                 pulled_runs.extend(stats["pulled_runs"])
                 pulled_deleted.extend(stats["pulled_deleted"])
@@ -570,6 +651,7 @@ def coordinate_results_sync(
         ask = ask_peer or ask_peer_pull_results
         pulled_runs: list[str] = []
         pulled_deleted: list[str] = []
+        pulled_plans: list[str] = []
         errors: list[str] = []
         used = 0
         for round_no in range(1, max(1, int(rounds)) + 1):
@@ -582,10 +664,11 @@ def coordinate_results_sync(
                 except Exception as error:
                     errors.append(str(error))
                     continue
-                if stats["pulled_runs"] or stats["pulled_deleted"]:
+                if stats["pulled_runs"] or stats["pulled_deleted"] or stats.get("pulled_plans"):
                     changed = True
                     pulled_runs.extend(stats["pulled_runs"])
                     pulled_deleted.extend(stats["pulled_deleted"])
+                    pulled_plans.extend(stats.get("pulled_plans") or [])
             if remote:
                 tracker.add_total(len(remote))
             for peer in remote:
@@ -604,7 +687,7 @@ def coordinate_results_sync(
                     tracker.tick(detail=str(peer.get("hostname") or peer.get("machine_id") or ""))
                     continue
                 tracker.tick(detail=str(peer.get("hostname") or peer.get("machine_id") or ""))
-                if remote_stats.get("pulled_runs") or remote_stats.get("pulled_deleted"):
+                if remote_stats.get("pulled_runs") or remote_stats.get("pulled_deleted") or remote_stats.get("pulled_plans"):
                     changed = True
             if not changed:
                 break
@@ -615,6 +698,7 @@ def coordinate_results_sync(
             "rounds": used,
             "pulled_runs": pulled_runs,
             "pulled_deleted": pulled_deleted,
+            "pulled_plans": pulled_plans,
             "errors": errors,
         }
     except Exception as error:
