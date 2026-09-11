@@ -17,12 +17,13 @@ from quantlab.services.lan_sync import (
     HTTP_TIMEOUT,
     HttpLanSource,
     local_deleted_ids,
+    local_plan_ids,
     local_run_ids,
     pull_market,
     pull_results,
 )
 from quantlab.services.machine_identity import load_machine_identity
-from quantlab.services.result_sync import sync_result_catalog
+from quantlab.services.result_sync import PLANS_DIR_NAME, sync_result_catalog, validate_plan_snapshot_id
 
 
 def _hello(settings: Settings) -> dict[str, object]:
@@ -52,7 +53,7 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
     @app.get("/results/index")
     def results_index() -> dict[str, list[str]]:
         root = settings.runtime_root / "results"
-        return {"runs": sorted(local_run_ids(root)), "deleted": sorted(local_deleted_ids(root))}
+        return {"runs": sorted(local_run_ids(root)), "deleted": sorted(local_deleted_ids(root)), "plans": sorted(local_plan_ids(root))}
 
     @app.get("/results/{run_id}/tree")
     def result_tree(run_id: str) -> list[dict[str, object]]:
@@ -80,6 +81,17 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         path = settings.runtime_root / "results" / DELETED_DIR / f"{run_id}.json"
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="not found")
+        return Response(content=path.read_bytes(), media_type="application/json")
+
+    @app.get("/plans/{plan_id}")
+    def plan_snapshot(plan_id: str) -> Response:
+        try:
+            plan_id = validate_plan_snapshot_id(plan_id)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        path = settings.runtime_root / "results" / PLANS_DIR_NAME / f"{plan_id}.json"
         if not path.is_file():
             raise HTTPException(status_code=404, detail="not found")
         return Response(content=path.read_bytes(), media_type="application/json")

@@ -371,7 +371,16 @@ main, .card { min-width: 0; }
 .lan-peers th { color: var(--color-text-muted); font-weight: 600; }
 .lan-peers .muted { color: var(--color-text-muted); }
 .lan-empty { margin: 0; color: var(--color-text-muted); font-size: 13px; }
-@media (max-width: 560px) { .settings-fields { grid-template-columns: 1fr; } .settings-actions button { flex: 1 1 160px; } }
+.lan-sync-actions { display: grid; gap: 14px; }
+.lan-sync-item { display: grid; gap: 8px; justify-items: start; }
+.lan-sync-progress { width: min(420px, 100%); display: grid; gap: 6px; }
+.lan-sync-progress-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; color: var(--color-text-secondary); font-size: 12px; }
+.lan-sync-progress-head strong { color: var(--color-text); font-variant-numeric: tabular-nums; }
+.lan-sync-progress-track { height: 8px; border-radius: 99px; background: var(--color-bg-muted); overflow: hidden; }
+.lan-sync-progress-fill { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--color-primary); transition: width .2s ease; }
+.lan-sync-progress.is-failed .lan-sync-progress-fill { background: var(--color-danger); }
+.lan-peers .lan-sync-progress { width: min(240px, 100%); margin-top: 6px; }
+@media (max-width: 560px) { .settings-fields { grid-template-columns: 1fr; } .settings-actions button { flex: 1 1 160px; } .lan-sync-item { justify-items: stretch; } .lan-sync-progress, .lan-peers .lan-sync-progress { width: 100%; } }
 
 /* The sidebar is rendered by nav.js so every page shares one hierarchy. */
 .shell > aside { position: sticky; top: 0; align-self: start; }

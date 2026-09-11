@@ -101,6 +101,7 @@ def test_lan_app_serves_results_and_rejects_escape(tmp_path: Path) -> None:
     assert hello.json()["asset"] == "a_share"
     assert hello.json()["lan_port"] == 8766
     assert run_id in client.get("/results/index").json()["runs"]
+    assert "plans" in client.get("/results/index").json()
     assert client.get(f"/results/{run_id}/file", params={"rel": "metrics.json"}).content == b"{}"
     assert client.get("/data/file", params={"rel": "../runtime/config/machine.json"}).status_code == 400
     assert client.get("/data/file", params={"rel": "mkt.parquet"}).content == b"mkt"

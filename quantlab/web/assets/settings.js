@@ -134,6 +134,114 @@ function lanStatus(text, ok) {
   node.classList.toggle("error", !ok);
 }
 
+function paintProgress(root, snap, active) {
+  if (!root) return;
+  const done = Number(snap.done || 0);
+  const total = Number(snap.total || 0);
+  const percent = Number(snap.percent || 0);
+  const counts = root.querySelector("[data-role='counts']");
+  const pct = root.querySelector("[data-role='percent']");
+  const fill = root.querySelector("[data-role='fill']");
+  const track = root.querySelector(".lan-sync-progress-track");
+  if (counts) counts.textContent = `${done} / ${total}`;
+  if (pct) pct.textContent = `${percent}%`;
+  if (fill) fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+  if (track) track.setAttribute("aria-valuenow", String(percent));
+  root.classList.toggle("is-active", !!(active && snap.status === "running"));
+  root.classList.toggle("is-failed", !!(active && snap.status === "failed"));
+}
+
+function createPeerProgress(machineId) {
+  const wrap = document.createElement("div");
+  wrap.className = "lan-sync-progress";
+  wrap.dataset.peerProgress = "1";
+  wrap.dataset.machineId = String(machineId || "");
+  const head = document.createElement("div");
+  head.className = "lan-sync-progress-head";
+  const label = document.createElement("span");
+  label.append("总进度 ");
+  const counts = document.createElement("strong");
+  counts.dataset.role = "counts";
+  counts.textContent = "0 / 0";
+  label.appendChild(counts);
+  const percent = document.createElement("strong");
+  percent.dataset.role = "percent";
+  percent.textContent = "0%";
+  head.append(label, percent);
+  const track = document.createElement("div");
+  track.className = "lan-sync-progress-track";
+  track.setAttribute("role", "progressbar");
+  track.setAttribute("aria-valuemin", "0");
+  track.setAttribute("aria-valuemax", "100");
+  track.setAttribute("aria-valuenow", "0");
+  const fill = document.createElement("span");
+  fill.className = "lan-sync-progress-fill";
+  fill.dataset.role = "fill";
+  track.appendChild(fill);
+  wrap.append(head, track);
+  return wrap;
+}
+
+let lastLanProgress = {status: "idle", kind: null, done: 0, total: 0, percent: 0, source_machine_id: ""};
+const LAN_PROGRESS_KEY = "quantlab-lan-sync-progress";
+try {
+  const saved = JSON.parse(sessionStorage.getItem(LAN_PROGRESS_KEY) || "");
+  if (saved && saved.status && saved.status !== "idle") lastLanProgress = saved;
+} catch {
+  /* ignore */
+}
+
+function applyProgress(snap) {
+  lastLanProgress = snap || lastLanProgress;
+  try {
+    sessionStorage.setItem(LAN_PROGRESS_KEY, JSON.stringify(lastLanProgress));
+  } catch {
+    /* ignore */
+  }
+  const kind = lastLanProgress.kind;
+  const resultsActive = kind === "results";
+  const marketActive = kind === "market";
+  if (resultsActive) paintProgress($("lan-progress-results"), lastLanProgress, true);
+  if (marketActive) paintProgress($("lan-progress-market"), lastLanProgress, true);
+  const sourceId = String(lastLanProgress.source_machine_id || "");
+  document.querySelectorAll("[data-peer-progress]").forEach(node => {
+    const match = marketActive && node.getAttribute("data-machine-id") === sourceId;
+    if (match) paintProgress(node, lastLanProgress, true);
+  });
+  const busy = lastLanProgress.status === "running";
+  if ($("lan-sync-results")) $("lan-sync-results").disabled = busy;
+  if ($("lan-sync-market")) $("lan-sync-market").disabled = busy;
+  document.querySelectorAll("#lan-peers button").forEach(button => {
+    button.disabled = busy;
+  });
+}
+
+async function refreshProgress() {
+  if (!$("lan-progress-results")) return;
+  try {
+    const r = await fetch("/api/lan/sync/progress");
+    const incoming = await r.json();
+    if (incoming.status === "idle" && lastLanProgress.status && lastLanProgress.status !== "idle") {
+      applyProgress(lastLanProgress);
+      return;
+    }
+    applyProgress(incoming);
+  } catch {
+    applyProgress(lastLanProgress);
+  }
+}
+
+async function withProgressPoll(work) {
+  await refreshProgress();
+  const timer = setInterval(refreshProgress, 300);
+  try {
+    return await work();
+  } finally {
+    clearInterval(timer);
+    await refreshProgress();
+  }
+}
+
 const ASSET_LABELS = {a_share: "A股", crypto: "数字货币"};
 function renderPeers(peers, meta) {
   const root = $("lan-peers");
@@ -147,6 +255,7 @@ function renderPeers(peers, meta) {
     const lan = meta.lan_port != null ? meta.lan_port : 8766;
     empty.textContent = `还没有发现同一资产的 QuantLab。请确认各机已启动（本机监听 0.0.0.0:${ui}），且防火墙放行 TCP ${ui} 和 UDP/TCP ${lan}。`;
     root.appendChild(empty);
+    applyProgress(lastLanProgress);
     return;
   }
   const table = document.createElement("table");
@@ -185,12 +294,13 @@ function renderPeers(peers, meta) {
     button.type = "button";
     button.textContent = "以此机为源头同步行情";
     button.addEventListener("click", () => syncMarket(peer.machine_id));
-    action.appendChild(button);
+    action.append(button, createPeerProgress(peer.machine_id));
     row.append(hostname, machine, asset, address, prefix, page, action);
     body.appendChild(row);
   }
   table.appendChild(body);
   root.appendChild(table);
+  applyProgress(lastLanProgress);
 }
 
 async function refreshPeers() {
@@ -206,33 +316,39 @@ async function refreshPeers() {
 
 async function syncResults() {
   lanStatus("正在同步回测产物…", true);
-  const r = await fetch("/api/lan/sync/results", {method: "POST"});
-  const x = await r.json();
-  if (!r.ok) {
-    lanStatus(x.message || "同步回测产物失败", false);
+  const x = await withProgressPoll(async () => {
+    const r = await fetch("/api/lan/sync/results", {method: "POST"});
+    const body = await r.json();
+    return {ok: r.ok, body};
+  });
+  if (!x.ok) {
+    lanStatus(x.body.message || "同步回测产物失败", false);
     return;
   }
-  const runs = (x.pulled_runs || []).length;
-  const deleted = (x.pulled_deleted || []).length;
+  const runs = (x.body.pulled_runs || []).length;
+  const deleted = (x.body.pulled_deleted || []).length;
   lanStatus(`回测产物已同步：新目录 ${runs}，删除标记 ${deleted}`, true);
   refreshPeers();
 }
 
 async function syncMarket(machineId) {
   lanStatus("正在同步行情…", true);
-  const r = await fetch("/api/lan/sync/market", {
-    method: "POST",
-    headers: {"content-type": "application/json"},
-    body: JSON.stringify(machineId ? {machine_id: machineId} : {}),
+  const x = await withProgressPoll(async () => {
+    const r = await fetch("/api/lan/sync/market", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify(machineId ? {machine_id: machineId} : {}),
+    });
+    const body = await r.json();
+    return {ok: r.ok, body};
   });
-  const x = await r.json();
-  if (!r.ok) {
-    lanStatus(x.message || "同步行情失败", false);
+  if (!x.ok) {
+    lanStatus(x.body.message || "同步行情失败", false);
     return;
   }
-  const copied = (x.local && x.local.copied) || 0;
-  const peers = (x.peers || []).length;
-  lanStatus(`行情已从 ${x.source_machine_id || "本机"} 同步：本机写入 ${copied} 个文件，已通知 ${peers} 台`, true);
+  const copied = (x.body.local && x.body.local.copied) || 0;
+  const peers = (x.body.peers || []).length;
+  lanStatus(`行情已从 ${x.body.source_machine_id || "本机"} 同步：本机写入 ${copied} 个文件，已通知 ${peers} 台`, true);
 }
 
 if ($("lan-sync-results")) {
@@ -247,5 +363,8 @@ if ($("lan-sync-results")) {
     lanStatus(r.ok ? ($("lan-market-0400").checked ? "已打开每天 04:00 自动同步行情" : "已关闭每天 04:00 自动同步行情") : "保存失败", r.ok);
   };
   refreshPeers();
+  if (lastLanProgress.status && lastLanProgress.status !== "idle") applyProgress(lastLanProgress);
+  refreshProgress();
   setInterval(refreshPeers, 5000);
+  setInterval(refreshProgress, 1000);
 }

@@ -19,7 +19,7 @@ from quantlab.services.backtest_control import (
 )
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
-from quantlab.services.model_training import kind_display_name, model_center_name
+from quantlab.services.result_sync import delete_plan_snapshot, sync_result_catalog, write_plan_snapshot
 
 
 _runtime_lock = threading.Lock()
@@ -172,7 +172,11 @@ class BacktestPlanService:
         self.workbench = workbench
         self.job = job
 
+    def _export_snapshot(self, plan_id: str) -> None:
+        write_plan_snapshot(self.settings, self.database, plan_id)
+
     def list_plans(self, open_only: bool = False) -> dict[str, Any]:
+        sync_result_catalog(self.settings, self.database)
         sql = "SELECT plan_id FROM backtest_plans"
         if open_only:
             sql += " WHERE closed=0"
@@ -252,6 +256,7 @@ class BacktestPlanService:
             if not isinstance(item, dict):
                 raise ValueError("plan item must be an object")
             self.add_item(plan_id, item)
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def _require_open(self, plan: dict[str, Any], *, allow_running: bool = False) -> None:
@@ -272,6 +277,7 @@ class BacktestPlanService:
                 "UPDATE backtest_plans SET closed=1, updated_at=? WHERE plan_id=?",
                 (stamp, plan_id),
             )
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def delete(self, plan_id: str) -> dict[str, Any]:
@@ -286,6 +292,7 @@ class BacktestPlanService:
             ).rowcount
         if not deleted:
             raise ValueError("backtest plan not found")
+        delete_plan_snapshot(self.settings, plan_id)
         return {"deleted": True, "plan_id": plan_id}
 
     def add_item(self, plan_id: str, raw: dict[str, Any]) -> dict[str, Any]:
@@ -329,6 +336,7 @@ class BacktestPlanService:
                 "UPDATE backtest_plans SET status='draft', updated_at=? WHERE plan_id=?",
                 (stamp, plan_id),
             )
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def set_selected(self, plan_id: str, selected: dict[str, Any]) -> dict[str, Any]:
@@ -346,6 +354,7 @@ class BacktestPlanService:
                 "UPDATE backtest_plans SET updated_at=? WHERE plan_id=?",
                 (stamp, plan_id),
             )
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def delete_items(self, plan_id: str, item_ids: list[str] | None = None) -> dict[str, Any]:
@@ -373,6 +382,7 @@ class BacktestPlanService:
                 "UPDATE backtest_plans SET updated_at=? WHERE plan_id=?",
                 (stamp, plan_id),
             )
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def delete_item(self, plan_id: str, item_id: str) -> dict[str, Any]:
@@ -392,6 +402,7 @@ class BacktestPlanService:
                 "UPDATE backtest_plans SET updated_at=? WHERE plan_id=?",
                 (stamp, plan_id),
             )
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def start(self, plan_id: str, item_ids: list[str] | None = None) -> dict[str, Any]:
@@ -462,6 +473,7 @@ class BacktestPlanService:
         with _runtime_lock:
             _runtime[plan_id] = {"stop": stop, "thread": thread, "current_run_id": None}
         thread.start()
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def stop(self, plan_id: str) -> dict[str, Any]:
@@ -487,6 +499,7 @@ class BacktestPlanService:
                 "UPDATE backtest_plans SET status='stopped', updated_at=? WHERE plan_id=? AND status='running'",
                 (stamp, plan_id),
             )
+        self._export_snapshot(plan_id)
         return self.get(plan_id)
 
     def _run_loop(self, plan_id: str, item_ids: list[str], stop: threading.Event) -> None:
@@ -516,6 +529,7 @@ class BacktestPlanService:
             with _runtime_lock:
                 _runtime.pop(plan_id, None)
             release_reservation()
+            self._export_snapshot(plan_id)
 
     def _run_item(self, plan_id: str, item_id: str, stop: threading.Event) -> None:
         if stop.is_set():
@@ -592,7 +606,12 @@ class BacktestPlanService:
                 "error_message=?, finished_at=?, updated_at=? WHERE item_id=?",
                 (status, run_id, error_message, finished_at, finished_at, item_id),
             )
+            row = connection.execute(
+                "SELECT plan_id FROM backtest_plan_items WHERE item_id=?", (item_id,)
+            ).fetchone()
         with _runtime_lock:
             for state in _runtime.values():
                 if state.get("current_run_id") == run_id:
                     state["current_run_id"] = None
+        if row is not None:
+            self._export_snapshot(str(row["plan_id"]))
