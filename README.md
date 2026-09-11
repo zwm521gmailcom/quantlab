@@ -2,7 +2,7 @@
 
 **中文** | [English](README.en.md)
 
-本机 A 股因子、模型与回测研究平台。浏览器操作，FastAPI 默认监听局域网 `0.0.0.0:8765`（本机仍可用 `127.0.0.1`），元数据在 SQLite，行情与因子在本地 Parquet。
+本机因子、模型与回测研究平台。每个实例标明资产版本（默认 A 股）。浏览器操作，FastAPI 默认监听局域网 `0.0.0.0:8765`（本机仍可用 `127.0.0.1`），页面端口和局域网同步端口可自行设定。元数据在 SQLite，行情与因子在本地 Parquet。
 
 当前版本 `0.1.0`（Alpha）。运行时不依赖 [vnpy](https://github.com/vnpy/vnpy)，本仓库是独立项目。
 
@@ -30,7 +30,7 @@ QuantLab 把数据、因子、模型、回测和结果档案收进同一个本�
 | 回测计划 | `/backtests/plan` | 勾选任务，按顺序串行执行 |
 | 规则回测 | `/backtests/rules` | 内置规则模板，不训练模型 |
 | 结果档案 | `/backtests/runs` | 历史运行、指标、产物与复制配置 |
-| 设置 | `/settings` | 路径、Tushare token、运算资源、草稿默认参数 |
+| 设置 | `/settings` | 路径、资产版本与端口、Tushare token、运算资源、草稿默认参数 |
 
 模型种类包括 LightGBM / XGBoost 排序树，以及随机森林、Ridge、Lasso 等回归模型。因子组合和训练参数在回测中心设置，开始回测时才训练。
 
@@ -72,7 +72,7 @@ export QUANTLAB_RUNTIME_ROOT=quantlab_runtime
 
 也可以在命令行传 `--data-root`、`--calibration-root`、`--runtime-root`、`--project-root`。路径用相对项目根的写法，例如 `data`、`quantlab_runtime`。
 
-局域网多机：三台都要监听局域网，不能只绑 `127.0.0.1`。程序更新仍走 GitHub（本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab）。各台使用自己的 SQLite。默认页面端口 `8765`（绑 `0.0.0.0`），文件同步另开 `8766`（HTTP + UDP 宣告，不提供页面、不开库、不传 Token）。请在防火墙放行 TCP 8765 和 UDP/TCP 8766。可在一台电脑的浏览器里，用设置页列表的「打开页面」进入各机 QuantLab，依次点开始回测；回到主机设置页再点「同步回测产物」和同步行情。产物互相补缺（已有目录不覆盖，合并 `results/_deleted/`）；点某台则从那台拉 `data/` 行情（源头覆盖同路径且内容不同的文件，对端多出来的不删）。可打开「每天 04:00 自动同步行情」（本机当源头，服务须在跑；错过不补跑）。`--host` 只接受 `127.0.0.1`、`0.0.0.0` 或 RFC1918 地址，不能绑公网 IP。**不要**用 git 或拷盘同步 `quantlab_runtime/db/`、`config/`（机器码、运算设置、Token）。不要对整个 `results/` 做镜像删除。每台启动或打开结果档案时，会补齐缺的机器码、按 `_deleted/` 标记删掉对端已删的回测，并扫描 `results/*/run.json` 写入本机库。
+局域网多机：三台都要监听局域网，不能只绑 `127.0.0.1`。程序更新仍走 GitHub（本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab）。各台使用自己的 SQLite。默认页面端口 `8765`（绑 `0.0.0.0`），文件同步另开 `8766`（HTTP + UDP 宣告，不提供页面、不开库、不传 Token）；两个端口都可在设置页或启动参数里改。局域网只发现同一资产版本，A 股实例不要和数字货币实例互相同步。请在防火墙放行你实际使用的页面端口和同步端口。可在一台电脑的浏览器里，用设置页列表的「打开页面」进入各机 QuantLab，依次点开始回测；回到主机设置页再点「同步回测产物」和同步行情。产物互相补缺（已有目录不覆盖，合并 `results/_deleted/`）；点某台则从那台拉 `data/` 行情（源头覆盖同路径且内容不同的文件，对端多出来的不删）。可打开「每天 04:00 自动同步行情」（本机当源头，服务须在跑；错过不补跑）。`--host` 只接受 `127.0.0.1`、`0.0.0.0` 或 RFC1918 地址，不能绑公网 IP。**不要**用 git 或拷盘同步 `quantlab_runtime/db/`、`config/`（机器码、运算设置、Token）。不要对整个 `results/` 做镜像删除。每台启动或打开结果档案时，会补齐缺的机器码、按 `_deleted/` 标记删掉对端已删的回测，并扫描 `results/*/run.json` 写入本机库。
 
 标准行情来自 `data/canonical.parquet`（每股票每日一行）。Tushare token 在设置页配置，原始接口文件写入 `data/raw/`。
 
@@ -83,7 +83,15 @@ quantlab init-db
 quantlab serve
 ```
 
-默认监听 `0.0.0.0:8765`。本机打开 http://127.0.0.1:8765/ ；其他机器打开 `http://<局域网IP>:8765/` 。`--host` 不能绑公网 IP。
+默认本实例是 A 股，监听 `0.0.0.0:8765`，局域网同步 `8766`。本机打开 http://127.0.0.1:8765/ ；其他机器打开 `http://<局域网IP>:8765/` 。`--host` 不能绑公网 IP。
+
+数字货币请另起目录，并标明资产与端口：
+
+```bash
+quantlab serve --asset crypto --port 8775 --lan-port 8776
+```
+
+也可在设置页保存，写入 `quantlab_runtime/config/instance.json`，重启后生效。优先级：命令行 `>` 环境变量 `QUANTLAB_ASSET` / `QUANTLAB_PORT` / `QUANTLAB_LAN_PORT` `>` `instance.json` `>` 默认。页面端口和同步端口必须不同。
 
 等价写法：`python -m quantlab.cli init-db` / `python -m quantlab.cli serve`。
 
@@ -91,13 +99,13 @@ quantlab serve
 
 ```bash
 quantlab init-db                      # 初始化 SQLite 并登记已配置数据集
-quantlab serve                        # 启动本机网页服务
+quantlab serve                        # 启动本机网页服务（--asset / --port / --lan-port）
 quantlab snapshot-data-baseline       # 把当前权威数据指纹写入 runtime/baselines
 quantlab verify-data-baseline         # 核对权威数据是否相对基线发生变化
 quantlab materialize-pack-factors     # 从 canonical.parquet 计算并落地公式包因子
 ```
 
-每个子命令都接受 `--project-root`、`--data-root`、`--calibration-root`、`--runtime-root`。
+每个子命令都接受 `--project-root`、`--data-root`、`--calibration-root`、`--runtime-root`。`serve` 另接受 `--asset`（`a_share` 或 `crypto`）、`--port`、`--lan-port`。
 
 回测并行相关环境变量（也可在设置页保存，不必重启服务）。这些是一条回测内部的请求值，内存不够时运行时会再降；它们不是同时多条回测。同时回测固定为 1 条。
 

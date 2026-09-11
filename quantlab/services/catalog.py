@@ -327,14 +327,15 @@ class DatasetCatalog:
             else:
                 if existing["manifest_hash"] != stored_hash:
                     quality_status = "needs_review"
-                existing_metadata = json.loads(existing["metadata_json"])
+                existing_metadata = json.loads(existing["metadata_json"] or "{}")
                 if existing_metadata.get("content_fingerprint") != metadata.get(
                     "content_fingerprint"
                 ):
                     quality_status = "needs_review"
+                # Published path/schema/hash are immutable; only quality_status may change on rescan.
                 connection.execute(
-                    "UPDATE dataset_versions SET quality_status = ?, path = ? WHERE entity_id = ? AND version_id = ?",
-                    (quality_status, self.settings.store_path(version_path), entry["entity_id"], version_id),
+                    "UPDATE dataset_versions SET quality_status = ? WHERE entity_id = ? AND version_id = ?",
+                    (quality_status, entry["entity_id"], version_id),
                 )
         return {
             "entity_id": entry["entity_id"],

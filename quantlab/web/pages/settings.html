@@ -47,8 +47,26 @@
           </div>
         </section>
         <section class="card">
+          <h3>资产版本与端口</h3>
+          <p class="settings-help">本实例标明面向哪一类资产。A 股和数字货币请用两套目录、两套端口，局域网只发现同一资产。页面端口和同步端口可自行设定；保存后写入 <code>quantlab_runtime/config/instance.json</code>，需重启 QuantLab 才切换监听。</p>
+          <div class="settings-fields">
+            <label>本实例资产
+              <select id="instance-asset">
+                <option value="a_share">A股</option>
+                <option value="crypto">数字货币</option>
+              </select>
+            </label>
+            <label>页面端口 <input id="instance-port" type="number" min="1" max="65535"></label>
+            <label>局域网同步端口 <input id="instance-lan-port" type="number" min="1" max="65535"></label>
+          </div>
+          <div class="settings-actions">
+            <button id="instance-save" type="button">保存资产与端口</button>
+            <span id="instance-saved" class="state"></span>
+          </div>
+        </section>
+        <section class="card">
           <h3>局域网</h3>
-          <p class="settings-help">三台都要监听局域网，不能只绑 127.0.0.1。启动后默认 <code>0.0.0.0:8765</code>，请在防火墙放行 TCP 8765 和 UDP/TCP 8766。在这台电脑的浏览器里，用下面列表的「打开页面」进入各机 QuantLab，依次点开始回测；回到本机设置页再点「同步回测产物」和同步行情。程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启。没开 QuantLab 的机器不会出现。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。</p>
+          <p class="settings-help">三台都要监听局域网，不能只绑 127.0.0.1。页面端口和同步端口在上面自行设定；默认是 <code>0.0.0.0:8765</code> 和 UDP/TCP 8766，请在防火墙放行这两个端口。列表只显示同一资产版本的机器。程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启。没开 QuantLab 的机器不会出现。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。A 股实例不要和数字货币实例互相点同步。</p>
           <div id="lan-peers"></div>
           <div class="settings-actions">
             <button id="lan-sync-results" type="button">同步回测产物</button>
@@ -122,7 +140,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260911lanui"></script>
-    <script src="/assets/nav.js?v=20260907a"></script>
+    <script src="/assets/settings.js?v=20260911asset2"></script>
+    <script src="/assets/nav.js?v=20260911asset"></script>
   </body>
 </html>

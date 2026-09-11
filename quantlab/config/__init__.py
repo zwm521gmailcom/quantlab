@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -74,6 +75,22 @@ def _is_private_ipv4(host: str) -> bool:
     return first == 172 and 16 <= second <= 31
 
 
+ASSET_CHOICES = ("a_share", "crypto")
+ASSET_LABELS = {"a_share": "A股", "crypto": "数字货币"}
+DEFAULT_UI_PORT = 8765
+DEFAULT_LAN_PORT = 8766
+_INSTANCE_FILE = "config/instance.json"
+_ASSET_ALIASES = {
+    "a_share": "a_share",
+    "ashare": "a_share",
+    "equity": "a_share",
+    "stock": "a_share",
+    "crypto": "crypto",
+    "digital": "crypto",
+    "digital_asset": "crypto",
+}
+
+
 def allowed_service_host(host: str) -> str:
     text = str(host or "").strip()
     if text in {"127.0.0.1", "localhost"}:
@@ -83,6 +100,78 @@ def allowed_service_host(host: str) -> str:
     if _is_private_ipv4(text):
         return text
     raise ValueError("QuantLab only binds 127.0.0.1, 0.0.0.0, or a private LAN address")
+
+
+def normalize_asset(value: object) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if text in {"a股", "沪深a股"}:
+        return "a_share"
+    if text in {"数字货币", "数字币"}:
+        return "crypto"
+    asset = _ASSET_ALIASES.get(text, text)
+    if asset not in ASSET_CHOICES:
+        raise ValueError("asset must be a_share or crypto")
+    return asset
+
+
+def asset_label(asset: str) -> str:
+    return ASSET_LABELS[normalize_asset(asset)]
+
+
+def coerce_service_port(value: object, name: str = "port") -> int:
+    try:
+        port = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{name} must be between 1 and 65535") from error
+    if not 1 <= port <= 65535:
+        raise ValueError(f"{name} must be between 1 and 65535")
+    return port
+
+
+def instance_file(runtime_root: Path) -> Path:
+    return Path(runtime_root) / _INSTANCE_FILE
+
+
+def load_instance_file(runtime_root: Path) -> dict[str, object]:
+    path = instance_file(runtime_root)
+    if not path.is_file():
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, object] = {}
+    if "asset" in value:
+        try:
+            out["asset"] = normalize_asset(value.get("asset"))
+        except ValueError:
+            pass
+    if "port" in value:
+        try:
+            out["port"] = coerce_service_port(value.get("port"), "port")
+        except ValueError:
+            pass
+    if "lan_port" in value:
+        try:
+            out["lan_port"] = coerce_service_port(value.get("lan_port"), "lan_port")
+        except ValueError:
+            pass
+    return out
+
+
+def save_instance_file(runtime_root: Path, *, asset: str, port: int, lan_port: int) -> dict[str, object]:
+    asset = normalize_asset(asset)
+    port = coerce_service_port(port, "port")
+    lan_port = coerce_service_port(lan_port, "lan_port")
+    if port == lan_port:
+        raise ValueError("port and lan_port must be different")
+    payload = {"asset": asset, "port": port, "lan_port": lan_port}
+    path = instance_file(runtime_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return payload
 
 
 @dataclass(frozen=True)
@@ -95,7 +184,9 @@ class Settings:
     raw_root: Path | None = None
     runtime_root: Path | None = None
     host: str = "127.0.0.1"
-    port: int = 8765
+    asset: str | None = None
+    port: int | None = None
+    lan_port: int | None = None
 
     def __post_init__(self) -> None:
         project_root = _resolve_path(self.project_root, base=Path.cwd())
@@ -123,14 +214,37 @@ class Settings:
             or Path("quantlab_runtime"),
             base=project_root,
         )
+        instance = load_instance_file(runtime_root)
+        asset = normalize_asset(
+            self.asset or os.environ.get("QUANTLAB_ASSET") or instance.get("asset") or "a_share"
+        )
+        port = coerce_service_port(
+            self.port
+            if self.port is not None
+            else os.environ.get("QUANTLAB_PORT") or instance.get("port") or DEFAULT_UI_PORT,
+            "port",
+        )
+        lan_port = coerce_service_port(
+            self.lan_port
+            if self.lan_port is not None
+            else os.environ.get("QUANTLAB_LAN_PORT") or instance.get("lan_port") or DEFAULT_LAN_PORT,
+            "lan_port",
+        )
+        if port == lan_port:
+            raise ValueError("port and lan_port must be different")
         object.__setattr__(self, "host", allowed_service_host(self.host))
-        if self.port < 1 or self.port > 65535:
-            raise ValueError("port must be between 1 and 65535")
+        object.__setattr__(self, "asset", asset)
+        object.__setattr__(self, "port", port)
+        object.__setattr__(self, "lan_port", lan_port)
         object.__setattr__(self, "project_root", project_root)
         object.__setattr__(self, "data_root", data_root)
         object.__setattr__(self, "calibration_root", calibration_root)
         object.__setattr__(self, "raw_root", raw_root)
         object.__setattr__(self, "runtime_root", runtime_root)
+
+    @property
+    def asset_label(self) -> str:
+        return asset_label(str(self.asset))
 
     @property
     def writable_roots(self) -> tuple[Path, ...]:
@@ -145,12 +259,28 @@ class Settings:
         return self.runtime_root / "baselines"
 
     def resolve_user_path(self, path: Path | str) -> Path:
-        value = Path(path).expanduser()
-        if not str(path).strip():
+        text = str(path).strip()
+        if not text:
             raise ValueError("path is required")
+        value = Path(path).expanduser()
         if not value.is_absolute():
-            value = self.project_root / value
-        return value.resolve()
+            return (self.project_root / value).resolve()
+        resolved = value.resolve()
+        allowed = (self.data_root, self.calibration_root, self.raw_root, self.runtime_root)
+        if _inside(resolved, allowed):
+            return resolved
+        relocated = self._relocate_foreign_path(value)
+        return relocated if relocated is not None else resolved
+
+    def _relocate_foreign_path(self, value: Path) -> Path | None:
+        parts = value.parts
+        start = 1 if value.is_absolute() else 0
+        allowed = (self.data_root, self.calibration_root, self.raw_root, self.runtime_root)
+        for index in range(start, len(parts)):
+            candidate = (self.project_root / Path(*parts[index:])).resolve()
+            if _inside(candidate, allowed):
+                return candidate
+        return None
 
     def display_path(self, path: Path | str) -> str:
         return posix_relative(self.resolve_user_path(path), self.project_root)

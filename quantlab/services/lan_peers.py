@@ -10,10 +10,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from quantlab.config import DEFAULT_LAN_PORT, DEFAULT_UI_PORT, normalize_asset
 from quantlab.services.machine_identity import load_machine_identity
 
-LAN_PORT = 8766
-UI_PORT = 8765
+LAN_PORT = DEFAULT_LAN_PORT
+UI_PORT = DEFAULT_UI_PORT
 PEER_TTL_SECONDS = 45.0
 BEACON_INTERVAL_SECONDS = 5.0
 PROBE_INTERVAL_SECONDS = 8.0
@@ -31,6 +32,7 @@ class LanPeer:
     serial_prefix: int
     last_seen: float
     ui_port: int = UI_PORT
+    asset: str = "a_share"
 
 
 def validate_lan_host(host: object) -> str:
@@ -201,6 +203,7 @@ def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer 
         port = int(payload.get("sync_port") or LAN_PORT)
         prefix = int(payload.get("serial_prefix") or 10)
         ui_port = int(payload.get("ui_port") or UI_PORT)
+        asset = normalize_asset(payload.get("asset") or "a_share")
     except (TypeError, ValueError):
         return None
     announced = str(payload.get("host") or host or "").strip() or host
@@ -218,6 +221,7 @@ def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer 
         serial_prefix=prefix,
         last_seen=float(now if now is not None else time.time()),
         ui_port=ui_port,
+        asset=asset,
     )
 
 
@@ -236,8 +240,9 @@ def parse_hello(payload: object, host: str, *, now: float | None = None) -> LanP
         "service": "quantlab",
         "machine_id": machine_id,
         "serial_prefix": payload.get("serial_prefix") or 10,
-        "sync_port": payload.get("sync_port") or LAN_PORT,
+        "sync_port": payload.get("sync_port") or payload.get("lan_port") or LAN_PORT,
         "ui_port": payload.get("ui_port") or UI_PORT,
+        "asset": payload.get("asset") or "a_share",
         "host": announced,
         "hostname": payload.get("hostname") or announced,
     }
@@ -251,15 +256,18 @@ def beacon_payload(
     host: str | None = None,
     hostname: str | None = None,
     ui_port: int = UI_PORT,
+    sync_port: int = LAN_PORT,
+    asset: str = "a_share",
 ) -> bytes:
     return json.dumps(
         {
-            "schema": 1,
+            "schema": 2,
             "service": "quantlab",
             "machine_id": machine_id,
             "serial_prefix": int(serial_prefix),
-            "sync_port": LAN_PORT,
+            "sync_port": int(sync_port),
             "ui_port": int(ui_port),
+            "asset": normalize_asset(asset),
             "host": host or local_lan_ip(),
             "hostname": hostname or socket.gethostname(),
         },
@@ -276,11 +284,14 @@ class PeerRegistry:
     def note(self, peer: LanPeer) -> None:
         self._peers[peer.machine_id] = peer
 
-    def online(self, *, now: float | None = None, self_id: str = "") -> list[dict[str, Any]]:
+    def online(self, *, now: float | None = None, self_id: str = "", asset: str | None = None) -> list[dict[str, Any]]:
         current = float(now if now is not None else time.time())
+        wanted = normalize_asset(asset) if asset else None
         items = []
         for peer in self._peers.values():
             if current - peer.last_seen > self.ttl:
+                continue
+            if wanted is not None and peer.asset != wanted:
                 continue
             items.append(
                 {
@@ -290,6 +301,7 @@ class PeerRegistry:
                     "port": peer.port,
                     "ui_port": peer.ui_port,
                     "ui_url": f"http://{peer.host}:{peer.ui_port}/",
+                    "asset": peer.asset,
                     "serial_prefix": peer.serial_prefix,
                     "self": bool(self_id) and peer.machine_id == self_id,
                     "age_s": round(current - peer.last_seen, 1),
@@ -306,15 +318,23 @@ class PeerRegistry:
         return peer
 
 
-def self_peer(runtime_root: Path | None, *, ui_port: int = UI_PORT, now: float | None = None) -> LanPeer:
+def self_peer(
+    runtime_root: Path | None,
+    *,
+    ui_port: int | None = None,
+    lan_port: int | None = None,
+    asset: str = "a_share",
+    now: float | None = None,
+) -> LanPeer:
     machine = load_machine_identity(runtime_root)
     host = local_lan_ip()
     return LanPeer(
         machine_id=str(machine.get("machine_id") or ""),
         hostname=socket.gethostname(),
         host=host,
-        port=LAN_PORT,
+        port=int(lan_port or LAN_PORT),
         serial_prefix=int(machine.get("serial_prefix") or 10),
         last_seen=float(now if now is not None else time.time()),
         ui_port=int(ui_port or UI_PORT),
+        asset=normalize_asset(asset),
     )

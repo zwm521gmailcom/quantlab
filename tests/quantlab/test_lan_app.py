@@ -15,13 +15,37 @@ def test_parse_beacon_and_ttl() -> None:
     assert peer is not None
     assert peer.host == "10.0.0.2"
     assert peer.ui_port == 8765
+    assert peer.asset == "a_share"
     registry = PeerRegistry(ttl=15)
     registry.note(peer)
     listed = registry.online(now=110, self_id="other")[0]
     assert listed["machine_id"] == "abcd1234"
     assert listed["ui_port"] == 8765
     assert listed["ui_url"] == "http://10.0.0.2:8765/"
+    assert listed["asset"] == "a_share"
     assert registry.online(now=120, self_id="other") == []
+
+
+def test_lan_registry_hides_peers_for_other_asset() -> None:
+    from quantlab.services.lan_peers import beacon_payload
+
+    share = parse_beacon(
+        beacon_payload("aaaa", 10, host="10.0.0.2", ui_port=8765, sync_port=8766, asset="a_share"),
+        "10.0.0.2",
+        now=1.0,
+    )
+    coin = parse_beacon(
+        beacon_payload("bbbb", 11, host="10.0.0.3", ui_port=8775, sync_port=8776, asset="crypto"),
+        "10.0.0.3",
+        now=1.0,
+    )
+    registry = PeerRegistry(ttl=15)
+    registry.note(share)
+    registry.note(coin)
+    listed = registry.online(now=2.0, self_id="aaaa", asset="a_share")
+    assert [item["machine_id"] for item in listed] == ["aaaa"]
+    crypto_listed = registry.online(now=2.0, self_id="bbbb", asset="crypto")
+    assert [item["machine_id"] for item in crypto_listed] == ["bbbb"]
 
 
 def test_prefer_lan_ip_skips_vpn_fakeip() -> None:
@@ -74,6 +98,8 @@ def test_lan_app_serves_results_and_rejects_escape(tmp_path: Path) -> None:
     assert hello.status_code == 200
     assert hello.json()["machine_id"]
     assert int(hello.json()["ui_port"]) == 8765
+    assert hello.json()["asset"] == "a_share"
+    assert hello.json()["lan_port"] == 8766
     assert run_id in client.get("/results/index").json()["runs"]
     assert client.get(f"/results/{run_id}/file", params={"rel": "metrics.json"}).content == b"{}"
     assert client.get("/data/file", params={"rel": "../runtime/config/machine.json"}).status_code == 400

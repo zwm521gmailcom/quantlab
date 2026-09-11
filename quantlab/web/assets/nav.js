@@ -104,6 +104,14 @@
     const subtitle = document.createElement("small");
     subtitle.textContent = "本地量化研究工作台";
     brand.append(subtitle);
+    fetch("/api/health")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((health) => {
+        if (!health || !health.asset_label) return;
+        subtitle.textContent = `本实例：${health.asset_label}`;
+        name.textContent = `QuantLab · ${health.asset_label}`;
+      })
+      .catch(() => {});
     const hideToggle = document.createElement("button");
     hideToggle.className = "nav-autohide-toggle";
     hideToggle.type = "button";

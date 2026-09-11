@@ -685,6 +685,8 @@ def test_nav_exposes_rule_backtest_page() -> None:
     assert '{ href: "/backtests/plan", label: "回测计划", active:' in nav
     assert '{ href: "/backtests/rules", label: "规则回测", active: exact("/backtests/rules") }' in nav
     assert "规则回测" in nav
+    assert "/api/health" in nav
+    assert "asset_label" in nav
 
 
 def test_backtest_new_does_not_embed_rule_strategy() -> None:
