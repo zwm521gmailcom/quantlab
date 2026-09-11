@@ -191,7 +191,7 @@ def bind_sync_progress(settings: Settings, progress: SyncProgress | None = None)
 
 
 class LanSource(Protocol):
-    def results_index(self) -> dict[str, list[str]]: ...
+    def results_index(self) -> dict[str, Any]: ...
     def result_tree(self, run_id: str) -> list[dict[str, Any]]: ...
     def read_result_file(self, run_id: str, rel: str) -> bytes: ...
     def read_deleted(self, run_id: str) -> bytes | None: ...
@@ -207,12 +207,14 @@ class LocalLanSource:
     def _results(self) -> Path:
         return self.settings.runtime_root / "results"
 
-    def results_index(self) -> dict[str, list[str]]:
+    def results_index(self) -> dict[str, Any]:
         root = self._results()
+        runs = sorted(local_run_ids(root))
         return {
-            "runs": sorted(local_run_ids(root)),
+            "runs": runs,
             "deleted": sorted(local_deleted_ids(root)),
             "plans": sorted(local_plan_ids(root)),
+            "run_status": {run_id: local_result_status(root / run_id) for run_id in runs},
         }
 
     def result_tree(self, run_id: str) -> list[dict[str, Any]]:
@@ -247,7 +249,7 @@ class HttpLanSource:
         self.client = client or httpx.Client(timeout=HTTP_TIMEOUT)
         self._hello: dict[str, Any] | None = None
 
-    def results_index(self) -> dict[str, list[str]]:
+    def results_index(self) -> dict[str, Any]:
         response = self.client.get(f"{self.base}/results/index")
         response.raise_for_status()
         payload = response.json()
@@ -444,15 +446,19 @@ def pull_results(
     pulled_deleted: list[str] = []
     have_deleted = local_deleted_ids(results)
     pending_runs: list[tuple[str, list[dict[str, Any]]]] = []
+    remote_status = index.get("run_status") if isinstance(index.get("run_status"), dict) else {}
     for run_id in index.get("runs") or []:
         try:
             run_id = validate_run_id(str(run_id))
         except ValueError:
             continue
-        if source_result_status(source, run_id) not in _FINISHED_STATUSES:
-            continue
         folder = results / run_id
         if local_result_status(folder) in _FINISHED_STATUSES:
+            continue
+        status = str(remote_status.get(run_id) or "")
+        if not status:
+            status = source_result_status(source, run_id)
+        if status not in _FINISHED_STATUSES:
             continue
         pending_runs.append((run_id, source.result_tree(run_id)))
     pending_deleted: list[str] = []
@@ -532,6 +538,10 @@ def _pull_plan_snapshots(
             continue
         root.mkdir(parents=True, exist_ok=True)
         dest = safe_under(root, f"{plan_id}.json")
+        if dest.is_file() and dest.read_bytes() == payload:
+            if progress is not None:
+                progress.tick(detail=f"{PLANS_DIR_NAME}/{plan_id}")
+            continue
         dest.write_bytes(payload)
         pulled.append(plan_id)
         if progress is not None:

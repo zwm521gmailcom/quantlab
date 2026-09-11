@@ -18,6 +18,7 @@ from quantlab.services.lan_sync import (
     HttpLanSource,
     local_deleted_ids,
     local_plan_ids,
+    local_result_status,
     local_run_ids,
     pull_market,
     pull_results,
@@ -51,11 +52,17 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
         return _hello(settings)
 
     @app.get("/results/index")
-    def results_index() -> dict[str, list[str]]:
+    def results_index() -> dict[str, object]:
         if database is not None:
             export_plan_snapshots(settings, database)
         root = settings.runtime_root / "results"
-        return {"runs": sorted(local_run_ids(root)), "deleted": sorted(local_deleted_ids(root)), "plans": sorted(local_plan_ids(root))}
+        runs = sorted(local_run_ids(root))
+        return {
+            "runs": runs,
+            "deleted": sorted(local_deleted_ids(root)),
+            "plans": sorted(local_plan_ids(root)),
+            "run_status": {run_id: local_result_status(root / run_id) for run_id in runs},
+        }
 
     @app.get("/results/{run_id}/tree")
     def result_tree(run_id: str) -> list[dict[str, object]]:
