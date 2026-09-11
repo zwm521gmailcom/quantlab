@@ -389,6 +389,8 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert "summary?.model_name" in plan_js
     assert 'dataset.sort = column.key' in plan_js or "dataset.sort" in plan_js
     assert "重算" in plan_js
+    assert '{key: "retry", label: "重算"' in plan_js
+    assert "plan-col-retry" in plan_js
     assert '["failed", "skipped", "completed"].includes(item.status)' in plan_js
     workbench = client.get("/backtests/new").text
     workbench_js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")

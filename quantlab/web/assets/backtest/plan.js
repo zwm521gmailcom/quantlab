@@ -11,15 +11,16 @@ const STATUS = {
   skipped: "已跳过",
 };
 const PLAN_COLUMNS = [
-  {key: "", label: "", sortable: false},
-  {key: "name", label: "任务", type: "text"},
-  {key: "factors", label: "因子", type: "text"},
-  {key: "window", label: "训练 / 回测", type: "text"},
-  {key: "model", label: "模型", type: "text"},
-  {key: "status", label: "状态", type: "text"},
-  {key: "return", label: "收益率", type: "number"},
-  {key: "max_drawdown", label: "最大回撤", type: "number"},
-  {key: "run", label: "运行", type: "text"},
+  {key: "", label: "", col: "check", sortable: false},
+  {key: "name", label: "任务", type: "text", col: "name"},
+  {key: "factors", label: "因子", type: "text", col: "factors"},
+  {key: "retry", label: "重算", col: "retry", sortable: false},
+  {key: "window", label: "训练 / 回测", type: "text", col: "window"},
+  {key: "model", label: "模型", type: "text", col: "model"},
+  {key: "status", label: "状态", type: "text", col: "status"},
+  {key: "return", label: "收益率", type: "number", col: "return"},
+  {key: "max_drawdown", label: "最大回撤", type: "number", col: "drawdown"},
+  {key: "run", label: "运行", type: "text", col: "run"},
 ];
 const PLAN_PAGE_KEY = "quantlab-plan-page-size";
 let plans = [];
@@ -91,7 +92,7 @@ function sortedItems(items) {
 
 function setSort(key) {
   const column = PLAN_COLUMNS.find((item) => item.key === key);
-  if (!column || !key) return;
+  if (!column || !key || column.sortable === false) return;
   const numeric = column.type === "number";
   if (sortKey !== key) {
     sortKey = key;
@@ -104,11 +105,11 @@ function setSort(key) {
   renderTable();
 }
 
-function metricCell(item, key) {
+function metricCell(item, key, col) {
   const metric = item.metrics?.[key];
   const cell = document.createElement("td");
   const display = metric?.display || "—";
-  cell.className = "archive-num";
+  cell.className = `archive-num plan-col-${col}`;
   cell.textContent = display;
   if (display === "—" || metric?.value == null || metric?.value === "") {
     cell.classList.add("is-empty");
@@ -162,14 +163,19 @@ function renderTable() {
   const headRow = document.createElement("tr");
   PLAN_COLUMNS.forEach((column) => {
     const th = document.createElement("th");
-    if (!column.key) {
-      const input = document.createElement("input");
-      input.id = "plan-select-all";
-      input.type = "checkbox";
-      input.setAttribute("aria-label", "全选任务");
-      th.append(input);
+    th.className = `plan-col-${column.col}`;
+    if (column.sortable === false) {
+      if (!column.key) {
+        const input = document.createElement("input");
+        input.id = "plan-select-all";
+        input.type = "checkbox";
+        input.setAttribute("aria-label", "全选任务");
+        th.append(input);
+      } else {
+        th.textContent = column.label;
+      }
     } else {
-      th.className = "plan-sortable";
+      th.classList.add("plan-sortable");
       th.dataset.sort = column.key;
       th.setAttribute("aria-sort", sortKey === column.key ? (sortDir === "asc" ? "ascending" : "descending") : "none");
       const button = document.createElement("button");
@@ -212,10 +218,29 @@ function renderTable() {
       }
     });
     check.append(input);
+    check.className = "plan-col-check";
     const name = document.createElement("td");
+    name.className = "plan-col-name";
     name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><span class="archive-meta"></span></div>`;
     name.querySelector(".archive-name").textContent = item.name;
     name.querySelector(".archive-meta").textContent = item.item_id;
+    const factors = document.createElement("td");
+    factors.className = "plan-col-factors";
+    const factorList = document.createElement("div");
+    factorList.className = "plan-factors";
+    const fields = item.summary?.factors || [];
+    if (!fields.length) {
+      factorList.textContent = "—";
+    } else {
+      fields.forEach((field) => {
+        const chip = document.createElement("span");
+        chip.textContent = field;
+        factorList.append(chip);
+      });
+    }
+    factors.append(factorList);
+    const retryCell = document.createElement("td");
+    retryCell.className = "plan-col-retry";
     if (
       ["failed", "skipped", "completed"].includes(item.status)
       && current.status !== "running"
@@ -230,33 +255,22 @@ function renderTable() {
         event.stopPropagation();
         startPlan([item.item_id]);
       });
-      name.querySelector(".archive-run").append(retry);
-    }
-    const factors = document.createElement("td");
-    const factorList = document.createElement("div");
-    factorList.className = "plan-factors";
-    const fields = item.summary?.factors || [];
-    if (!fields.length) {
-      factorList.textContent = "—";
+      retryCell.append(retry);
     } else {
-      fields.forEach((field) => {
-        const chip = document.createElement("span");
-        chip.textContent = field;
-        factorList.append(chip);
-      });
+      retryCell.textContent = "—";
     }
-    factors.append(factorList);
     const windowCell = document.createElement("td");
-    windowCell.className = "archive-window";
+    windowCell.className = "archive-window plan-col-window";
     windowCell.innerHTML = `<div></div><div></div>`;
     windowCell.children[0].textContent = item.summary?.train || "—";
     windowCell.children[1].textContent = item.summary?.test || "—";
     const model = document.createElement("td");
-    model.className = "archive-window";
+    model.className = "archive-window plan-col-model";
     model.innerHTML = `<div></div><div></div>`;
     model.children[0].textContent = item.summary?.model_name || item.summary?.kind || "—";
     model.children[1].textContent = item.summary?.walk_forward === "rolling" ? "定长回看" : "一次训练";
     const status = document.createElement("td");
+    status.className = "plan-col-status";
     const mark = document.createElement("span");
     mark.className = `archive-status status-${item.status}`;
     mark.textContent = STATUS[item.status] || item.status;
@@ -268,6 +282,7 @@ function renderTable() {
       status.append(err);
     }
     const run = document.createElement("td");
+    run.className = "plan-col-run";
     if (item.run_id) {
       const link = document.createElement("a");
       link.href = `/backtests/runs/${encodeURIComponent(item.run_id)}`;
@@ -276,7 +291,18 @@ function renderTable() {
     } else {
       run.textContent = "尚未运行";
     }
-    row.append(check, name, factors, windowCell, model, status, metricCell(item, "return"), metricCell(item, "max_drawdown"), run);
+    row.append(
+      check,
+      name,
+      factors,
+      retryCell,
+      windowCell,
+      model,
+      status,
+      metricCell(item, "return", "return"),
+      metricCell(item, "max_drawdown", "drawdown"),
+      run,
+    );
     body.append(row);
   });
   table.append(body);

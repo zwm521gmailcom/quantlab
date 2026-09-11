@@ -95,13 +95,13 @@ def test_narrow_pages_constrain_wide_content_inside_the_viewport() -> None:
 
 def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     css = Path("quantlab/web/assets/app.css").read_text()
-    assert ".archive-grid.plan-grid th:nth-child(1)" in css
+    assert ".archive-grid.plan-grid .plan-col-check" in css
     assert "width: 40px; min-width: 40px; max-width: 40px;" in css
     html = _page("backtest_plan.html")
     js = _first_party_js()
     source = html + js
-    assert "app.css?v=20260911planretry3" in html
-    assert "plan.js?v=20260911retry3" in html
+    assert "app.css?v=20260911planretry4" in html
+    assert "plan.js?v=20260911retry4" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
     assert "QuantLabPager.mount" in js
@@ -123,8 +123,10 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert "最大回撤" in source
     assert "plan-sortable" in source
     assert "function setSort(key)" in js
-    assert "metricCell(item, \"return\")" in js
-    assert "table-layout: fixed" in css
+    assert 'metricCell(item, "return", "return")' in js
+    assert "table-layout: auto" in css
+    assert "plan-col-retry" in js
+    assert '{key: "retry", label: "重算"' in js
     assert ".plan-factors { display: flex; flex-wrap: wrap;" in css
     assert ".plan-factors span" in css
     assert "th.plan-sortable" in css
