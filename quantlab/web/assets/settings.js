@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+const LAN_SYNC_CATS = ["canonical", "derived", "raw", "source_tables"];
 function workerValue(id) {
   const raw = $(id).value.trim();
   return raw ? Number(raw) : 0;
@@ -32,6 +33,11 @@ async function load() {
   if ($("machine-id")) $("machine-id").value = machine.machine_id || "";
   if ($("serial-prefix")) $("serial-prefix").value = machine.serial_prefix == null ? "" : String(machine.serial_prefix);
   if ($("lan-market-0400")) $("lan-market-0400").checked = !!(x.lan && x.lan.market_sync_at_0400);
+  const savedCats = (x.lan && x.lan.market_sync_categories) || LAN_SYNC_CATS;
+  LAN_SYNC_CATS.forEach((id) => {
+    const box = $(`lan-cat-${id}`);
+    if (box) box.checked = savedCats.indexOf(id) >= 0;
+  });
   if ($("instance-asset")) $("instance-asset").value = (x.instance && x.instance.asset) || "a_share";
   if ($("instance-port")) $("instance-port").value = x.instance && x.instance.port != null ? String(x.instance.port) : "";
   if ($("instance-lan-port")) $("instance-lan-port").value = x.instance && x.instance.lan_port != null ? String(x.instance.lan_port) : "";
@@ -248,6 +254,30 @@ async function withProgressPoll(work) {
 }
 
 const ASSET_LABELS = {a_share: "A股", crypto: "数字货币"};
+function selectedSyncCategories() {
+  return LAN_SYNC_CATS.filter((id) => {
+    const box = $(`lan-cat-${id}`);
+    return box && box.checked;
+  });
+}
+async function saveLanCategories() {
+  const categories = selectedSyncCategories();
+  if (!categories.length) {
+    lanStatus("至少勾选一类数据再同步", false);
+    return [];
+  }
+  const r = await fetch("/api/settings", {
+    method: "PUT",
+    headers: {"content-type": "application/json"},
+    body: JSON.stringify({lan: {market_sync_categories: categories}}),
+  });
+  if (!r.ok) {
+    lanStatus("保存同步类别失败", false);
+    return [];
+  }
+  return categories;
+}
+
 function renderPeers(peers, meta) {
   const root = $("lan-peers");
   if (!root) return;
@@ -299,7 +329,7 @@ function renderPeers(peers, meta) {
     const action = document.createElement("td");
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = "以此机为源头同步行情";
+    button.textContent = "以此机为源头同步所选数据";
     button.addEventListener("click", () => syncMarket(peer.machine_id));
     action.append(button, createPeerProgress(peer.machine_id));
     row.append(hostname, machine, version, asset, address, prefix, page, action);
@@ -339,35 +369,43 @@ async function syncResults() {
 }
 
 async function syncMarket(machineId) {
-  lanStatus("正在同步行情…", true);
+  const categories = await saveLanCategories();
+  if (!categories.length) return;
+  lanStatus("正在同步所选数据…", true);
   const x = await withProgressPoll(async () => {
     const r = await fetch("/api/lan/sync/market", {
       method: "POST",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify(machineId ? {machine_id: machineId} : {}),
+      body: JSON.stringify(machineId ? {machine_id: machineId, categories} : {categories}),
     });
     const body = await r.json();
     return {ok: r.ok, body};
   });
   if (!x.ok) {
-    lanStatus(x.body.message || "同步行情失败", false);
+    lanStatus(x.body.message || "同步数据失败", false);
     return;
   }
   const copied = (x.body.local && x.body.local.copied) || 0;
+  const skipped = (x.body.local && x.body.local.skipped) || 0;
   const peers = (x.body.peers || []).length;
-  lanStatus(`行情已从 ${x.body.source_machine_id || "本机"} 同步：本机写入 ${copied} 个文件，已通知 ${peers} 台`, true);
+  lanStatus(`已从 ${x.body.source_machine_id || "本机"} 同步：写入 ${copied}，跳过相同 ${skipped}，已通知 ${peers} 台`, true);
 }
 
 if ($("lan-sync-results")) {
   $("lan-sync-results").onclick = syncResults;
   $("lan-sync-market").onclick = () => syncMarket("");
+  LAN_SYNC_CATS.forEach((id) => {
+    const box = $(`lan-cat-${id}`);
+    if (box) box.onchange = () => { saveLanCategories(); };
+  });
   $("lan-market-0400").onchange = async () => {
+    const categories = selectedSyncCategories();
     const r = await fetch("/api/settings", {
       method: "PUT",
       headers: {"content-type": "application/json"},
-      body: JSON.stringify({lan: {market_sync_at_0400: $("lan-market-0400").checked}}),
+      body: JSON.stringify({lan: {market_sync_at_0400: $("lan-market-0400").checked, market_sync_categories: categories.length ? categories : undefined}}),
     });
-    lanStatus(r.ok ? ($("lan-market-0400").checked ? "已打开每天 04:00 自动同步行情" : "已关闭每天 04:00 自动同步行情") : "保存失败", r.ok);
+    lanStatus(r.ok ? ($("lan-market-0400").checked ? "已打开每天 04:00 自动同步所选类别" : "已关闭每天 04:00 自动同步") : "保存失败", r.ok);
   };
   refreshPeers();
   if (lastLanProgress.status && lastLanProgress.status !== "idle") applyProgress(lastLanProgress);

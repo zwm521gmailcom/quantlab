@@ -57,16 +57,51 @@ def test_pull_market_copies_missing_and_overwrites_different(tmp_path: Path) -> 
     left = _settings(tmp_path / "a")
     right = _settings(tmp_path / "b")
     (right.data_root / "raw").mkdir(parents=True)
-    (right.data_root / "raw" / "x.parquet").write_bytes(b"new")
+    (right.data_root / "raw" / "x.parquet").write_bytes(b"new-bytes")
     (left.data_root / "raw").mkdir(parents=True)
     (left.data_root / "raw" / "x.parquet").write_bytes(b"old")
     (left.data_root / "raw" / "only-left.parquet").write_bytes(b"keep")
     (right.data_root / "raw" / "y.parquet").write_bytes(b"yy")
     stats = pull_market(left, LocalLanSource(right))
     assert stats["copied"] >= 2
-    assert (left.data_root / "raw" / "x.parquet").read_bytes() == b"new"
+    assert (left.data_root / "raw" / "x.parquet").read_bytes() == b"new-bytes"
     assert (left.data_root / "raw" / "y.parquet").read_bytes() == b"yy"
     assert (left.data_root / "raw" / "only-left.parquet").read_bytes() == b"keep"
+    assert stats["skipped"] == 0
+
+
+def test_pull_market_skips_identical_file_without_downloading(tmp_path: Path) -> None:
+    left = _settings(tmp_path / "a")
+    right = _settings(tmp_path / "b")
+    (right.data_root / "canonical.parquet").write_bytes(b"same-bytes")
+    first = pull_market(left, LocalLanSource(right), categories=["canonical"])
+    assert first["copied"] == 1
+    assert first["skipped"] == 0
+
+    class Boom(LocalLanSource):
+        def read_data_file(self, rel: str) -> bytes:
+            raise AssertionError("identical file should not be downloaded")
+
+    second = pull_market(left, Boom(right), categories=["canonical"])
+    assert second["copied"] == 0
+    assert second["skipped"] == 1
+    assert (left.data_root / "canonical.parquet").read_bytes() == b"same-bytes"
+
+
+def test_pull_market_only_copies_selected_category(tmp_path: Path) -> None:
+    left = _settings(tmp_path / "a")
+    right = _settings(tmp_path / "b")
+    (right.data_root / "canonical.parquet").write_bytes(b"can")
+    (right.data_root / "raw").mkdir(parents=True)
+    (right.data_root / "raw" / "x.parquet").write_bytes(b"raw")
+    (right.data_root / "derived").mkdir(parents=True)
+    (right.data_root / "derived" / "f.parquet").write_bytes(b"fac")
+    stats = pull_market(left, LocalLanSource(right), categories=["canonical"])
+    assert stats["copied"] == 1
+    assert stats["categories"] == ["canonical"]
+    assert (left.data_root / "canonical.parquet").read_bytes() == b"can"
+    assert not (left.data_root / "raw").exists()
+    assert not (left.data_root / "derived").exists()
 
 
 def test_pull_results_skips_queued_remote_and_upgrades_local_stub(tmp_path: Path) -> None:
@@ -145,13 +180,13 @@ def test_coordinate_market_pulls_when_source_is_not_self(tmp_path: Path) -> None
     left = _settings(tmp_path / "a")
     right = _settings(tmp_path / "b")
     (right.data_root / "raw").mkdir(parents=True)
-    (right.data_root / "raw" / "x.parquet").write_bytes(b"src")
+    (right.data_root / "raw" / "x.parquet").write_bytes(b"src-bytes")
     (left.data_root / "raw").mkdir(parents=True)
     (left.data_root / "raw" / "x.parquet").write_bytes(b"old")
     notified: list[tuple[str, str, int]] = []
 
-    def ask(peer: dict, host: str, port: int) -> dict[str, int]:
-        notified.append((str(peer["machine_id"]), host, port))
+    def ask(peer: dict, host: str, port: int, categories=None) -> dict[str, int]:
+        notified.append((str(peer["machine_id"]), host, port, tuple(categories or ())))
         return {"copied": 1}
 
     stats = coordinate_market_sync(
@@ -166,9 +201,9 @@ def test_coordinate_market_pulls_when_source_is_not_self(tmp_path: Path) -> None
         source_for=lambda host, port: LocalLanSource(right),
         ask_peer=ask,
     )
-    assert (left.data_root / "raw" / "x.parquet").read_bytes() == b"src"
+    assert (left.data_root / "raw" / "x.parquet").read_bytes() == b"src-bytes"
     assert stats["local"]["copied"] >= 1
-    assert notified == [("other", "peer-host", 8766)]
+    assert notified == [("other", "peer-host", 8766, ("canonical", "derived", "raw", "source_tables"))]
 
 
 def test_coordinate_market_self_source_does_not_rewrite_local(tmp_path: Path) -> None:
@@ -182,7 +217,7 @@ def test_coordinate_market_self_source_does_not_rewrite_local(tmp_path: Path) ->
         "self",
         self_id="self",
         source_for=lambda host, port: LocalLanSource(left),
-        ask_peer=lambda peer, host, port: {"copied": 0},
+        ask_peer=lambda peer, host, port, categories=None: {"copied": 0},
     )
     assert stats["local"]["copied"] == 0
     assert (left.data_root / "keep.parquet").read_bytes() == b"mine"

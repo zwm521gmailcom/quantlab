@@ -138,7 +138,7 @@ def test_http_source_pulls_via_lan_app(tmp_path: Path) -> None:
         json.dumps({"schema": 1, "run_id": run_id, "status": "completed", "config": {"name": "对端"}}),
         encoding="utf-8",
     )
-    (source.data_root / "mkt.parquet").write_bytes(b"mkt")
+    (source.data_root / "canonical.parquet").write_bytes(b"mkt")
     client = TestClient(create_lan_app(source))
     remote = HttpLanSource("http://testserver", client=client)
     pulled = pull_results(dest, remote)
@@ -146,7 +146,7 @@ def test_http_source_pulls_via_lan_app(tmp_path: Path) -> None:
     assert run_id in pulled["pulled_runs"]
     assert (dest.runtime_root / "results" / run_id / "metrics.json").read_bytes() == b"ok"
     assert market["copied"] == 1
-    assert (dest.data_root / "mkt.parquet").read_bytes() == b"mkt"
+    assert (dest.data_root / "canonical.parquet").read_bytes() == b"mkt"
 
 
 def test_lan_index_exports_sqlite_plans(tmp_path: Path) -> None:

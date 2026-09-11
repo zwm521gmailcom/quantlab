@@ -11,7 +11,7 @@ from quantlab import __version__
 from quantlab.config import Settings
 from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.database import Database
-from quantlab.services.lan_files import iter_rel_files, safe_under
+from quantlab.services.lan_files import filter_data_tree, iter_rel_files, normalize_data_categories, safe_under
 from quantlab.services.lan_peers import local_lan_ip, validate_lan_host, validate_lan_port
 from quantlab.services.lan_sync import (
     DELETED_DIR,
@@ -108,8 +108,15 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
         return Response(content=path.read_bytes(), media_type="application/json")
 
     @app.get("/data/tree")
-    def data_tree() -> list[dict[str, object]]:
-        return iter_rel_files(settings.data_root)
+    def data_tree(categories: str = "") -> list[dict[str, object]]:
+        items = iter_rel_files(settings.data_root)
+        text = str(categories or "").strip()
+        if not text:
+            return items
+        try:
+            return filter_data_tree(items, text)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
 
     @app.get("/data/file")
     def data_file(rel: str = Query(...)) -> Response:
@@ -131,10 +138,15 @@ def create_lan_app(settings: Settings, database: Database | None = None) -> Fast
         try:
             host = validate_lan_host(body.get("source_host"))
             port = validate_lan_port(body.get("source_port"))
+            categories = normalize_data_categories(body.get("categories"))
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         with httpx.Client(timeout=HTTP_TIMEOUT) as client:
-            stats = pull_market(settings, HttpLanSource(f"http://{host}:{port}", client=client))
+            stats = pull_market(
+                settings,
+                HttpLanSource(f"http://{host}:{port}", client=client),
+                categories=categories,
+            )
         return {"ok": True, **stats}
 
     @app.post("/pull-results")

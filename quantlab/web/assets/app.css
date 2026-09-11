@@ -363,6 +363,8 @@ main, .card { min-width: 0; }
 .settings-fields .field-help code { font-size: 11px; }
 .settings-help, .card > p.muted { margin: 0 0 14px; color: var(--color-text-muted); font-size: 12px; line-height: 1.65; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.lan-sync-cats { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0 4px; }
+.lan-sync-cats .lan-check { margin: 0; }
 .lan-check { display: flex; align-items: center; gap: 8px; margin: 12px 0 0; color: var(--color-text-secondary); font-size: 13px; }
 .lan-check input[type="checkbox"] { width: 16px; min-width: 16px; min-height: 16px; padding: 0; }
 #lan-peers { margin: 0 0 14px; overflow-x: auto; }

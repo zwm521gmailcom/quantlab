@@ -10,11 +10,15 @@ from typing import Any
 from quantlab import __version__
 from quantlab.config import Settings, asset_label, load_instance_file, save_instance_file
 from quantlab.services.asset_layout import directory_plan
+from quantlab.services.lan_files import DATA_SYNC_CATEGORIES, normalize_data_categories
 from quantlab.services.machine_identity import load_machine_identity, save_serial_prefix
 
 DEFAULTS: dict[str, Any] = {"top_n": 10, "rebalance_days": 2, "capital": 1_000_000, "benchmark": "000300.SH", "buy_fee": 0.0003, "sell_fee": 0.0005, "slippage": 0.0005}
 COMPUTE_DEFAULTS: dict[str, Any] = {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
-LAN_DEFAULTS: dict[str, Any] = {"market_sync_at_0400": False}
+LAN_DEFAULTS: dict[str, Any] = {
+    "market_sync_at_0400": False,
+    "market_sync_categories": list(DATA_SYNC_CATEGORIES),
+}
 _ACTIVE_COMPUTE: dict[str, Any] = dict(COMPUTE_DEFAULTS)
 FOLD_PROCESS_BYTES = 8 * 1024**3
 
@@ -120,7 +124,15 @@ def _coerce_compute(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _coerce_lan(value: dict[str, Any]) -> dict[str, Any]:
-    return {"market_sync_at_0400": bool(value.get("market_sync_at_0400"))}
+    raw_cats = value.get("market_sync_categories", LAN_DEFAULTS["market_sync_categories"])
+    try:
+        categories = list(normalize_data_categories(raw_cats))
+    except ValueError as error:
+        raise ValueError("market_sync_categories is invalid") from error
+    return {
+        "market_sync_at_0400": bool(value.get("market_sync_at_0400")),
+        "market_sync_categories": categories,
+    }
 
 
 class SettingsService:

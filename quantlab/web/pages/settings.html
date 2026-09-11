@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>QuantLab · 系统设置</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260911lanprogress">
+    <link rel="stylesheet" href="/assets/app.css?v=20260911syncat">
   </head>
   <body>
     <div class="shell">
@@ -67,7 +67,13 @@
         </section>
         <section class="card">
           <h3>局域网</h3>
-          <p class="settings-help">三台都要监听局域网，不能只绑 127.0.0.1。页面端口和同步端口在上面自行设定；默认是 <code>0.0.0.0:8765</code> 和 UDP/TCP 8766，请在防火墙放行这两个端口。列表只显示同一资产版本的机器。程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启。没开 QuantLab 的机器不会出现。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）；行情只同步 <code>data/</code>。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。A 股实例不要和数字货币实例互相点同步。</p>
+          <p class="settings-help">三台都要监听局域网，不能只绑 127.0.0.1。页面端口和同步端口在上面自行设定；默认是 <code>0.0.0.0:8765</code> 和 UDP/TCP 8766，请在防火墙放行这两个端口。列表只显示同一资产版本的机器。程序更新仍走 GitHub：本机 push 并合并后，其他机器 <code>git pull</code> 再重启。没开 QuantLab 的机器不会出现。回测产物互相补缺（已有目录不覆盖，<code>_deleted/</code> 合并）。数据同步先对文件大小和修改时间，对端已有且相同的不下载；只推下面勾选的类别，不同步因子库 SQLite 和 <code>quantlab_runtime/factors/</code>。不要用 git 同步 <code>data/</code>、<code>quantlab_runtime/results/</code>、<code>db/</code>、<code>config/</code>。A 股实例不要和数字货币实例互相点同步。</p>
+          <div class="lan-sync-cats" role="group" aria-label="同步数据类别">
+            <label class="lan-check"><input id="lan-cat-canonical" type="checkbox" checked> 标准宽表</label>
+            <label class="lan-check"><input id="lan-cat-derived" type="checkbox" checked> 旁路因子</label>
+            <label class="lan-check"><input id="lan-cat-raw" type="checkbox" checked> 原始 raw</label>
+            <label class="lan-check"><input id="lan-cat-source_tables" type="checkbox" checked> 来源整理表</label>
+          </div>
           <div id="lan-peers"></div>
           <div class="lan-sync-actions">
             <div class="lan-sync-item">
@@ -83,7 +89,7 @@
               </div>
             </div>
             <div class="lan-sync-item">
-              <button id="lan-sync-market" type="button">开始同步行情</button>
+              <button id="lan-sync-market" type="button">开始同步所选数据</button>
               <div id="lan-progress-market" class="lan-sync-progress">
                 <div class="lan-sync-progress-head">
                   <span>总进度 <strong data-role="counts">0 / 0</strong></span>
@@ -97,7 +103,7 @@
           </div>
           <label class="lan-check">
             <input id="lan-market-0400" type="checkbox">
-            每天 04:00 自动同步行情（本机当源头；错过不补跑；服务须在跑）
+            每天 04:00 自动同步所选类别（本机当源头；错过不补跑；服务须在跑）
           </label>
           <p id="lan-status" class="state"></p>
         </section>
@@ -163,7 +169,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260911ver"></script>
+    <script src="/assets/settings.js?v=20260911syncat"></script>
     <script src="/assets/nav.js?v=20260911ver"></script>
   </body>
 </html>

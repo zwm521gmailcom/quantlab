@@ -15,7 +15,7 @@ def test_settings_lan_sync_shows_total_progress_and_percent(browser_server: str,
     expect(peer).to_be_visible()
     expect(peer).to_contain_text("总进度")
     expect(peer).to_contain_text("0%")
-    page.get_by_role("button", name="开始同步行情").click()
+    page.get_by_role("button", name="开始同步所选数据").click()
     expect(market).to_contain_text("100%")
     progress = page.request.get(f"{browser_server}/api/lan/sync/progress").json()
     assert progress["percent"] == 100
