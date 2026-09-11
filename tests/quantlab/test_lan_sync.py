@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import httpx
+
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
-from quantlab.services.lan_sync import LocalLanSource, SyncProgress, bind_sync_progress, pull_market, pull_results, sync_progress, sync_results
+from quantlab.services.lan_sync import HttpLanSource, LocalLanSource, SyncProgress, bind_sync_progress, pull_market, pull_results, sync_progress, sync_results
 from quantlab.services.machine_identity import load_machine_identity
 from quantlab.services.result_archive import ResultArchiveService
 
@@ -289,6 +291,57 @@ def test_coordinate_results_fills_global_progress(tmp_path: Path) -> None:
     assert snap["percent"] == 100
     assert snap["done"] == snap["total"]
     assert snap["total"] >= 1
+
+
+def test_http_source_falls_back_to_ui_plans_when_old_lan_index_omits_them(tmp_path: Path) -> None:
+    dest = _settings(tmp_path / "dst")
+    plan_id = "plan-fromui00001"
+    ui_plan = {
+        "plan_id": plan_id,
+        "name": "收益增强验证 · 成分滚动模型",
+        "status": "draft",
+        "closed": False,
+        "created_at": "2026-09-11T00:00:00+00:00",
+        "updated_at": "2026-09-11T00:00:00+00:00",
+        "items": [
+            {
+                "item_id": "item-fromui0001",
+                "sort_order": 1,
+                "selected": True,
+                "name": "未开始",
+                "config": {"name": "未开始"},
+                "status": "pending",
+                "run_id": None,
+            }
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/results/index":
+            return httpx.Response(200, json={"runs": [], "deleted": []})
+        if path == "/hello":
+            return httpx.Response(
+                200,
+                json={"service": "quantlab-lan", "machine_id": "5ff7b173", "ui_port": 8765, "host": "192.168.1.39"},
+            )
+        if path.startswith("/plans/"):
+            return httpx.Response(404, json={"detail": "not found"})
+        if path == "/api/backtest-plans":
+            return httpx.Response(200, json={"items": [ui_plan]})
+        if path == f"/api/backtest-plans/{plan_id}":
+            return httpx.Response(200, json=ui_plan)
+        return httpx.Response(404)
+
+    remote = HttpLanSource(
+        "http://192.168.1.39:8766",
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    stats = pull_results(dest, remote)
+    assert plan_id in stats["pulled_plans"]
+    copied = dest.runtime_root / "results" / "_plans" / f"{plan_id}.json"
+    assert copied.is_file()
+    assert json.loads(copied.read_text(encoding="utf-8"))["name"] == "收益增强验证 · 成分滚动模型"
 
 
 def test_pull_results_copies_plan_snapshot_even_when_run_already_exists(tmp_path: Path) -> None:
