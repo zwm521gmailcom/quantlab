@@ -216,6 +216,22 @@ function renderTable() {
     name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><span class="archive-meta"></span></div>`;
     name.querySelector(".archive-name").textContent = item.name;
     name.querySelector(".archive-meta").textContent = item.item_id;
+    if (
+      ["failed", "skipped", "completed"].includes(item.status)
+      && current.status !== "running"
+      && !current.closed
+    ) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "plan-retry";
+      retry.textContent = "重算";
+      retry.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        startPlan([item.item_id]);
+      });
+      name.querySelector(".archive-run").append(retry);
+    }
     const factors = document.createElement("td");
     const factorList = document.createElement("div");
     factorList.className = "plan-factors";
@@ -250,22 +266,6 @@ function renderTable() {
       err.className = "archive-meta";
       err.textContent = item.error_message;
       status.append(err);
-    }
-    if (
-      ["failed", "skipped", "completed"].includes(item.status)
-      && current.status !== "running"
-      && !current.closed
-    ) {
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.className = "btn plan-retry";
-      retry.textContent = "重算";
-      retry.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        startPlan([item.item_id]);
-      });
-      status.append(retry);
     }
     const run = document.createElement("td");
     if (item.run_id) {

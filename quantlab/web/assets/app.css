@@ -1043,8 +1043,13 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
 .archive-grid.plan-grid td:nth-child(n+4) { text-align: left; }
 .archive-grid.plan-grid td:nth-child(4) { width: 14%; min-width: 148px; }
 .archive-grid.plan-grid td:nth-child(5) { width: 10%; min-width: 96px; }
-.archive-grid.plan-grid td:nth-child(6) { width: 12%; min-width: 128px; overflow: visible; }
-.archive-grid.plan-grid .plan-retry { display: inline-block; margin-top: 8px; }
+.archive-grid.plan-grid td:nth-child(6) { width: 10%; min-width: 96px; }
+.archive-grid.plan-grid .plan-retry {
+  display: inline; min-height: 0; margin: 4px 0 0; padding: 0; border: 0; border-radius: 0;
+  background: transparent; color: var(--color-primary); font: inherit; font-size: 12px; font-weight: 600;
+  line-height: 1.4; cursor: pointer;
+}
+.archive-grid.plan-grid .plan-retry:hover { text-decoration: underline; }
 .archive-grid.plan-grid th:nth-child(7),
 .archive-grid.plan-grid td:nth-child(7),
 .archive-grid.plan-grid th:nth-child(8),
