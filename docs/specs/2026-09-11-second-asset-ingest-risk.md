@@ -7,10 +7,13 @@
 
 ## 结论
 
-**不要把数字货币写入现有 `canonical.parquet`，也不要覆盖 `ds_canonical_market`。**  
-现有回测、因子、工作台都绑在 A 股那一张 32 列宽表上。数字货币另起文件和 Dataset。一次回测只读一张表：A 股回测继续走旧表；要跑币，选数字货币的因子/数据集。
+**现在不要改 A 股这套 QuantLab，数字货币另起一套实例更好。**
 
-数字货币**不要补** ST、涨跌停、停牌、复权、股息、PE。缺的列就缺，回测侧关掉对应默认过滤器，而不是填 0 假装是 A 股。
+A 股回测把 `stock_scope`、涨跌停、ST、沪深代码、SSE 日历、`000300.SH` 写进了提交校验和工作台默认。数字货币只有价格、市值、份数。塞进同一进程，不是加一张表就完，而是每条默认都要分叉，还容易把已有回测跑空。
+
+另起一套的含义是：**另一份工作目录 + 另一份 `data/` + 另一份 `quantlab_runtime/` + 另一组端口。** 不是在同一目录再开一个 `serve`，也不是两套程序去 LAN 互相同步 `data/`。
+
+A 股仓库保持现状（含已修好的 `init-db` path 闸门）。数字货币在独立目录里改过滤、日历、代码规则和宽表契约。
 
 ## 第一资产现状
 
@@ -156,20 +159,43 @@ metadata.default_benchmark: BTC-USDT   # 入库时按实际基准改
 6. LAN 同步不会覆盖对端 `canonical.parquet`。
 7. 目标机本机库 INSERT，禁止覆盖 `quantlab.sqlite3`。
 
+## 建议做法：另起一套实例
+
+```text
+~/quantlab/                 # A 股，8765/8766，不要改回测默认
+  data/canonical.parquet
+  quantlab_runtime/
+
+~/quantlab-crypto/         # 数字货币，例如 8775/8776
+  data/canonical.parquet   # 这里可以就是币的宽表；不要和 A 股互相 LAN 同步
+  quantlab_runtime/
+```
+
+启动币实例时显式分开根目录和端口：
+
+```bash
+quantlab serve --project-root ~/quantlab-crypto \
+  --data-root data --runtime-root quantlab_runtime \
+  --host 0.0.0.0 --port 8775
+```
+
+LAN 的 8766 只给「同一资产的多台机器」互相同步。A 股实例和币实例不要点对方的「同步行情」：相对路径都叫 `canonical.parquet` 时会互相覆盖。
+
+代码上优先 **复制目录后只改币这一份**，不要从 A 股 `main` 里开 `market_scope` 分叉。两套程序会分叉，这是有意的：先保 A 股回测不被改坏。以后若要合并，再单独做，不作为入库前提。
+
 ## 建议实施顺序
 
-1. 闸门：已发布行不改 path（本分支已做）。
-2. 回测/预览/K 线按 `market_scope=crypto` 关掉 A 股过滤器；`stock_scope` 放开 `数字货币`。没有这项，宽表入库了也跑不成回测。
-3. 登记 `ds_canonical_crypto` 与最小 schema。
-4. 数字货币因子命名空间 + `derived/crypto/` sidecar。
-5. 最后才落 `canonical_crypto.parquet`。
+1. A 股 QuantLab 维持现状，不再为数字货币改回测默认。
+2. 复制或单独 clone 到 `quantlab-crypto/`，换端口和 `quantlab_runtime/`，不要共用 A 股的库和 `data/`。
+3. 在币目录里用最小字段做自己的 `canonical.parquet`，关掉涨跌停/ST/沪深范围（只改这一份代码）。
+4. 两套实例不要互相点 LAN「同步行情」。
 
 ## 明确不做
 
+- 不在 A 股 QuantLab 里加 `market_scope` 分叉来同时跑股和币
 - 不把数字货币行混进现有 A 股宽表
-- 不把现有 `canonical.parquet` 拆目录、改名或改已发布 path
 - 不把 A 股和数字货币拼进同一次回测
+- 不让两套实例互相 LAN 同步 `data/`
 - 不给币表编造涨跌停、ST、停牌、复权、股息、PE
 - 不把数字货币默默换成 `000300.SH` 基准或 SSE 日历
-- 不在本阶段做股+币混合组合
 - 不开放公网 bind、不同步 Token/机器码
