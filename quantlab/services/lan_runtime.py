@@ -207,11 +207,13 @@ def _market_scheduler(app: Any, stop: threading.Event) -> None:
             )
             if peer.machine_id:
                 registry.note(peer)
+            lan = app.state.settings_service.public().get("lan") or {}
             coordinate_market_sync(
                 settings,
                 registry.online(self_id=self_id, asset=str(settings.asset)),
                 self_id,
                 self_id=self_id,
+                categories=lan.get("market_sync_categories"),
             )
             last_run_date = now.date()
         except Exception:

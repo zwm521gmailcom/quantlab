@@ -92,12 +92,19 @@ async def sync_market_api(request: Request) -> dict[str, object]:
         registry.note(peer)
     source_id = str(payload.get("machine_id") or "").strip() or self_id
     peers = registry.online(self_id=self_id, asset=str(settings.asset))
+    lan = request.app.state.settings_service.public().get("lan") or {}
+    categories = payload.get("categories", lan.get("market_sync_categories"))
     try:
-        return coordinate_market_sync(settings, peers, source_id, self_id=self_id)
+        return coordinate_market_sync(
+            settings, peers, source_id, self_id=self_id, categories=categories
+        )
     except SyncBusyError as error:
         raise _busy() from error
     except ValueError as error:
-        raise HTTPException(
-            status_code=404,
-            detail=_error_payload("LAN_PEER_NOT_FOUND", str(error)),
-        ) from error
+        text = str(error)
+        if "source machine" in text:
+            raise HTTPException(
+                status_code=404,
+                detail=_error_payload("LAN_PEER_NOT_FOUND", text),
+            ) from error
+        raise HTTPException(status_code=400, detail=_error_payload("LAN_SYNC_CATEGORIES", text)) from error

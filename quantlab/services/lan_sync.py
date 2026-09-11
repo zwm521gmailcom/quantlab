@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections.abc import Callable
 from pathlib import Path
@@ -13,7 +14,12 @@ import httpx
 from quantlab.config import Settings
 from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.database import Database
-from quantlab.services.lan_files import iter_rel_files, safe_under
+from quantlab.services.lan_files import (
+    filter_data_tree,
+    iter_rel_files,
+    normalize_data_categories,
+    safe_under,
+)
 from quantlab.services.lan_peers import LAN_PORT, UI_PORT, validate_lan_host, validate_lan_port
 from quantlab.services.result_sync import (
     PLANS_DIR_NAME,
@@ -196,7 +202,7 @@ class LanSource(Protocol):
     def read_result_file(self, run_id: str, rel: str) -> bytes: ...
     def read_deleted(self, run_id: str) -> bytes | None: ...
     def read_plan(self, plan_id: str) -> bytes | None: ...
-    def data_tree(self) -> list[dict[str, Any]]: ...
+    def data_tree(self, categories: tuple[str, ...] | None = None) -> list[dict[str, Any]]: ...
     def read_data_file(self, rel: str) -> bytes: ...
 
 
@@ -236,8 +242,11 @@ class LocalLanSource:
             return None
         return path.read_bytes()
 
-    def data_tree(self) -> list[dict[str, Any]]:
-        return iter_rel_files(self.settings.data_root)
+    def data_tree(self, categories: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        items = iter_rel_files(self.settings.data_root)
+        if categories is None:
+            return items
+        return filter_data_tree(items, categories)
 
     def read_data_file(self, rel: str) -> bytes:
         return safe_under(self.settings.data_root, rel).read_bytes()
@@ -359,11 +368,17 @@ class HttpLanSource:
         }
         return json.dumps(snapshot, ensure_ascii=False).encode("utf-8")
 
-    def data_tree(self) -> list[dict[str, Any]]:
-        response = self.client.get(f"{self.base}/data/tree")
+    def data_tree(self, categories: tuple[str, ...] | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if categories:
+            params["categories"] = ",".join(categories)
+        response = self.client.get(f"{self.base}/data/tree", params=params)
         response.raise_for_status()
         payload = response.json()
-        return payload if isinstance(payload, list) else []
+        items = payload if isinstance(payload, list) else []
+        if categories is None:
+            return items
+        return filter_data_tree(items, categories)
 
     def read_data_file(self, rel: str) -> bytes:
         response = self.client.get(f"{self.base}/data/file", params={"rel": rel})
@@ -549,13 +564,30 @@ def _pull_plan_snapshots(
     return pulled
 
 
+def _same_data_file(local: dict[str, Any] | None, remote: dict[str, Any]) -> bool:
+    if not local:
+        return False
+    try:
+        size = int(remote.get("size"))
+        mtime = int(remote.get("mtime"))
+    except (TypeError, ValueError):
+        return False
+    return int(local.get("size") or -1) == size and int(local.get("mtime") or -1) == mtime
+
+
 def pull_market(
-    settings: Settings, source: LanSource, progress: SyncProgress | None = None
-) -> dict[str, int]:
+    settings: Settings,
+    source: LanSource,
+    progress: SyncProgress | None = None,
+    categories: object = None,
+) -> dict[str, Any]:
+    wanted = normalize_data_categories(categories)
     root = Path(settings.data_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
+    local = {str(item.get("rel") or ""): item for item in iter_rel_files(root)}
     copied = 0
-    tree = source.data_tree()
+    skipped = 0
+    tree = source.data_tree(wanted)
     if progress is not None:
         progress.add_total(len(tree))
     for item in tree:
@@ -565,17 +597,23 @@ def pull_market(
                 progress.tick()
             continue
         dest = safe_under(root, rel)
-        incoming = source.read_data_file(rel)
-        if dest.is_file() and dest.read_bytes() == incoming:
+        if _same_data_file(local.get(rel), item):
+            skipped += 1
             if progress is not None:
                 progress.tick(detail=rel)
             continue
+        incoming = source.read_data_file(rel)
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(incoming)
+        try:
+            stamp = int(item.get("mtime"))
+            os.utime(dest, (stamp, stamp))
+        except (TypeError, ValueError, OSError):
+            pass
         copied += 1
         if progress is not None:
             progress.tick(detail=rel)
-    return {"copied": copied}
+    return {"copied": copied, "skipped": skipped, "categories": list(wanted)}
 
 
 def sync_results(settings: Settings, database: Database, sources: list[LanSource], *, rounds: int = MAX_SYNC_ROUNDS) -> dict[str, Any]:
@@ -618,14 +656,23 @@ def ask_peer_pull_results(peer: dict[str, Any], sources: list[dict[str, Any]], *
 
 
 def ask_peer_pull_market(
-    peer: dict[str, Any], source_host: str, source_port: int, *, client: httpx.Client | None = None
+    peer: dict[str, Any],
+    source_host: str,
+    source_port: int,
+    categories: object = None,
+    *,
+    client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     owns = client is None
     http = client or httpx.Client(timeout=HTTP_TIMEOUT)
     try:
         response = http.post(
             f"{_http_base(peer['host'], peer['port'])}/pull-market",
-            json={"source_host": validate_lan_host(source_host), "source_port": validate_lan_port(source_port)},
+            json={
+                "source_host": validate_lan_host(source_host),
+                "source_port": validate_lan_port(source_port),
+                "categories": list(normalize_data_categories(categories)),
+            },
         )
         response.raise_for_status()
         payload = response.json()
@@ -724,31 +771,38 @@ def coordinate_market_sync(
     source_machine_id: str,
     *,
     self_id: str,
+    categories: object = None,
     source_for: Callable[[str, int], LanSource] | None = None,
-    ask_peer: Callable[[dict[str, Any], str, int], dict[str, Any]] | None = None,
+    ask_peer: Callable[..., dict[str, Any]] | None = None,
     progress: SyncProgress | None = None,
 ) -> dict[str, Any]:
     source_id = str(source_machine_id or "").strip()
     source = next((peer for peer in peers if peer.get("machine_id") == source_id), None)
     if source is None:
         raise ValueError("source machine is not online")
+    wanted = normalize_data_categories(categories)
     _acquire_sync()
     tracker = bind_sync_progress(settings, progress)
     try:
-        tracker.start("market", message="正在同步行情…", source_machine_id=source_id)
+        tracker.start("market", message="正在同步所选数据…", source_machine_id=source_id)
         make_source = source_for or (lambda host, port: HttpLanSource(_http_base(host, port)))
         ask = ask_peer or ask_peer_pull_market
-        local = {"copied": 0}
+        local = {"copied": 0, "skipped": 0, "categories": list(wanted)}
         if source_id != str(self_id or ""):
-            local = pull_market(settings, make_source(str(source["host"]), int(source["port"])), progress=tracker)
+            local = pull_market(
+                settings,
+                make_source(str(source["host"]), int(source["port"])),
+                progress=tracker,
+                categories=wanted,
+            )
         remote: list[dict[str, Any]] = []
         targets = [peer for peer in peers if not peer.get("self") and peer.get("machine_id") != source_id]
         if targets:
             tracker.add_total(len(targets))
-            tracker.update(message="正在通知其他机器拉取行情…")
+            tracker.update(message="正在通知其他机器拉取所选数据…")
         for peer in targets:
             try:
-                stats = ask(peer, str(source["host"]), int(source["port"]))
+                stats = ask(peer, str(source["host"]), int(source["port"]), categories=list(wanted))
                 remote.append({"machine_id": peer["machine_id"], "ok": True, **stats})
             except Exception as error:
                 remote.append({"machine_id": peer["machine_id"], "ok": False, "error": str(error)})

@@ -28,7 +28,8 @@ def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> Non
     assert body["directory_plan"]["asset_classes"][1]["paths"]["raw"] == "data/hk/raw/"
     assert body["secrets"] == {"tushare_token": False}
     assert body["compute"] == {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
-    assert body["lan"] == {"market_sync_at_0400": False}
+    assert body["lan"]["market_sync_at_0400"] is False
+    assert body["lan"]["market_sync_categories"] == ["canonical", "derived", "raw", "source_tables"]
     from quantlab import __version__
     assert body["environment"]["version"] == __version__
     assert body["compute_hint"]["cpu_count"] >= 1
@@ -87,11 +88,21 @@ def test_settings_persist_lan_market_sync_flag_without_touching_machine(tmp_path
     assert saved.json()["lan"]["market_sync_at_0400"] is True
     assert saved.json()["defaults"]["top_n"] == 10
     assert saved.json()["machine"]["machine_id"] == machine_id
+    cats = api.put(
+        "/api/settings",
+        json={"lan": {"market_sync_categories": ["canonical", "derived"]}},
+    )
+    assert cats.status_code == 200
+    assert cats.json()["lan"]["market_sync_categories"] == ["canonical", "derived"]
+    assert cats.json()["lan"]["market_sync_at_0400"] is True
+    empty = api.put("/api/settings", json={"lan": {"market_sync_categories": []}})
+    assert empty.status_code == 400
     unknown = api.put("/api/settings", json={"lan": {"mirror_delete": True}})
     assert unknown.status_code == 400
     reset = api.post("/api/settings/reset")
     assert reset.status_code == 200
     assert reset.json()["lan"]["market_sync_at_0400"] is False
+    assert reset.json()["lan"]["market_sync_categories"] == ["canonical", "derived", "raw", "source_tables"]
     assert reset.json()["machine"]["machine_id"] == machine_id
 
 
@@ -150,11 +161,17 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert 'id="app-version"' in page.text
     assert 'id="lan-sync-results"' in page.text
     assert 'id="lan-sync-market"' in page.text
+    assert 'id="lan-cat-canonical"' in page.text
+    assert 'id="lan-cat-derived"' in page.text
+    assert 'id="lan-cat-raw"' in page.text
+    assert 'id="lan-cat-source_tables"' in page.text
+    assert "开始同步所选数据" in page.text
     assert 'id="lan-progress-results"' in page.text
     assert 'id="lan-progress-market"' in page.text
     assert "总进度" in page.text
     assert 'data-role="percent"' in page.text
     js = Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "market_sync_categories" in js
     assert "/api/lan/sync/progress" in js
     assert "data-peer-progress" in js
     assert "总进度" in js
