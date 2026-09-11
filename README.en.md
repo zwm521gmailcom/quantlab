@@ -4,7 +4,7 @@
 
 A local research workbench for factors, models, and backtests. Each instance declares an asset version (A-share by default). You operate it in the browser. FastAPI listens on LAN `0.0.0.0:8765` by default (loopback `127.0.0.1` still works); the UI port and LAN sync port are configurable. Metadata lives in SQLite; market data and factors stay in local Parquet files.
 
-Current version `0.1.0` (Alpha). Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy). This repository is a standalone project.
+Current version `0.3.0` (Alpha). Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy). This repository is a standalone project. Bump `quantlab/__init__.py` on each feature so every machine shows the same sidebar version after `git pull` and restart.
 
 ## What it is
 

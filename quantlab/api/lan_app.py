@@ -7,6 +7,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import Response
 
+from quantlab import __version__
 from quantlab.config import Settings
 from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.database import Database
@@ -39,11 +40,12 @@ def _hello(settings: Settings) -> dict[str, object]:
         "ui_port": int(settings.port),
         "asset": str(settings.asset),
         "lan_port": int(settings.lan_port),
+        "version": __version__,
     }
 
 
 def create_lan_app(settings: Settings, database: Database | None = None) -> FastAPI:
-    app = FastAPI(title="QuantLab LAN sync", version="0.1.0")
+    app = FastAPI(title="QuantLab LAN sync", version=__version__)
     app.state.settings = settings
     app.state.database = database
 

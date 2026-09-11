@@ -1,4 +1,5 @@
 """QuantLab local research platform foundation."""
 
 __all__ = ["__version__"]
-__version__ = "0.1.0"
+# Bump this on every user-facing feature. Hatch, UI, health, and LAN hello all read it.
+__version__ = "0.3.0"

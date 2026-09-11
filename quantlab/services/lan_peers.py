@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from quantlab import __version__
 from quantlab.config import DEFAULT_LAN_PORT, DEFAULT_UI_PORT, normalize_asset
 from quantlab.services.machine_identity import load_machine_identity
 
@@ -33,6 +34,7 @@ class LanPeer:
     last_seen: float
     ui_port: int = UI_PORT
     asset: str = "a_share"
+    version: str = ""
 
 
 def validate_lan_host(host: object) -> str:
@@ -222,6 +224,7 @@ def parse_beacon(raw: bytes, host: str, *, now: float | None = None) -> LanPeer 
         last_seen=float(now if now is not None else time.time()),
         ui_port=ui_port,
         asset=asset,
+        version=str(payload.get("version") or "").strip(),
     )
 
 
@@ -245,6 +248,7 @@ def parse_hello(payload: object, host: str, *, now: float | None = None) -> LanP
         "asset": payload.get("asset") or "a_share",
         "host": announced,
         "hostname": payload.get("hostname") or announced,
+        "version": payload.get("version") or "",
     }
     return parse_beacon(json.dumps(beacon).encode("utf-8"), host, now=now)
 
@@ -258,6 +262,7 @@ def beacon_payload(
     ui_port: int = UI_PORT,
     sync_port: int = LAN_PORT,
     asset: str = "a_share",
+    version: str | None = None,
 ) -> bytes:
     return json.dumps(
         {
@@ -270,6 +275,7 @@ def beacon_payload(
             "asset": normalize_asset(asset),
             "host": host or local_lan_ip(),
             "hostname": hostname or socket.gethostname(),
+            "version": str(version if version is not None else __version__),
         },
         ensure_ascii=False,
         separators=(",", ":"),
@@ -303,6 +309,7 @@ class PeerRegistry:
                     "ui_url": f"http://{peer.host}:{peer.ui_port}/",
                     "asset": peer.asset,
                     "serial_prefix": peer.serial_prefix,
+                    "version": peer.version,
                     "self": bool(self_id) and peer.machine_id == self_id,
                     "age_s": round(current - peer.last_seen, 1),
                 }
@@ -337,4 +344,5 @@ def self_peer(
         last_seen=float(now if now is not None else time.time()),
         ui_port=int(ui_port or UI_PORT),
         asset=normalize_asset(asset),
+        version=__version__,
     )

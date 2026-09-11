@@ -108,9 +108,16 @@
     fetch("/api/health")
       .then((response) => (response.ok ? response.json() : null))
       .then((health) => {
-        if (!health || !health.asset_label) return;
-        subtitle.textContent = `本实例：${health.asset_label}`;
-        name.textContent = `QuantLab · ${health.asset_label}`;
+        if (!health) return;
+        const version = health.version ? `v${health.version}` : "";
+        if (health.asset_label) {
+          subtitle.textContent = version
+            ? `本实例：${health.asset_label} · ${version}`
+            : `本实例：${health.asset_label}`;
+          name.textContent = `QuantLab · ${health.asset_label}`;
+        } else if (version) {
+          subtitle.textContent = version;
+        }
       })
       .catch(() => {});
     const hideToggle = document.createElement("button");

@@ -23,6 +23,7 @@ def test_parse_beacon_and_ttl() -> None:
     assert listed["ui_port"] == 8765
     assert listed["ui_url"] == "http://10.0.0.2:8765/"
     assert listed["asset"] == "a_share"
+    assert listed["version"] == ""
     assert registry.online(now=120, self_id="other") == []
 
 
@@ -44,6 +45,8 @@ def test_lan_registry_hides_peers_for_other_asset() -> None:
     registry.note(coin)
     listed = registry.online(now=2.0, self_id="aaaa", asset="a_share")
     assert [item["machine_id"] for item in listed] == ["aaaa"]
+    from quantlab import __version__
+    assert listed[0]["version"] == __version__
     crypto_listed = registry.online(now=2.0, self_id="bbbb", asset="crypto")
     assert [item["machine_id"] for item in crypto_listed] == ["bbbb"]
 
@@ -100,6 +103,8 @@ def test_lan_app_serves_results_and_rejects_escape(tmp_path: Path) -> None:
     assert int(hello.json()["ui_port"]) == 8765
     assert hello.json()["asset"] == "a_share"
     assert hello.json()["lan_port"] == 8766
+    from quantlab import __version__
+    assert hello.json()["version"] == __version__
     assert run_id in client.get("/results/index").json()["runs"]
     assert "plans" in client.get("/results/index").json()
     assert client.get(f"/results/{run_id}/file", params={"rel": "metrics.json"}).content == b"{}"
