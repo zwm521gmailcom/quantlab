@@ -252,7 +252,7 @@ function renderTable() {
       status.append(err);
     }
     if (
-      ["failed", "skipped"].includes(item.status)
+      ["failed", "skipped", "completed"].includes(item.status)
       && current.status !== "running"
       && !current.closed
     ) {
@@ -324,7 +324,7 @@ function renderTable() {
       : failed
         ? `这份计划有 ${failed} 笔失败。可点该行的「重算」，不必全选重跑。`
       : current.status === "completed"
-        ? "这份计划已跑完。结果在结果档案里，看完再点完结即可。"
+        ? "这份计划已跑完。可点该行的「重算」只重跑一笔，不必全选。"
         : "勾选要跑的任务，点全选再点开始或删除任务。不会并行开多笔回测。",
     false
   );

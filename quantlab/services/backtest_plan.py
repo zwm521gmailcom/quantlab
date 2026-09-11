@@ -413,10 +413,13 @@ class BacktestPlanService:
                         (stamp, plan_id, item_id),
                     )
             plan = self.get(plan_id)
+        retryable = {"pending", "failed", "skipped"}
+        if item_ids:
+            retryable = retryable | {"completed"}
         eligible = [
             item
             for item in plan["items"]
-            if item["selected"] and item["status"] in {"pending", "failed", "skipped"}
+            if item["selected"] and item["status"] in retryable
         ]
         if not eligible:
             raise ValueError("empty")
