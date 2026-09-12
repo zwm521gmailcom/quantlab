@@ -495,6 +495,9 @@ def test_composite_c075_momentum_and_size_blends_match_linear_combo(tmp_path: Pa
         C075_MOM_BLENDS,
         C075_PRICE_BLENDS,
         C075_SIZE_BLENDS,
+        C150_DIV_BLENDS,
+        C150_QUIET_BLENDS,
+        C150_SIZE_BLENDS,
         D075_CHEAP_BLENDS,
     )
 
@@ -504,7 +507,15 @@ def test_composite_c075_momentum_and_size_blends_match_linear_combo(tmp_path: Pa
     materialize_composite_pack_factors(default_sidecar_path(canonical))
     refs = [
         {"factor_id": f"factor_{field}", "field": field, "version_id": "v1"}
-        for field, *_ in (*C075_MOM_BLENDS, *C075_SIZE_BLENDS, *C075_PRICE_BLENDS, *D075_CHEAP_BLENDS)
+        for field, *_ in (
+            *C075_MOM_BLENDS,
+            *C075_SIZE_BLENDS,
+            *C075_PRICE_BLENDS,
+            *D075_CHEAP_BLENDS,
+            *C150_SIZE_BLENDS,
+            *C150_DIV_BLENDS,
+            *C150_QUIET_BLENDS,
+        )
     ]
     attached = attach_pack_factor_columns(
         pq.read_table(canonical).to_pandas().assign(
@@ -524,6 +535,7 @@ def test_composite_c075_momentum_and_size_blends_match_linear_combo(tmp_path: Pa
             "div_yield_cs_rank",
             "pe_ttm_cs_rank",
             "momentum_10",
+            "turn_cs_rank",
         ],
     ).to_pandas()
     merged = attached.merge(pack, on=["ts_code", "trade_date"])
@@ -565,3 +577,138 @@ def test_composite_c075_momentum_and_size_blends_match_linear_combo(tmp_path: Pa
         comparable = expected.notna() & merged[field].notna()
         assert comparable.any()
         assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    base_c150 = (
+        merged["close_ts_rank_60"]
+        + merged["total_mv_cs_rank"]
+        + merged["div_yield_cs_rank"]
+        + 1.5 * cheap
+    )
+    for field, _name, size_w in C150_SIZE_BLENDS:
+        expected = (
+            merged["close_ts_rank_60"]
+            + size_w * merged["total_mv_cs_rank"]
+            + merged["div_yield_cs_rank"]
+            + 1.5 * cheap
+        )
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    for field, _name, div_w in C150_DIV_BLENDS:
+        expected = (
+            merged["close_ts_rank_60"]
+            + merged["total_mv_cs_rank"]
+            + div_w * merged["div_yield_cs_rank"]
+            + 1.5 * cheap
+        )
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    quiet = 1.0 - merged["turn_cs_rank"]
+    for field, _name, quiet_w in C150_QUIET_BLENDS:
+        expected = base_c150 + quiet_w * quiet
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+
+
+def test_composite_c150_price_and_overlay_blends_match_linear_combo(tmp_path: Path) -> None:
+    from quantlab.services.canonical_pack_factors import (
+        C150_AMOUNT_BLENDS,
+        C150_LOCATION_BLENDS,
+        C150_OVERNIGHT_BLENDS,
+        C150_PRICE_BLENDS,
+        C150_RANGE_BLENDS,
+        C150_SHAPE_BLENDS,
+    )
+
+    canonical = tmp_path / "canonical.parquet"
+    _tiny_canonical(canonical, days=70)
+    materialize_canonical_pack_factors(canonical)
+    materialize_composite_pack_factors(default_sidecar_path(canonical))
+    refs = [
+        {"factor_id": f"factor_{field}", "field": field, "version_id": "v1"}
+        for field, *_ in (
+            *C150_PRICE_BLENDS,
+            *C150_RANGE_BLENDS,
+            *C150_AMOUNT_BLENDS,
+            *C150_OVERNIGHT_BLENDS,
+            *C150_LOCATION_BLENDS,
+            *C150_SHAPE_BLENDS,
+        )
+    ]
+    attached = attach_pack_factor_columns(
+        pq.read_table(canonical).to_pandas().assign(
+            instrument=lambda frame: frame["ts_code"],
+            date=lambda frame: frame["trade_date"],
+        ),
+        refs,
+        default_sidecar_path(canonical),
+    )
+    pack = pq.read_table(
+        default_sidecar_path(canonical),
+        columns=[
+            "ts_code",
+            "trade_date",
+            "close_ts_rank_60",
+            "total_mv_cs_rank",
+            "div_yield_cs_rank",
+            "pe_ttm_cs_rank",
+            "intraday_range",
+            "amount_cs_rank",
+            "overnight_ret",
+            "close_location",
+            "close_zscore_60",
+            "close_bias_60",
+        ],
+    ).to_pandas()
+    merged = attached.merge(pack, on=["ts_code", "trade_date"])
+    cheap = 1.0 - merged["pe_ttm_cs_rank"]
+    base_c150 = (
+        merged["close_ts_rank_60"]
+        + merged["total_mv_cs_rank"]
+        + merged["div_yield_cs_rank"]
+        + 1.5 * cheap
+    )
+    rng = merged["intraday_range"].groupby(merged["trade_date"], sort=False).rank(pct=True)
+    overnight = merged["overnight_ret"].groupby(merged["trade_date"], sort=False).rank(pct=True)
+    loc = merged["close_location"].groupby(merged["trade_date"], sort=False).rank(pct=True)
+    z_rank = merged["close_zscore_60"].groupby(merged["trade_date"], sort=False).rank(pct=True)
+    b_rank = merged["close_bias_60"].groupby(merged["trade_date"], sort=False).rank(pct=True)
+    for field, _name, price_w in C150_PRICE_BLENDS:
+        expected = (
+            price_w * merged["close_ts_rank_60"]
+            + merged["total_mv_cs_rank"]
+            + merged["div_yield_cs_rank"]
+            + 1.5 * cheap
+        )
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    for field, _name, weight in C150_RANGE_BLENDS:
+        expected = base_c150 + weight * (1.0 - rng)
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    for field, _name, weight in C150_AMOUNT_BLENDS:
+        expected = base_c150 + weight * merged["amount_cs_rank"]
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    for field, _name, weight in C150_OVERNIGHT_BLENDS:
+        expected = base_c150 + weight * overnight
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    for field, _name, weight in C150_LOCATION_BLENDS:
+        expected = base_c150 + weight * loc
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    expected_z = z_rank + merged["total_mv_cs_rank"] + merged["div_yield_cs_rank"] + 1.5 * cheap
+    expected_b = b_rank + merged["total_mv_cs_rank"] + merged["div_yield_cs_rank"] + 1.5 * cheap
+    for field, expected in (("sleeve_c150_z", expected_z), ("sleeve_c150_b", expected_b)):
+        comparable = expected.notna() & merged[field].notna()
+        assert comparable.any()
+        assert (merged[field] - expected).abs()[comparable].max() < 1e-9
+    names = set(pq.ParquetFile(default_composite_sidecar_path(canonical)).schema_arrow.names)
+    assert {item[0] for item in (*C150_PRICE_BLENDS, *C150_RANGE_BLENDS, *C150_AMOUNT_BLENDS, *C150_OVERNIGHT_BLENDS, *C150_LOCATION_BLENDS, *C150_SHAPE_BLENDS)} <= names

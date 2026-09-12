@@ -168,12 +168,103 @@ D075_CHEAP_BLENDS: tuple[tuple[str, str, float], ...] = (
     ("sleeve_d075_c150", "股息0.75 · 低估值1.5", 1.5),
 )
 
+# 钉在低估值1.5、股息1 上，扫规模、股息微调和低换手，不再动廉价腿。
+C150_SIZE_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_s075", "低估值1.5 · 规模0.75", 0.75),
+    ("sleeve_c150_s125", "低估值1.5 · 规模1.25", 1.25),
+)
+C150_DIV_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_d125", "低估值1.5 · 股息1.25", 1.25),
+)
+C150_QUIET_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_q025", "低估值1.5 · 低换手0.25", 0.25),
+    ("sleeve_c150_q050", "低估值1.5 · 低换手0.5", 0.5),
+)
+
+# 钉在低估值1.5 上，动价格腿和未测过的软权重；不再扫规模/股息/换手。
+C150_PRICE_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_p075", "低估值1.5 · 价格0.75", 0.75),
+    ("sleeve_c150_p125", "低估值1.5 · 价格1.25", 1.25),
+)
+C150_RANGE_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_r025", "低估值1.5 · 低振幅0.25", 0.25),
+    ("sleeve_c150_r050", "低估值1.5 · 低振幅0.5", 0.5),
+)
+C150_AMOUNT_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_a025", "低估值1.5 · 成交额0.25", 0.25),
+    ("sleeve_c150_a050", "低估值1.5 · 成交额0.5", 0.5),
+)
+C150_OVERNIGHT_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_o025", "低估值1.5 · 隔夜0.25", 0.25),
+    ("sleeve_c150_o050", "低估值1.5 · 隔夜0.5", 0.5),
+)
+C150_LOCATION_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c150_loc025", "低估值1.5 · 收盘位置0.25", 0.25),
+    ("sleeve_c150_loc050", "低估值1.5 · 收盘位置0.5", 0.5),
+)
+C150_SHAPE_BLENDS: tuple[tuple[str, str, str], ...] = (
+    ("sleeve_c150_z", "低估值1.5 · 价格改zscore60", "zscore"),
+    ("sleeve_c150_b", "低估值1.5 · 价格改bias60", "bias"),
+)
+
 
 def c075_mom_formula(mom: float) -> str:
     return (
         price60_cheap_formula(1, 1, 1, 0.75)
         + " + "
         + _weighted_term(mom, "momentum_10.cs_rank(0)")
+    )
+
+
+def c150_quiet_formula(quiet: float) -> str:
+    return (
+        price60_cheap_formula(1, 1, 1, 1.5)
+        + " + "
+        + _weighted_term(quiet, "(1 - turn.cs_rank(0))")
+    )
+
+
+def c150_range_formula(weight: float) -> str:
+    return (
+        price60_cheap_formula(1, 1, 1, 1.5)
+        + " + "
+        + _weighted_term(weight, "(1 - intraday_range.cs_rank(0))")
+    )
+
+
+def c150_amount_formula(weight: float) -> str:
+    return (
+        price60_cheap_formula(1, 1, 1, 1.5)
+        + " + "
+        + _weighted_term(weight, "amount.cs_rank(0)")
+    )
+
+
+def c150_overnight_formula(weight: float) -> str:
+    return (
+        price60_cheap_formula(1, 1, 1, 1.5)
+        + " + "
+        + _weighted_term(weight, "overnight_ret.cs_rank(0)")
+    )
+
+
+def c150_location_formula(weight: float) -> str:
+    return (
+        price60_cheap_formula(1, 1, 1, 1.5)
+        + " + "
+        + _weighted_term(weight, "close_location.cs_rank(0)")
+    )
+
+
+def c150_shape_formula(shape: str) -> str:
+    price_term = "close_zscore_60.cs_rank(0)" if shape == "zscore" else "close_bias_60.cs_rank(0)"
+    return " + ".join(
+        (
+            price_term,
+            "total_market_cap.cs_rank(0)",
+            "dividend_yield_ratio.cs_rank(0)",
+            "1.5 * (1 - pe_ttm.cs_rank(0))",
+        )
     )
 
 
@@ -204,6 +295,42 @@ COMPOSITE_FORMULAS.update(
         for field, _name, cheap in D075_CHEAP_BLENDS
     }
 )
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(1, size, 1, 1.5)
+        for field, _name, size in C150_SIZE_BLENDS
+    }
+)
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(1, 1, div, 1.5)
+        for field, _name, div in C150_DIV_BLENDS
+    }
+)
+COMPOSITE_FORMULAS.update(
+    {field: c150_quiet_formula(quiet) for field, _name, quiet in C150_QUIET_BLENDS}
+)
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(price, 1, 1, 1.5)
+        for field, _name, price in C150_PRICE_BLENDS
+    }
+)
+COMPOSITE_FORMULAS.update(
+    {field: c150_range_formula(weight) for field, _name, weight in C150_RANGE_BLENDS}
+)
+COMPOSITE_FORMULAS.update(
+    {field: c150_amount_formula(weight) for field, _name, weight in C150_AMOUNT_BLENDS}
+)
+COMPOSITE_FORMULAS.update(
+    {field: c150_overnight_formula(weight) for field, _name, weight in C150_OVERNIGHT_BLENDS}
+)
+COMPOSITE_FORMULAS.update(
+    {field: c150_location_formula(weight) for field, _name, weight in C150_LOCATION_BLENDS}
+)
+COMPOSITE_FORMULAS.update(
+    {field: c150_shape_formula(shape) for field, _name, shape in C150_SHAPE_BLENDS}
+)
 COMPOSITE_FIELDS = tuple(COMPOSITE_FORMULAS)
 _COMPOSITE_SOURCE_COLUMNS = (
     "total_mv_cs_rank",
@@ -218,6 +345,9 @@ _COMPOSITE_SOURCE_COLUMNS = (
     "intraday_range",
     "pe_ttm_cs_rank",
     "turn_cs_rank",
+    "amount_cs_rank",
+    "overnight_ret",
+    "close_location",
 )
 
 
@@ -340,6 +470,9 @@ def materialize_composite_pack_factors(pack_sidecar_path: Path | str) -> dict[st
     rng = _cs_rank(frame["intraday_range"], dates)
     zscore60 = _cs_rank(frame["close_zscore_60"], dates)
     bias60 = _cs_rank(frame["close_bias_60"], dates)
+    amt = pd.to_numeric(frame["amount_cs_rank"], errors="coerce")
+    overnight = _cs_rank(frame["overnight_ret"], dates)
+    loc = _cs_rank(frame["close_location"], dates)
     columns: dict[str, Any] = {
             "ts_code": frame[code_key].astype(str).to_numpy(),
             "trade_date": _compact_date(dates).to_numpy(),
@@ -382,6 +515,26 @@ def materialize_composite_pack_factors(pack_sidecar_path: Path | str) -> dict[st
         columns[field] = (price_w * price60 + mv + div + 0.75 * cheap).to_numpy(dtype="float64")
     for field, _name, cheap_w in D075_CHEAP_BLENDS:
         columns[field] = (price60 + mv + 0.75 * div + cheap_w * cheap).to_numpy(dtype="float64")
+    for field, _name, size_w in C150_SIZE_BLENDS:
+        columns[field] = (price60 + size_w * mv + div + 1.5 * cheap).to_numpy(dtype="float64")
+    for field, _name, div_w in C150_DIV_BLENDS:
+        columns[field] = (price60 + mv + div_w * div + 1.5 * cheap).to_numpy(dtype="float64")
+    for field, _name, quiet_w in C150_QUIET_BLENDS:
+        columns[field] = (price60 + mv + div + 1.5 * cheap + quiet_w * quiet).to_numpy(dtype="float64")
+    for field, _name, price_w in C150_PRICE_BLENDS:
+        columns[field] = (price_w * price60 + mv + div + 1.5 * cheap).to_numpy(dtype="float64")
+    base_c150 = price60 + mv + div + 1.5 * cheap
+    for field, _name, weight in C150_RANGE_BLENDS:
+        columns[field] = (base_c150 + weight * (1.0 - rng)).to_numpy(dtype="float64")
+    for field, _name, weight in C150_AMOUNT_BLENDS:
+        columns[field] = (base_c150 + weight * amt).to_numpy(dtype="float64")
+    for field, _name, weight in C150_OVERNIGHT_BLENDS:
+        columns[field] = (base_c150 + weight * overnight).to_numpy(dtype="float64")
+    for field, _name, weight in C150_LOCATION_BLENDS:
+        columns[field] = (base_c150 + weight * loc).to_numpy(dtype="float64")
+    for field, _name, shape in C150_SHAPE_BLENDS:
+        price_shape = zscore60 if shape == "zscore" else bias60
+        columns[field] = (price_shape + mv + div + 1.5 * cheap).to_numpy(dtype="float64")
     table = pa.table(columns)
     output = sidecar.with_name(COMPOSITE_SIDECAR_NAME)
     tmp = output.with_name(output.name + ".next")
