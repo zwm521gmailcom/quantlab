@@ -363,7 +363,20 @@ def test_http_source_falls_back_to_ui_plans_when_old_lan_index_omits_them(tmp_pa
         if path.startswith("/plans/"):
             return httpx.Response(404, json={"detail": "not found"})
         if path == "/api/backtest-plans":
-            return httpx.Response(200, json={"items": [ui_plan]})
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "plan_id": ui_plan["plan_id"],
+                            "name": ui_plan["name"],
+                            "status": ui_plan["status"],
+                            "closed": ui_plan["closed"],
+                            "item_count": 1,
+                        }
+                    ]
+                },
+            )
         if path == f"/api/backtest-plans/{plan_id}":
             return httpx.Response(200, json=ui_plan)
         return httpx.Response(404)
@@ -376,7 +389,9 @@ def test_http_source_falls_back_to_ui_plans_when_old_lan_index_omits_them(tmp_pa
     assert plan_id in stats["pulled_plans"]
     copied = dest.runtime_root / "results" / "_plans" / f"{plan_id}.json"
     assert copied.is_file()
-    assert json.loads(copied.read_text(encoding="utf-8"))["name"] == "收益增强验证 · 成分滚动模型"
+    snapshot = json.loads(copied.read_text(encoding="utf-8"))
+    assert snapshot["name"] == "收益增强验证 · 成分滚动模型"
+    assert snapshot["items"][0]["config"] == {"name": "未开始"}
 
 
 def test_pull_results_copies_plan_snapshot_even_when_run_already_exists(tmp_path: Path) -> None:

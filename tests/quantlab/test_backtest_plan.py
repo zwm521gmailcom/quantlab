@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from quantlab.api.app import create_app
+from quantlab.services.backtest_plan import BacktestPlanService
 
 from tests.quantlab.test_backtest_workbench import config, setup_env
 
@@ -274,6 +275,41 @@ def test_list_plans_keeps_creation_order_after_later_updates(tmp_path: Path) -> 
     assert names[:2] == ["后建", "先建"]
 
 
+def test_list_plans_returns_summaries_without_items_or_catalog_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    created = client.post(
+        "/api/backtest-plans",
+        json={"name": "摘要计划", "items": [{"name": "一笔", "config": config("a")}]},
+    ).json()
+    real_get = BacktestPlanService.get
+
+    def boom_get(self, plan_id: str):
+        raise AssertionError("list_plans must not load full plans")
+
+    monkeypatch.setattr(BacktestPlanService, "get", boom_get)
+    listed = client.get("/api/backtest-plans").json()["items"]
+    assert len(listed) == 1
+    row = listed[0]
+    assert row["plan_id"] == created["plan_id"]
+    assert row["name"] == "摘要计划"
+    assert row["status"] == "draft"
+    assert row["closed"] is False
+    assert row["item_count"] == 1
+    assert "items" not in row
+    assert "config" not in row
+    opened = client.get("/api/backtest-plans", params={"open": "1"}).json()["items"]
+    assert [item["plan_id"] for item in opened] == [created["plan_id"]]
+    assert "items" not in opened[0]
+    monkeypatch.setattr(BacktestPlanService, "get", real_get)
+    detail = client.get(f"/api/backtest-plans/{created['plan_id']}").json()
+    assert len(detail["items"]) == 1
+    assert detail["items"][0]["name"] == "一笔"
+    assert isinstance(detail["items"][0]["config"], dict)
+
+
 def test_start_reruns_single_failed_item(tmp_path: Path) -> None:
     settings, database = setup_env(tmp_path)
     client = TestClient(create_app(settings, database))
@@ -466,6 +502,7 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     client = TestClient(create_app(settings, database))
     page = client.get("/backtests/plan")
     assert page.status_code == 200
+    assert "no-store" in (page.headers.get("cache-control") or "")
     html = page.text
     plan_js = Path("quantlab/web/assets/backtest/plan.js").read_text(encoding="utf-8")
     source = html + plan_js
@@ -486,6 +523,9 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     assert 'id="delete-items"' in html
     assert "删除任务" in html
     assert "/api/backtest-plans/" in plan_js and "/items/delete" in plan_js
+    assert "async function loadPlan(" in plan_js
+    assert "item_count" in plan_js
+    assert '$("plan-select").addEventListener("change", async () => {' in plan_js
     assert "收益率" in source
     assert "最大回撤" in source
     assert "plan-sortable" in source

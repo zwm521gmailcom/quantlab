@@ -21,7 +21,7 @@ from quantlab.services.backtest_control import (
 )
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
-from quantlab.services.result_sync import delete_plan_snapshot, sync_result_catalog, write_plan_snapshot
+from quantlab.services.result_sync import delete_plan_snapshot, write_plan_snapshot
 from quantlab.services.settings import max_concurrent_backtests
 
 
@@ -179,14 +179,31 @@ class BacktestPlanService:
         write_plan_snapshot(self.settings, self.database, plan_id)
 
     def list_plans(self, open_only: bool = False) -> dict[str, Any]:
-        sync_result_catalog(self.settings, self.database)
-        sql = "SELECT plan_id FROM backtest_plans"
+        sql = (
+            "SELECT p.plan_id, p.name, p.status, p.closed, p.created_at, p.updated_at, "
+            "COUNT(i.item_id) AS item_count "
+            "FROM backtest_plans p "
+            "LEFT JOIN backtest_plan_items i ON i.plan_id = p.plan_id"
+        )
         if open_only:
-            sql += " WHERE closed=0"
-        sql += " ORDER BY created_at DESC, plan_id DESC"
+            sql += " WHERE p.closed=0"
+        sql += " GROUP BY p.plan_id ORDER BY p.created_at DESC, p.plan_id DESC"
         with self.database.connect() as connection:
             rows = connection.execute(sql).fetchall()
-        return {"items": [self.get(row["plan_id"]) for row in rows]}
+        return {
+            "items": [
+                {
+                    "plan_id": row["plan_id"],
+                    "name": row["name"],
+                    "status": row["status"],
+                    "closed": bool(row["closed"]),
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "item_count": int(row["item_count"] or 0),
+                }
+                for row in rows
+            ]
+        }
 
     def get(self, plan_id: str) -> dict[str, Any]:
         with self.database.connect() as connection:

@@ -192,4 +192,5 @@ def test_run_record_fills_benchmark_curve_from_index_daily(tmp_path: Path) -> No
     assert record["metrics"]["benchmark_return"]["value"] == pytest.approx(0.10)
     assert record["metrics"]["excess_return"]["value"] == pytest.approx(0.15)
     listed = ResultArchiveService(settings, database).list(status="completed")
-    assert listed["items"][0]["metrics"]["benchmark_return"]["value"] == pytest.approx(0.10)
+    assert listed["items"][0]["metrics"]["return"]["value"] == pytest.approx(0.25)
+    assert listed["items"][0]["metrics"]["benchmark_return"]["value"] is None

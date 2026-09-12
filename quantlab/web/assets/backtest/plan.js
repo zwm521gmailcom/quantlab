@@ -42,9 +42,30 @@ function setBanner(text, error = false) {
   $("banner").classList.toggle("banner-error", error);
 }
 
+function planCount(plan) {
+  if (Array.isArray(plan?.items)) return plan.items.length;
+  return Number(plan?.item_count) || 0;
+}
+
 function planLabel(plan) {
   const status = plan.closed ? "完结" : (STATUS[plan.status] || plan.status);
-  return `${plan.name}（${status} · ${plan.items.length} 笔）`;
+  return `${plan.name}（${status} · ${planCount(plan)} 笔）`;
+}
+
+function rememberPlan(plan) {
+  if (!plan?.plan_id) return;
+  const summary = {
+    plan_id: plan.plan_id,
+    name: plan.name,
+    status: plan.status,
+    closed: plan.closed,
+    created_at: plan.created_at,
+    updated_at: plan.updated_at,
+    item_count: planCount(plan),
+  };
+  const index = plans.findIndex((item) => item.plan_id === plan.plan_id);
+  if (index >= 0) plans[index] = {...plans[index], ...summary};
+  else plans.unshift(summary);
 }
 
 function syncButtons() {
@@ -142,7 +163,7 @@ function renderSelect() {
 function renderTable() {
   const wrap = $("plan-table");
   const pagerHost = $("plan-pagination");
-  wrap.replaceChildren();
+    wrap.replaceChildren();
   if (!current) {
     $("plan-state").textContent = "还没有回测计划。";
     if (pagerHost) {
@@ -153,11 +174,12 @@ function renderTable() {
     return;
   }
   if (pagerHost) pagerHost.hidden = false;
-  const running = current.items.filter((item) => item.status === "running").length;
-  const queued = current.items.filter((item) => item.status === "queued").length;
-  const pending = current.items.filter((item) => item.status === "pending").length;
-  const done = current.items.filter((item) => item.status === "completed").length;
-  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${current.items.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}`;
+  const planItems = current.items || [];
+  const running = planItems.filter((item) => item.status === "running").length;
+  const queued = planItems.filter((item) => item.status === "queued").length;
+  const pending = planItems.filter((item) => item.status === "pending").length;
+  const done = planItems.filter((item) => item.status === "completed").length;
+  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${planItems.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}`;
   const table = document.createElement("table");
   table.className = "archive-grid plan-grid";
   const head = document.createElement("thead");
@@ -342,7 +364,7 @@ function renderTable() {
       }
     });
   }
-  const failed = current.items.filter((item) => item.status === "failed").length;
+  const failed = planItems.filter((item) => item.status === "failed").length;
   setBanner(
     current.closed
       ? "这份计划已完结。不能再加入任务或开始，回测中心下拉框也不会再列出它。"
@@ -375,9 +397,7 @@ function startPoll() {
   pollTimer = window.setInterval(async () => {
     if (!current) return;
     try {
-      current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}`);
-      const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
-      if (index >= 0) plans[index] = current;
+      await loadPlan(current.plan_id);
       render();
       if (current.status !== "running") stopPoll();
     } catch (error) {
@@ -395,8 +415,7 @@ async function startPlan(itemIds) {
       headers: {"content-type": "application/json"},
       body: JSON.stringify({item_ids: itemIds}),
     });
-    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
-    if (index >= 0) plans[index] = current;
+    rememberPlan(current);
     render();
     startPoll();
   } catch (error) {
@@ -405,12 +424,28 @@ async function startPlan(itemIds) {
   }
 }
 
+let loadSeq = 0;
+
+async function loadPlan(planId) {
+  const seq = ++loadSeq;
+  if (!planId) {
+    current = null;
+    return null;
+  }
+  const payload = await request(`/api/backtest-plans/${encodeURIComponent(planId)}`);
+  if (seq !== loadSeq) return current;
+  current = payload;
+  rememberPlan(current);
+  return current;
+}
+
 async function load() {
   try {
     const payload = await request("/api/backtest-plans");
     plans = payload.items || [];
     const wanted = new URLSearchParams(window.location.search).get("plan_id") || current?.plan_id;
-    current = plans.find((plan) => plan.plan_id === wanted) || plans[0] || null;
+    const summary = plans.find((plan) => plan.plan_id === wanted) || plans[0] || null;
+    await loadPlan(summary?.plan_id || "");
     render();
     if (current?.status === "running") startPoll();
   } catch (error) {
@@ -419,22 +454,28 @@ async function load() {
   }
 }
 
-$("plan-select").addEventListener("change", () => {
-  current = plans.find((plan) => plan.plan_id === $("plan-select").value) || null;
+$("plan-select").addEventListener("change", async () => {
+  const planId = $("plan-select").value;
   planPage = 1;
   const url = new URL(window.location.href);
-  if (current) url.searchParams.set("plan_id", current.plan_id);
+  if (planId) url.searchParams.set("plan_id", planId);
   else url.searchParams.delete("plan_id");
   history.replaceState(history.state, "", `${url.pathname}${url.search}`);
-  render();
-  if (current?.status === "running") startPoll();
-  else stopPoll();
+  $("plan-state").textContent = "正在加载…";
+  try {
+    await loadPlan(planId);
+    render();
+    if (current?.status === "running") startPoll();
+    else stopPoll();
+  } catch (error) {
+    setBanner(error.message, true);
+  }
 });
 
 $("select-all").addEventListener("click", async () => {
   if (!current) return;
   const selected = {};
-  current.items.forEach((item) => { selected[item.item_id] = true; });
+  (current.items || []).forEach((item) => { selected[item.item_id] = true; });
   try {
     current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/items`, {
       method: "PATCH",
@@ -460,8 +501,7 @@ $("delete-items").addEventListener("click", async () => {
       headers: {"content-type": "application/json"},
       body: JSON.stringify({item_ids: itemIds}),
     });
-    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
-    if (index >= 0) plans[index] = current;
+    rememberPlan(current);
     render();
     setBanner(`已删除 ${itemIds.length} 笔任务。`);
   } catch (error) {
@@ -472,7 +512,7 @@ $("delete-items").addEventListener("click", async () => {
 
 $("start").addEventListener("click", async () => {
   if (!current) return;
-  const itemIds = current.items.filter((item) => item.selected).map((item) => item.item_id);
+  const itemIds = (current.items || []).filter((item) => item.selected).map((item) => item.item_id);
   await startPlan(itemIds);
 });
 
@@ -481,6 +521,7 @@ $("stop").addEventListener("click", async () => {
   $("stop").disabled = true;
   try {
     current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/stop`, {method: "POST"});
+    rememberPlan(current);
     render();
     startPoll();
   } catch (error) {
@@ -542,8 +583,7 @@ $("close-plan").addEventListener("click", async () => {
   $("close-plan").disabled = true;
   try {
     current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/close`, {method: "POST"});
-    const index = plans.findIndex((plan) => plan.plan_id === current.plan_id);
-    if (index >= 0) plans[index] = current;
+    rememberPlan(current);
     render();
   } catch (error) {
     setBanner(error.message, true);

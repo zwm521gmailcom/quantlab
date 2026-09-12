@@ -927,7 +927,7 @@ button.secondary { background: var(--color-bg-card); border-color: var(--color-b
 .archive-empty-row td { color: var(--color-text-secondary); font-weight: 400; text-align: left; }
 .archive-page .card { width: 100%; min-width: 0; }
 .archive-page .data-toolbar {
-  display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 12px; align-items: end;
+  display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; align-items: end;
 }
 .archive-page .data-toolbar input,
 .archive-page .data-toolbar select { width: 100%; min-width: 0; box-sizing: border-box; }
@@ -1144,12 +1144,16 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
 }
 .archive-grid.plan-grid .plan-retry:hover { text-decoration: underline; }
 .archive-grid.plan-grid .archive-window div { white-space: nowrap; }
-.archive-grid.plan-grid th.plan-sortable { cursor: pointer; user-select: none; }
-.archive-grid.plan-grid th.plan-sortable button {
+.archive-grid.plan-grid th.plan-sortable,
+.archive-grid th.archive-sortable { cursor: pointer; user-select: none; }
+.archive-grid.plan-grid th.plan-sortable button,
+.archive-grid th.archive-sortable button {
   all: unset; display: inline; cursor: pointer; color: inherit; font: inherit; font-weight: inherit;
 }
-.archive-grid.plan-grid th.plan-sortable[aria-sort="ascending"]::after { content: " ↑"; }
-.archive-grid.plan-grid th.plan-sortable[aria-sort="descending"]::after { content: " ↓"; }
+.archive-grid.plan-grid th.plan-sortable[aria-sort="ascending"]::after,
+.archive-grid th.archive-sortable[aria-sort="ascending"]::after { content: " ↑"; }
+.archive-grid.plan-grid th.plan-sortable[aria-sort="descending"]::after,
+.archive-grid th.archive-sortable[aria-sort="descending"]::after { content: " ↓"; }
 .plan-factors { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 2px 8px; max-width: 100%; }
 .plan-factors span {
   display: inline-block; font-family: var(--font-mono); font-size: 13px; line-height: 1.45;

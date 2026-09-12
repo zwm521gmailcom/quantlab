@@ -412,18 +412,13 @@ def test_creating_a_plan_writes_snapshot_file(tmp_path: Path) -> None:
     assert payload["items"][0]["name"] == "一笔"
 
 
-def test_list_plans_imports_snapshot_written_after_startup(tmp_path: Path) -> None:
-    from quantlab.api.app import create_app
+def _write_late_plan_snapshot(settings, plan_id: str = "plan-lateimport01") -> Path:
     from quantlab.services.result_sync import PLANS_DIR_NAME
-    from tests.quantlab.test_backtest_workbench import setup_env
 
-    settings, database = setup_env(tmp_path)
-    client = TestClient(create_app(settings, database))
-    assert client.get("/api/backtest-plans").json()["items"] == []
-    plan_id = "plan-lateimport01"
     folder = settings.runtime_root / "results" / PLANS_DIR_NAME
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / f"{plan_id}.json").write_text(
+    path = folder / f"{plan_id}.json"
+    path.write_text(
         json.dumps(
             {
                 "schema": 1,
@@ -438,5 +433,29 @@ def test_list_plans_imports_snapshot_written_after_startup(tmp_path: Path) -> No
         ),
         encoding="utf-8",
     )
+    return path
+
+
+def test_list_plans_does_not_import_snapshot_written_after_startup(tmp_path: Path) -> None:
+    from quantlab.api.app import create_app
+    from tests.quantlab.test_backtest_workbench import setup_env
+
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    assert client.get("/api/backtest-plans").json()["items"] == []
+    _write_late_plan_snapshot(settings)
+    names = [plan["name"] for plan in client.get("/api/backtest-plans").json()["items"]]
+    assert "同步后出现" not in names
+
+
+def test_sync_result_catalog_imports_snapshot_written_after_startup(tmp_path: Path) -> None:
+    from quantlab.api.app import create_app
+    from quantlab.services.result_sync import sync_result_catalog
+    from tests.quantlab.test_backtest_workbench import setup_env
+
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    _write_late_plan_snapshot(settings)
+    sync_result_catalog(settings, database)
     names = [plan["name"] for plan in client.get("/api/backtest-plans").json()["items"]]
     assert "同步后出现" in names

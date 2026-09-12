@@ -105,6 +105,52 @@ def test_archive_filters_status_strategy_name_date_and_sorts_without_detail_scan
     assert result["items"][0]["detail_url"] == "/backtests/runs/20260902-120000-0001"
 
 
+def test_archive_header_sorts_metrics_and_puts_missing_last(tmp_path: Path) -> None:
+    settings, database = setup_archive(tmp_path)
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET metrics_json=? WHERE run_id=?",
+            (
+                json.dumps(
+                    {
+                        "return": 0.05,
+                        "annual_return": 0.04,
+                        "sharpe": 2.1,
+                        "max_drawdown": -0.4,
+                        "win_rate": 0.4,
+                    }
+                ),
+                "20260902-120001-0002",
+            ),
+        )
+    service = ResultArchiveService(settings, database)
+    by_return = service.list(sort="return", order="desc")
+    assert [item["run_id"] for item in by_return["items"]] == [
+        "20260902-120000-0001",
+        "20260902-120001-0002",
+        "20260902-120002-0003",
+    ]
+    by_sharpe = service.list(sort="sharpe", order="asc")
+    assert [item["run_id"] for item in by_sharpe["items"]] == [
+        "20260902-120000-0001",
+        "20260902-120001-0002",
+        "20260902-120002-0003",
+    ]
+    by_drawdown = service.list(sort="max_drawdown", order="asc")
+    assert [item["run_id"] for item in by_drawdown["items"][:2]] == [
+        "20260902-120001-0002",
+        "20260902-120000-0001",
+    ]
+    by_created = service.list(sort="created_at", order="asc")
+    assert [item["run_id"] for item in by_created["items"]] == [
+        "20260902-120000-0001",
+        "20260902-120001-0002",
+        "20260902-120002-0003",
+    ]
+    with pytest.raises(ValueError, match="invalid sort"):
+        service.list(sort="unknown", order="desc")
+
+
 def test_archive_prefers_model_center_name(tmp_path: Path) -> None:
     settings, database = setup_archive(tmp_path)
     with database.transaction() as connection:
@@ -172,6 +218,54 @@ def test_archive_uses_config_factor_fields_when_strategy_has_none(tmp_path: Path
     record = ResultArchiveService(settings, database).get("20260902-120000-0001")
     assert record is not None
     assert record["factors"] == ["momentum_5"]
+    listing = ResultArchiveService(settings, database).list(page=1, page_size=10, query="momentum_5")
+    assert listing["items"][0]["factors"] == ["momentum_5"]
+
+
+def test_archive_list_skips_catalog_sync_and_benchmark_rebuild(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings, database = setup_archive(tmp_path)
+    monkeypatch.setattr(
+        "quantlab.services.result_archive.fill_benchmark_metrics",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("list must not rebuild benchmark metrics")),
+    )
+    folder = settings.runtime_root / "results" / "20260902-129999-0009"
+    folder.mkdir(parents=True)
+    (folder / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "20260902-129999-0009",
+                "status": "completed",
+                "created_at": "2026-09-02T12:09:00+00:00",
+                "config": {"name": "磁盘未入库"},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET metrics_json=? WHERE run_id=?",
+            (
+                json.dumps(
+                    {
+                        "return": 0.25,
+                        "equity_curve": [{"date": f"2020{index:04d}", "equity": 1.0} for index in range(2000)],
+                    }
+                ),
+                "20260902-120000-0001",
+            ),
+        )
+    result = ResultArchiveService(settings, database).list(page=1, page_size=10)
+    assert [item["run_id"] for item in result["items"]] == [
+        "20260902-120002-0003",
+        "20260902-120001-0002",
+        "20260902-120000-0001",
+    ]
+    assert "20260902-129999-0009" not in [item["run_id"] for item in result["items"]]
+    completed = next(item for item in result["items"] if item["run_id"] == "20260902-120000-0001")
+    assert completed["metrics"]["return"]["value"] == 0.25
+    assert "equity_curve" not in completed
+    assert "metrics_raw" not in completed
 
 
 def test_archive_api_page_detail_copy_and_csv_are_explicit(tmp_path: Path) -> None:
@@ -321,6 +415,10 @@ def test_archive_page_is_available(tmp_path: Path) -> None:
     assert "结果档案" in html
     assert "重新回测" in source
     assert "删除" in source
+    assert "<label>排序" not in html
+    assert 'id="sort"' not in html
+    assert "archive-sortable" in js
+    assert "function setSort(key)" in js
 
 
 def test_archive_delete_removes_run_rows_artifacts_and_result_files(tmp_path: Path) -> None:
