@@ -2,10 +2,23 @@ const $ = (id) => document.getElementById(id);
 const ARCHIVE_PAGE_KEY = "quantlab-archive-page-size";
 let page = 1;
 let pageSize = QuantLabPager.readSize(ARCHIVE_PAGE_KEY, QuantLabPager.DEFAULT_SIZES, 10);
-const COLUMNS = ["回测", "模型 / 因子", "测试区间", "累计收益", "年化", "夏普", "最大回撤", "胜率", "基准", "操作"];
+let sortKey = "created_at";
+let sortDir = "desc";
+const COLUMNS = [
+  {key: "created_at", label: "回测", type: "date"},
+  {key: "strategy", label: "模型 / 因子", type: "text"},
+  {key: "date_from", label: "测试区间", type: "date"},
+  {key: "return", label: "累计收益", type: "number"},
+  {key: "annual_return", label: "年化", type: "number"},
+  {key: "sharpe", label: "夏普", type: "number"},
+  {key: "max_drawdown", label: "最大回撤", type: "number"},
+  {key: "win_rate", label: "胜率", type: "number"},
+  {key: "benchmark", label: "基准", type: "text"},
+  {key: "", label: "操作"},
+];
 
 function params() {
-  const query = new URLSearchParams({page, page_size: pageSize, sort: $("sort").value, order: "desc"});
+  const query = new URLSearchParams({page, page_size: pageSize, sort: sortKey, order: sortDir});
   for (const [key, id] of [["q", "query"], ["status", "status"], ["strategy", "strategy"], ["date_from", "dateFrom"], ["date_to", "dateTo"]]) {
     if ($(id).value) query.set(key, $(id).value);
   }
@@ -82,6 +95,24 @@ function textCell(text, className) {
   return cell;
 }
 
+function setSort(key) {
+  const column = COLUMNS.find((item) => item.key === key);
+  if (!column || !column.key) return;
+  const first = column.type === "text" ? "asc" : "desc";
+  const second = first === "desc" ? "asc" : "desc";
+  if (sortKey !== key) {
+    sortKey = key;
+    sortDir = first;
+  } else if (sortDir === first) {
+    sortDir = second;
+  } else {
+    sortKey = "created_at";
+    sortDir = "desc";
+  }
+  page = 1;
+  load();
+}
+
 async function load() {
   $("archive-state").textContent = "正在加载…";
   const response = await fetch("/api/backtests/runs?" + params());
@@ -99,9 +130,26 @@ async function load() {
   table.className = "archive-grid";
   const head = document.createElement("thead");
   const headRow = document.createElement("tr");
-  COLUMNS.forEach((label) => {
+  COLUMNS.forEach((column) => {
     const th = document.createElement("th");
-    th.textContent = label;
+    if (!column.key) {
+      th.textContent = column.label;
+      headRow.append(th);
+      return;
+    }
+    th.classList.add("archive-sortable");
+    th.dataset.sort = column.key;
+    th.setAttribute("aria-sort", sortKey === column.key ? (sortDir === "asc" ? "ascending" : "descending") : "none");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = column.label;
+    button.setAttribute("title", "按" + column.label + "排序");
+    button.addEventListener("click", () => setSort(column.key));
+    th.append(button);
+    th.addEventListener("click", (event) => {
+      if (event.target === button) return;
+      setSort(column.key);
+    });
     headRow.append(th);
   });
   head.append(headRow);

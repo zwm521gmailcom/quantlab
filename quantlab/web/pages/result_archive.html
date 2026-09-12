@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuantLab · 结果档案</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20260911navadapt3">
+  <link rel="stylesheet" href="/assets/app.css?v=20260912archivesort">
 </head>
 <body>
 <div class="shell">
@@ -43,14 +43,6 @@
         <label>模型<input id="strategy" placeholder="模型名称或ID"></label>
         <label>测试开始<input id="dateFrom" type="date"></label>
         <label>测试结束<input id="dateTo" type="date"></label>
-        <label>排序
-          <select id="sort">
-            <option value="created_at">创建时间</option>
-            <option value="name">名称</option>
-            <option value="return">累计收益</option>
-            <option value="status">状态</option>
-          </select>
-        </label>
         <button id="refresh" class="primary">查询</button>
         <a id="export" class="button-link" href="/api/backtests/runs.csv">导出清单</a>
       </div>
@@ -61,7 +53,7 @@
   </main>
 </div>
 <script src="/assets/table-pager.js?v=20260909pager"></script>
-<script src="/assets/backtest/archive.js?v=20260911archivecols"></script>
+<script src="/assets/backtest/archive.js?v=20260912archivesort"></script>
 <script src="/assets/nav.js?v=20260911ver"></script>
 </body>
 </html>

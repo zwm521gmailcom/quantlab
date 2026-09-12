@@ -101,7 +101,7 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     js = _first_party_js()
     source = html + js
     assert "app.css?v=20260911navadapt3" in html
-    assert "plan.js?v=20260911slots3" in html
+    assert "plan.js?v=20260912plansummary" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
     assert "QuantLabPager.mount" in js
@@ -653,8 +653,12 @@ def test_result_archive_filters_use_model_not_strategy_labels() -> None:
     assert "table-pager.js" in html
     assert "quantlab-archive-page-size" in js
     assert 'class="archive-page"' in html
-    assert "app.css?v=20260911navadapt3" in html
-    assert "archive.js?v=20260911archivecols" in html
+    assert "app.css?v=20260912archivesort" in html
+    assert "archive.js?v=20260912archivesort" in html
+    assert "<label>排序" not in html
+    assert 'id="sort"' not in html
+    assert "archive-sortable" in js
+    assert "function setSort(key)" in js
 
 
 def test_result_archive_table_fills_card_with_even_columns() -> None:
@@ -667,6 +671,8 @@ def test_result_archive_table_fills_card_with_even_columns() -> None:
     assert ".archive-grid th:nth-child(1) { width: 24%; }" not in css
     assert 'name.title = name.textContent' in Path("quantlab/web/assets/backtest/archive.js").read_text()
     assert ".archive-page .data-toolbar" in css
+    assert "repeat(7, minmax(0, 1fr))" in css
+    assert "th.archive-sortable" in css
     assert ".archive-grid { width: 100%; min-width: 1080px" not in css
 
 

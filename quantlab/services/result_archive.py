@@ -16,7 +16,7 @@ from quantlab.repositories.database import Database
 from quantlab.services.backtest_job import fill_benchmark_metrics
 from quantlab.services.backtest_workbench import workbench_form_config
 from quantlab.services.model_training import kind_display_name
-from quantlab.services.result_sync import purge_backtest_run, sync_result_catalog, write_deleted_marker
+from quantlab.services.result_sync import purge_backtest_run, write_deleted_marker
 
 
 _STATUS_NAMES = {"queued": "排队中", "running": "运行中", "completed": "已完成", "failed": "失败"}
@@ -30,9 +30,17 @@ _ERROR_ZH = {
 _SORT_FIELDS = {
     "created_at": "registry.created_at",
     "name": "br.config_json",
-    "return": "br.metrics_json",
     "status": "br.status",
+    "strategy": "strategy_name",
+    "date_from": "test.date_from",
+    "return": "br.metrics_json",
+    "annual_return": "br.metrics_json",
+    "sharpe": "br.metrics_json",
+    "max_drawdown": "br.metrics_json",
+    "win_rate": "br.metrics_json",
+    "benchmark": "benchmark",
 }
+_METRIC_SORT_FIELDS = {"return", "annual_return", "sharpe", "max_drawdown", "win_rate"}
 _METRICS = (
     ("return", "累计收益"),
     ("annual_return", "年化收益"),
@@ -69,6 +77,68 @@ _STEP_STATUS_NAMES = {
     "failed": "失败",
     "skipped": "跳过",
 }
+
+
+class _Desc:
+    __slots__ = ("value",)
+
+    def __init__(self, value: Any) -> None:
+        self.value = value
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, _Desc):
+            return NotImplemented
+        return self.value > other.value
+
+
+def _metric_sort_value(item: dict[str, Any], field: str) -> float | None:
+    payload = item.get("metrics") if isinstance(item.get("metrics"), dict) else {}
+    metric = payload.get(field) if isinstance(payload, dict) else None
+    if not isinstance(metric, dict):
+        return None
+    value = metric.get("value")
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _text_sort_value(item: dict[str, Any], sort: str) -> str:
+    if sort == "name":
+        return str(item.get("name") or "").strip()
+    if sort == "status":
+        return str(item.get("status") or "").strip()
+    if sort == "strategy":
+        strategy = item.get("strategy") if isinstance(item.get("strategy"), dict) else {}
+        name = str(strategy.get("name") or "").strip()
+        factors = " ".join(str(part).strip() for part in (item.get("factors") or []) if str(part).strip())
+        return f"{name} {factors}".strip()
+    if sort == "date_from":
+        window = item.get("test_window") if isinstance(item.get("test_window"), dict) else {}
+        return f"{window.get('date_from') or ''} {window.get('date_to') or ''}".strip()
+    if sort == "benchmark":
+        text = str(item.get("benchmark") or "").strip()
+        return "" if text == "未生成" else text
+    return ""
+
+
+def _archive_sort_key(item: dict[str, Any], sort: str, order: str) -> tuple[Any, ...]:
+    tie = (str(item.get("created_at") or ""), str(item.get("run_id") or ""))
+    if sort == "created_at":
+        key = (str(item.get("created_at") or ""), str(item.get("run_id") or ""))
+        return (_Desc(key) if order == "desc" else key,)
+    if sort in _METRIC_SORT_FIELDS:
+        value = _metric_sort_value(item, sort)
+        if value is None:
+            return (1, 0.0, *tie)
+        number = -value if order == "desc" else value
+        return (0, number, *tie)
+    text = _text_sort_value(item, sort)
+    if not text:
+        return (1, "", *tie)
+    return (0, _Desc(text) if order == "desc" else text, *tie)
 
 
 def _now() -> str:
@@ -176,6 +246,23 @@ def _metric(value: Any, *, percentage: bool = False, integer: bool = False) -> d
     if integer:
         return {"value": int(number), "display": str(int(number))}
     return {"value": number, "display": f"{number:.2%}" if percentage else f"{number:.4f}"}
+
+
+def _parse_json_value(raw: Any) -> Any:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, (dict, list, int, float, bool)):
+        return raw
+    try:
+        return json.loads(str(raw))
+    except (TypeError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def _list_metric_select() -> str:
+    return ",\n              ".join(
+        f"json_extract(br.metrics_json, '$.{key}') AS metric_{key}" for key, _ in _METRICS
+    )
 
 
 class ResultArchiveService:
@@ -313,9 +400,12 @@ class ResultArchiveService:
             }
         return item
 
-    def _rows(self, *, status: str | None = None, strategy: str | None = None) -> list[Any]:
+    def _run_filters(self, *, status: str | None = None, strategy: str | None = None, run_id: str | None = None) -> tuple[str, list[Any]]:
         where = ["registry.run_type='backtest'"]
         params: list[Any] = []
+        if run_id:
+            where.append("br.run_id=?")
+            params.append(run_id)
         if status:
             if status not in _STATUS_NAMES:
                 raise ValueError("invalid backtest status")
@@ -324,7 +414,10 @@ class ResultArchiveService:
         if strategy:
             where.append("(br.strategy_entity_id=? OR s.name LIKE ? OR m.name LIKE ?)")
             params.extend([strategy, f"%{strategy}%", f"%{strategy}%"])
-        predicate = " AND ".join(where)
+        return " AND ".join(where), params
+
+    def _rows(self, *, status: str | None = None, strategy: str | None = None, run_id: str | None = None) -> list[Any]:
+        predicate, params = self._run_filters(status=status, strategy=strategy, run_id=run_id)
         with self.database.connect() as connection:
             return connection.execute(
                 "SELECT br.*, registry.created_at, registry.finished_at, s.name AS strategy_name, "
@@ -338,6 +431,87 @@ class ResultArchiveService:
                 f"WHERE {predicate} ORDER BY registry.created_at DESC, br.run_id DESC",
                 params,
             ).fetchall()
+
+    def _list_rows(self, *, status: str | None = None, strategy: str | None = None) -> list[Any]:
+        predicate, params = self._run_filters(status=status, strategy=strategy)
+        with self.database.connect() as connection:
+            return connection.execute(
+                f"""
+                SELECT
+                  br.run_id,
+                  br.status,
+                  br.strategy_entity_id,
+                  registry.created_at,
+                  registry.finished_at,
+                  s.name AS strategy_name,
+                  m.name AS model_name,
+                  factor_agg.factor_names AS factor_names,
+                  json_extract(br.config_json, '$.name') AS config_name,
+                  json_extract(br.config_json, '$.kind') AS config_kind,
+                  json_extract(br.config_json, '$.benchmark') AS benchmark,
+                  json_extract(br.config_json, '$.machine_id') AS config_machine_id,
+                  json_extract(br.config_json, '$.model.name') AS config_model_name,
+                  json_extract(br.config_json, '$.model.kind') AS config_model_kind,
+                  json_extract(br.config_json, '$.test.date_from') AS date_from,
+                  json_extract(br.config_json, '$.test.date_to') AS date_to,
+                  json_extract(br.config_json, '$.factor_versions') AS factor_versions_json,
+                  json_extract(br.metrics_json, '$.resources.machine_id') AS metrics_machine_id,
+                  {_list_metric_select()}
+                FROM backtest_runs br
+                JOIN run_registry registry ON registry.run_id=br.run_id
+                LEFT JOIN strategies s ON s.entity_id=br.strategy_entity_id
+                LEFT JOIN models m ON m.entity_id=json_extract(br.config_json, '$.model.entity_id')
+                LEFT JOIN (
+                  SELECT sfv.strategy_entity_id, sfv.strategy_version_id,
+                         group_concat(f.name, ',') AS factor_names
+                  FROM strategy_factor_versions sfv
+                  JOIN factors f ON f.entity_id=sfv.factor_entity_id
+                  GROUP BY sfv.strategy_entity_id, sfv.strategy_version_id
+                ) factor_agg
+                  ON factor_agg.strategy_entity_id=br.strategy_entity_id
+                 AND factor_agg.strategy_version_id=br.strategy_version_id
+                WHERE {predicate}
+                """,
+                params,
+            ).fetchall()
+
+    def _project_list(self, row: Any) -> dict[str, Any]:
+        factor_versions = _parse_json_value(row["factor_versions_json"])
+        config = {"factor_versions": factor_versions if isinstance(factor_versions, list) else []}
+        kind = str(row["config_kind"] or row["config_model_kind"] or "").strip()
+        model_name = (
+            str(row["model_name"] or "").strip()
+            or str(row["config_model_name"] or "").strip()
+            or kind_display_name(kind)
+            or _strategy_label(row["strategy_name"] or row["strategy_entity_id"] or "")
+            or "未登记模型"
+        )
+        return {
+            "run_id": row["run_id"],
+            "name": str(row["config_name"] or "未命名回测"),
+            "status": row["status"],
+            "status_name": _STATUS_NAMES.get(row["status"], row["status"]),
+            "created_at": row["created_at"],
+            "finished_at": row["finished_at"],
+            "strategy": {"entity_id": row["strategy_entity_id"], "name": model_name},
+            "factors": self._factor_labels(row, config),
+            "test_window": {"date_from": row["date_from"], "date_to": row["date_to"]},
+            "metrics": {
+                key: _metric(
+                    row[f"metric_{key}"],
+                    percentage=key in _PERCENT_METRICS,
+                    integer=key in _INTEGER_METRICS,
+                )
+                for key, _ in _METRICS
+            },
+            "benchmark": row["benchmark"] or "未生成",
+            "detail_url": f"/backtests/runs/{row['run_id']}",
+            "copy_url": f"/api/backtests/runs/{row['run_id']}/copy-config",
+            "execute_url": f"/api/backtests/{row['run_id']}/execute",
+            "delete_url": f"/api/backtests/runs/{row['run_id']}",
+            "retryable": row["status"] == "failed",
+            "machine_id": str(row["metrics_machine_id"] or row["config_machine_id"] or ""),
+        }
 
     def list(
         self,
@@ -356,12 +530,10 @@ class ResultArchiveService:
             raise ValueError("page_size must be between 1 and 200")
         if sort not in _SORT_FIELDS or order not in {"asc", "desc"}:
             raise ValueError("invalid sort or order")
-        sync_result_catalog(self.settings, self.database)
-        rows = self._rows(status=status, strategy=strategy)
         items = []
         query_text = query.lower().strip() if query else ""
-        for row in rows:
-            item = self._project(row)
+        for row in self._list_rows(status=status, strategy=strategy):
+            item = self._project_list(row)
             window = item["test_window"]
             haystack = " ".join([item["run_id"], item["name"], item["strategy"]["name"], *item["factors"]]).lower()
             if query_text and query_text not in haystack:
@@ -370,27 +542,26 @@ class ResultArchiveService:
                 continue
             if date_to and (window["date_from"] or "") > date_to:
                 continue
-            items.append((row, item))
-        if sort == "name":
-            items.sort(key=lambda pair: pair[1]["name"], reverse=order == "desc")
-        elif sort == "return":
-            items.sort(key=lambda pair: pair[1]["metrics"]["return"]["value"] if pair[1]["metrics"]["return"]["value"] is not None else float("-inf"), reverse=order == "desc")
-        elif sort == "status":
-            items.sort(key=lambda pair: pair[1]["status"], reverse=order == "desc")
-        else:
-            items.sort(key=lambda pair: (pair[1]["created_at"], pair[1]["run_id"]), reverse=order == "desc")
+            items.append(item)
+        items.sort(key=lambda item: _archive_sort_key(item, sort, order))
         total = len(items)
         start = (page - 1) * page_size
-        return {"items": [item for _, item in items[start : start + page_size]], "page": page, "page_size": page_size, "total": total, "pages": (total + page_size - 1) // page_size, "results_root": self.settings.display_path(self.settings.runtime_root / "results")}
+        return {
+            "items": items[start : start + page_size],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": (total + page_size - 1) // page_size,
+            "results_root": self.settings.display_path(self.settings.runtime_root / "results"),
+        }
 
     def get(self, run_id: str) -> dict[str, Any] | None:
-        rows = self._rows()
-        row = next((item for item in rows if item["run_id"] == run_id), None)
+        row = next(iter(self._rows(run_id=run_id)), None)
         return self._project(row, include_detail=True) if row else None
 
     def delete(self, run_id: str) -> dict[str, Any]:
         run_id = validate_run_id(run_id)
-        row = next((item for item in self._rows() if item["run_id"] == run_id), None)
+        row = next(iter(self._rows(run_id=run_id)), None)
         if row is None:
             raise ValueError("找不到这条回测。")
         write_deleted_marker(self.settings, run_id)
