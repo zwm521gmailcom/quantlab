@@ -120,7 +120,9 @@ PRICE60_CHEAP_WEIGHTS: tuple[tuple[str, str, float, float, float, float], ...] =
     ("sleeve_p60_c025", "价格60加低估值 · 低估值0.25", 1, 1, 1, 0.25),
     ("sleeve_p60_c050", "价格60加低估值 · 低估值0.5", 1, 1, 1, 0.5),
     ("sleeve_p60_c075", "价格60加低估值 · 低估值0.75", 1, 1, 1, 0.75),
+    ("sleeve_p60_c125", "价格60加低估值 · 低估值1.25", 1, 1, 1, 1.25),
     ("sleeve_p60_c150", "价格60加低估值 · 低估值1.5", 1, 1, 1, 1.5),
+    ("sleeve_p60_c175", "价格60加低估值 · 低估值1.75", 1, 1, 1, 1.75),
     ("sleeve_p60_c200", "价格60加低估值 · 低估值2", 1, 1, 1, 2),
     ("sleeve_p60_c300", "价格60加低估值 · 低估值3", 1, 1, 1, 3),
     ("sleeve_p60_d000", "价格60加低估值 · 股息0", 1, 1, 0, 1),
@@ -143,10 +145,63 @@ PRICE60_CHEAP_WEIGHTS: tuple[tuple[str, str, float, float, float, float], ...] =
     ("sleeve_p60_d000_c200", "价格60加低估值 · 股息0低估值2", 1, 1, 0, 2),
 )
 
+# 在低估值0.75 上叠加 10 日动量，用来测 2019/2021 风格轮动能不能用动量腿对冲。
+C075_MOM_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c075_mom025", "低估值0.75加动量0.25", 0.25),
+    ("sleeve_c075_mom050", "低估值0.75加动量0.5", 0.5),
+    ("sleeve_c075_mom100", "低估值0.75加动量1", 1.0),
+)
+
+# 规模权重插在 1 与 0.5 之间，其余与低估值0.75 相同。
+C075_SIZE_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c075_s075", "低估值0.75 · 规模0.75", 0.75),
+)
+
+# 价格权重插在 1 与已测的 1.5 之间，低估值仍是 0.75。p150 那条廉价腿是 1，和 c075 不是同一条。
+C075_PRICE_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_c075_p125", "低估值0.75 · 价格1.25", 1.25),
+)
+
+# 在已过线的股息0.75（廉价腿已是 1）上再加重低估值。
+D075_CHEAP_BLENDS: tuple[tuple[str, str, float], ...] = (
+    ("sleeve_d075_c125", "股息0.75 · 低估值1.25", 1.25),
+    ("sleeve_d075_c150", "股息0.75 · 低估值1.5", 1.5),
+)
+
+
+def c075_mom_formula(mom: float) -> str:
+    return (
+        price60_cheap_formula(1, 1, 1, 0.75)
+        + " + "
+        + _weighted_term(mom, "momentum_10.cs_rank(0)")
+    )
+
+
 COMPOSITE_FORMULAS.update(
     {
         field: price60_cheap_formula(price, size, div, cheap)
         for field, _name, price, size, div, cheap in PRICE60_CHEAP_WEIGHTS
+    }
+)
+COMPOSITE_FORMULAS.update(
+    {field: c075_mom_formula(mom) for field, _name, mom in C075_MOM_BLENDS}
+)
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(1, size, 1, 0.75)
+        for field, _name, size in C075_SIZE_BLENDS
+    }
+)
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(price, 1, 1, 0.75)
+        for field, _name, price in C075_PRICE_BLENDS
+    }
+)
+COMPOSITE_FORMULAS.update(
+    {
+        field: price60_cheap_formula(1, 1, 0.75, cheap)
+        for field, _name, cheap in D075_CHEAP_BLENDS
     }
 )
 COMPOSITE_FIELDS = tuple(COMPOSITE_FORMULAS)
@@ -318,6 +373,15 @@ def materialize_composite_pack_factors(pack_sidecar_path: Path | str) -> dict[st
         columns[field] = (price_w * price60 + size_w * mv + div_w * div + cheap_w * cheap).to_numpy(
             dtype="float64"
         )
+    base_c075 = price60 + mv + div + 0.75 * cheap
+    for field, _name, mom_w in C075_MOM_BLENDS:
+        columns[field] = (base_c075 + mom_w * mom).to_numpy(dtype="float64")
+    for field, _name, size_w in C075_SIZE_BLENDS:
+        columns[field] = (price60 + size_w * mv + div + 0.75 * cheap).to_numpy(dtype="float64")
+    for field, _name, price_w in C075_PRICE_BLENDS:
+        columns[field] = (price_w * price60 + mv + div + 0.75 * cheap).to_numpy(dtype="float64")
+    for field, _name, cheap_w in D075_CHEAP_BLENDS:
+        columns[field] = (price60 + mv + 0.75 * div + cheap_w * cheap).to_numpy(dtype="float64")
     table = pa.table(columns)
     output = sidecar.with_name(COMPOSITE_SIDECAR_NAME)
     tmp = output.with_name(output.name + ".next")
