@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuantLab · 离线策略学习</title>
+  <link rel="stylesheet" href="/assets/app.css?v=20260911navadapt3">
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <h1>QuantLab</h1>
+    <nav aria-label="主导航">
+      <a href="/">研究总览</a>
+      <a href="/backtests/new">回测中心</a>
+      <a href="/backtests/offline-rl" aria-current="page">离线策略学习</a>
+      <a href="/backtests/runs">结果档案</a>
+      <a href="/settings">设置</a>
+    </nav>
+  </aside>
+  <main class="main plan-page">
+    <div class="top">
+      <div>
+        <div class="eyebrow">回测中心</div>
+        <div class="title">离线策略学习</div>
+        <div class="sub">用自然年回测轨迹做离散 Fitted Q：每个交易日选一个专家或持币。奖励 = 日超额（当日组合收益 − 沪深300 当日收益）。打开页面不会自动开跑，请先刷新预览，确认后再点运行实验。</div>
+      </div>
+      <div class="actions">
+        <button id="offline-rl-preview" class="btn" type="button">刷新预览</button>
+        <button id="offline-rl-run" class="btn primary" type="button">运行实验</button>
+        <a class="btn" href="/backtests/runs">结果档案</a>
+      </div>
+    </div>
+    <div id="offline-rl-verdict" class="banner hidden"><strong>总判定：</strong><span id="offline-rl-verdict-text">尚未运行</span></div>
+    <section class="card config-block">
+      <h3>实验参数</h3>
+      <div class="data-toolbar">
+        <label>专家数量 K
+          <input id="offline-rl-k" class="input" type="number" min="1" max="32" value="8">
+        </label>
+        <label>状态窗口（交易日）
+          <input id="offline-rl-window" class="input" type="number" min="2" max="120" value="20">
+        </label>
+        <label>奖励定义
+          <input class="input" type="text" value="当日组合收益 − 沪深300 当日收益" readonly>
+        </label>
+      </div>
+      <p class="form-note">长窗回测（测试区间跨自然年）不会进入专家池。评分年 Y 的动作表与训练数据只使用测试年 &lt; Y 的自然年回测。</p>
+    </section>
+    <div id="offline-rl-state" class="state">点击「刷新预览」查看可用自然年与排除项；实验仅在点击「运行实验」后执行。</div>
+    <section class="card">
+      <h3>排除的长窗回测</h3>
+      <div class="archive-table" id="offline-rl-excluded"></div>
+    </section>
+    <section class="card">
+      <h3>专家动作（配置指纹）</h3>
+      <div class="archive-table" id="offline-rl-actions"></div>
+    </section>
+    <section class="card">
+      <h3>各评分年动作表</h3>
+      <div class="archive-table" id="offline-rl-actions-by-year"></div>
+    </section>
+    <section class="card">
+      <h3>走步评分</h3>
+      <div class="archive-table" id="offline-rl-year-results"></div>
+    </section>
+  </main>
+</div>
+<script src="/assets/backtest/offline-rl.js?v=20260914offlinerl"></script>
+<script src="/assets/nav.js?v=20260911ver"></script>
+</body>
+</html>

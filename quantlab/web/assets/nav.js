@@ -54,6 +54,7 @@
           children: [
             { href: "/backtests/plan", label: "回测计划", active: exact("/backtests/plan") },
             { href: "/backtests/rules", label: "规则回测", active: exact("/backtests/rules") },
+            { href: "/backtests/offline-rl", label: "离线策略学习", active: exact("/backtests/offline-rl") },
           ],
         },
         { href: "/backtests/runs", label: "结果档案", icon: "↗", active: under("/backtests/runs") },

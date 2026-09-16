@@ -11,6 +11,7 @@ from quantlab.api.routes.health import router as health_router
 from quantlab.api.routes.kline import router as kline_router
 from quantlab.api.routes.lan import router as lan_router
 from quantlab.api.routes.models import router as models_router
+from quantlab.api.routes.offline_rl import router as offline_rl_router
 from quantlab.api.routes.overview import router as overview_router
 from quantlab.api.routes.pages import router as pages_router
 from quantlab.api.routes.research_runs import router as research_runs_router
@@ -31,5 +32,6 @@ def register_routers(app: FastAPI) -> None:
     app.include_router(models_router)
     app.include_router(strategies_router)
     app.include_router(backtests_router)
+    app.include_router(offline_rl_router)
     app.include_router(research_runs_router)
     app.include_router(pages_router)

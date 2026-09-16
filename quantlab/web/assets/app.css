@@ -504,6 +504,8 @@ html.nav-autohide .shell > aside:not(.nav-expanded) .theme-toggle {
 .root button:not(.root-edit) { margin-left: auto; border: 0; border-radius: var(--radius-md); padding: 6px 9px; background: var(--color-sidebar-hover); color: var(--color-text-inverse); font-size: 11px; cursor: pointer; }
 .banner { margin-bottom: 16px; padding: 13px 15px; border: 1px solid var(--color-warn); border-radius: var(--radius-md); background: var(--color-warn-bg); color: var(--color-warn); font-size: 12px; line-height: 1.6; }
 .banner-error { border-color: var(--color-danger); background: var(--color-danger-bg); color: var(--color-danger); }
+.banner-warn { border-color: var(--color-warn); background: var(--color-warn-bg); color: var(--color-warn); }
+.warn-text { color: var(--color-warn); font-weight: 600; }
 .layout { display: grid; grid-template-columns: 1.12fr .88fr; gap: 16px; }
 .layout-col { min-height: 48px; }
 .panel { margin-bottom: 16px; padding: 14px 18px 16px; border: 1px solid var(--color-border-light); border-radius: var(--radius-md); background: var(--color-bg-card); box-shadow: var(--shadow-panel); }
