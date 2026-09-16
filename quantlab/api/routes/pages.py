@@ -87,6 +87,18 @@ def backtest_rules_page() -> FileResponse:
     return FileResponse(_PAGES / "backtest_rules.html")
 
 
+@router.get("/backtests/offline-rl")
+def offline_rl_page() -> FileResponse:
+    return FileResponse(
+        _PAGES / "offline_rl.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 @router.get("/backtests/runs")
 def backtest_archive_page() -> FileResponse:
     return FileResponse(_PAGES / "result_archive.html")

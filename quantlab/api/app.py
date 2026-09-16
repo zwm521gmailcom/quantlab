@@ -27,6 +27,7 @@ from quantlab.services.factor_calculation import FactorCalculationService
 from quantlab.services.canonical_factor_pack import CanonicalFactorPackService
 from quantlab.services.strategy_center import StrategyCenterService
 from quantlab.services.model_training import ModelTrainingService
+from quantlab.services.offline_rl.experiment import OfflineRlExperimentService
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_plan import BacktestPlanService
@@ -69,6 +70,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     settings_service = SettingsService(resolved_settings)
     tushare_download = TushareDownloadService(resolved_settings)
     research_runs = ResearchRunRepository(resolved_settings, resolved_database)
+    offline_rl = OfflineRlExperimentService(resolved_settings, resolved_database)
     app = FastAPI(title="QuantLab", version=__version__)
     app.state.overview_service = overview
     app.state.kline_service = kline
@@ -90,6 +92,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.state.dataset_catalog = catalog
     app.state.artifact_repository = artifacts
     app.state.model_training_service = model_training
+    app.state.offline_rl_service = offline_rl
     app.state.settings = resolved_settings
     app.state.database = resolved_database
     app.state.peer_registry = PeerRegistry()

@@ -702,10 +702,42 @@ def test_nav_exposes_rule_backtest_page() -> None:
     nav = Path("quantlab/web/assets/nav.js").read_text()
     assert '{ href: "/backtests/plan", label: "回测计划", active:' in nav
     assert '{ href: "/backtests/rules", label: "规则回测", active: exact("/backtests/rules") }' in nav
+    assert '{ href: "/backtests/offline-rl", label: "离线策略学习", active: exact("/backtests/offline-rl") }' in nav
     assert "规则回测" in nav
+    assert "离线策略学习" in nav
     assert "/api/health" in nav
     assert "asset_label" in nav
     assert "health.version" in nav
+
+def test_offline_rl_page_declares_nav_run_and_results_table() -> None:
+    html = _page("offline_rl.html")
+    js = Path("quantlab/web/assets/backtest/offline-rl.js").read_text(encoding="utf-8")
+    source = html + js
+    assert 'class="shell"' in html
+    assert '<script src="/assets/nav.js' in html
+    assert "offline-rl.js" in html
+    assert 'class="main plan-page"' in html
+    assert 'id="offline-rl-run"' in html
+    assert "运行实验" in html
+    assert 'id="offline-rl-preview"' in html
+    assert "刷新预览" in html
+    assert 'id="offline-rl-year-results"' in html
+    assert 'id="offline-rl-actions-by-year"' in html
+    assert 'id="offline-rl-verdict"' in html
+    assert "renderActionsByYear" in js
+    assert "champion_copy_warning" in js
+    assert "离散" in html or "Fitted Q" in html
+    assert "日超额" in html
+    assert "不会自动" in source or "不自动" in source
+    assert "/api/offline-rl/preview" in js
+    assert "/api/offline-rl/run" in js
+    assert "confirm(" in js
+    assert "loadPreview()" not in js or "DOMContentLoaded" not in js or "loadPreview();" not in js
+    assert "loadRun()" not in js or "DOMContentLoaded" not in js or "loadRun();" not in js
+    client = TestClient(create_app())
+    response = client.get("/backtests/offline-rl")
+    assert response.status_code == 200
+    assert "离线策略学习" in response.text
 
 
 def test_backtest_new_does_not_embed_rule_strategy() -> None:
