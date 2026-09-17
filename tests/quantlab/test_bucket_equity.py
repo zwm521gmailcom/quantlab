@@ -111,6 +111,30 @@ def test_performance_metrics_reads_captured_predictions_for_segment_curves() -> 
     assert metrics["segment_curves"]["by_turn"]["buckets"][0]["label"] == "Q1 低换手"
 
 
+def test_performance_metrics_skips_segment_curves_when_disabled() -> None:
+    frame = _panel()
+    predictions = frame[["date", "instrument", "score"]].copy()
+    capture_predictions(frame, predictions)
+    config = {
+        "test": {"date_from": "20200102", "date_to": "20200107"},
+        "segment_curves": False,
+        "rebalance_every": 1,
+        "holding_days": 1,
+        "top_n": 1,
+        "lot_size": 100,
+        "initial_capital": 100_000,
+    }
+    equity = [
+        {"date": "20200102", "equity": 100_000.0},
+        {"date": "20200107", "equity": 100_000.0},
+    ]
+    metrics = _performance_metrics([], config, frame, equity_curve=equity)
+    assert metrics["segment_curves"]["by_float_market_cap"]["status"] == "skipped"
+    assert metrics["segment_curves"]["by_turn"]["status"] == "skipped"
+    assert metrics["segment_curves"]["by_float_market_cap"]["buckets"] == []
+    assert "return" in metrics or "max_drawdown" in metrics
+
+
 def _config() -> dict:
     return {
         "test": {"date_from": "20200102", "date_to": "20200107"},

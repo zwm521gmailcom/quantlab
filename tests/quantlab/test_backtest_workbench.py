@@ -139,6 +139,15 @@ def test_config_normalizes_and_freezes_and_rejects_invalid_scope(tmp_path):
     assert sh["test"]["stock_scope"] == "沪市（SH）"
 
 
+def test_validate_freezes_segment_curves_false(tmp_path):
+    s, db = setup_env(tmp_path)
+    svc = BacktestWorkbenchService(s, db)
+    out = svc.validate({**config(), "segment_curves": False})
+    assert out["segment_curves"] is False
+    defaulted = svc.validate(config())
+    assert "segment_curves" not in defaulted
+
+
 def test_preview_reports_stages_and_submit_is_idempotent(tmp_path):
     s, db = setup_env(tmp_path)
     svc = BacktestWorkbenchService(s, db)

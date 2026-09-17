@@ -10,7 +10,14 @@ from quantlab.api.app import create_app
 from quantlab.config import Settings
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
-from quantlab.services.result_archive import ResultArchiveService
+from quantlab.services.result_archive import ResultArchiveService, step_label
+
+
+def test_step_label_uses_factor_rank_copy():
+    assert step_label("model_training") == "模型训练"
+    assert step_label("prediction") == "预测打分"
+    assert step_label("model_training", kind="factor_rank") == "准备数据"
+    assert step_label("prediction", kind="factor_rank") == "因子排序"
 
 
 def setup_archive(tmp_path: Path) -> tuple[Settings, Database]:

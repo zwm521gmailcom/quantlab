@@ -70,6 +70,11 @@ _STEP_LABELS = {
     "execution": "撮合成交",
     "metrics": "指标汇总",
 }
+_FACTOR_RANK_STEP_LABELS = {
+    **_STEP_LABELS,
+    "model_training": "准备数据",
+    "prediction": "因子排序",
+}
 _STEP_STATUS_NAMES = {
     "pending": "等待",
     "running": "进行中",
@@ -77,6 +82,12 @@ _STEP_STATUS_NAMES = {
     "failed": "失败",
     "skipped": "跳过",
 }
+
+
+def step_label(step_name: str, *, kind: str | None = None) -> str:
+    names = _FACTOR_RANK_STEP_LABELS if kind == "factor_rank" else _STEP_LABELS
+    key = str(step_name or "")
+    return names.get(key, key)
 
 
 class _Desc:
@@ -192,12 +203,12 @@ def _format_duration_ms(ms: int | None, *, status: str = "completed") -> str:
     return f"{hours} 小时 {minutes} 分"
 
 
-def _annotate_step_timing(step: dict[str, Any]) -> dict[str, Any]:
+def _annotate_step_timing(step: dict[str, Any], *, kind: str | None = None) -> dict[str, Any]:
     status = str(step.get("status") or "pending")
     duration_ms = None
     if status not in {"pending", "running", "skipped"}:
         duration_ms = _duration_ms(step.get("started_at"), step.get("finished_at"))
-    step["step_label"] = _STEP_LABELS.get(str(step.get("step_name") or ""), step.get("step_name"))
+    step["step_label"] = step_label(str(step.get("step_name") or ""), kind=kind)
     step["status_name"] = _STEP_STATUS_NAMES.get(status, status)
     step["duration_ms"] = duration_ms
     step["duration_display"] = _format_duration_ms(duration_ms, status=status)
@@ -379,7 +390,7 @@ class ResultArchiveService:
             for step in item["dag"]:
                 if step.get("error_message"):
                     step["error_message"] = _ERROR_ZH.get(step["error_message"], step["error_message"])
-                _annotate_step_timing(step)
+                _annotate_step_timing(step, kind=kind)
             item["timing"] = _run_timing(row["created_at"], row["finished_at"], row["status"])
             failed_step = next((step for step in item["dag"] if step["status"] == "failed"), None)
             item["failure"] = {

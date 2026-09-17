@@ -257,6 +257,8 @@ class BacktestWorkbenchService:
         c["open_when_benchmark_gt_ma200"] = _as_bool(c.get("open_when_benchmark_gt_ma200"), False)
         c["open_ma_gates"] = normalize_open_ma_gates(c.get("open_ma_gates"))
         c["open_gate_by_membership"] = _as_bool(c.get("open_gate_by_membership"), False)
+        if "segment_curves" in c:
+            c["segment_curves"] = _as_bool(c.get("segment_curves"), True)
         from quantlab.services.index_membership import parse_universe_index_codes
 
         try:

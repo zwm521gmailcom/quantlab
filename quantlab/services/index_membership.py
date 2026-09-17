@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import bisect
 from pathlib import Path
 
 import pandas as pd
@@ -24,14 +25,34 @@ def _normalize_trade_date(value: str) -> str:
     return text[:8]
 
 
-def load_index_weight(raw_root: Path) -> pd.DataFrame:
-    index_dir = raw_root / "index_weight"
-    if index_dir.is_dir():
-        pattern = index_dir / "index_weight_*.parquet"
-    else:
-        pattern = raw_root / "index_weight_*.parquet"
+def index_weight_path(raw_root: Path, index_code: str) -> Path:
+    slug = str(index_code).strip().upper().replace(".", "_")
+    return Path(raw_root) / "index_weight" / f"index_weight_{slug}.parquet"
 
-    paths = sorted(pattern.parent.glob(pattern.name))
+
+def load_index_weight(
+    raw_root: Path,
+    index_codes: tuple[str, ...] | list[str] | None = None,
+) -> pd.DataFrame:
+    raw_root = Path(raw_root)
+    if index_codes is None:
+        index_dir = raw_root / "index_weight"
+        if index_dir.is_dir():
+            pattern = index_dir / "index_weight_*.parquet"
+        else:
+            pattern = raw_root / "index_weight_*.parquet"
+        paths = sorted(pattern.parent.glob(pattern.name))
+    else:
+        paths = []
+        seen: set[str] = set()
+        for raw in index_codes:
+            code = str(raw or "").strip().upper().replace("-", ".")
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            path = index_weight_path(raw_root, code)
+            if path.is_file():
+                paths.append(path)
     if not paths:
         return _empty_weights()
 
@@ -46,23 +67,36 @@ def load_index_weight(raw_root: Path) -> pd.DataFrame:
     return result[_COLUMNS]
 
 
-def members_on(weights: pd.DataFrame, index_code: str, trade_date: str) -> set[str]:
-    if weights.empty:
-        return set()
-
-    query_date = _normalize_trade_date(trade_date)
-    subset = weights.loc[weights["index_code"] == index_code].copy()
+def _member_snapshots(weights: pd.DataFrame, index_code: str) -> tuple[list[str], list[set[str]]]:
+    if weights is None or getattr(weights, "empty", True):
+        return [], []
+    subset = weights.loc[weights["index_code"].astype(str) == str(index_code)]
     if subset.empty:
-        return set()
+        return [], []
+    grouped: dict[str, set[str]] = {}
+    dates = subset["trade_date"].map(_normalize_trade_date)
+    codes = subset["con_code"].astype(str).str.strip()
+    for date, code in zip(dates.tolist(), codes.tolist(), strict=False):
+        if not date or not code or code.lower() == "nan":
+            continue
+        grouped.setdefault(date, set()).add(code)
+    ordered = sorted(grouped)
+    return ordered, [grouped[day] for day in ordered]
 
-    subset["trade_date"] = subset["trade_date"].map(_normalize_trade_date)
-    eligible = subset.loc[subset["trade_date"] <= query_date]
-    if eligible.empty:
-        return set()
 
-    as_of_date = eligible["trade_date"].max()
-    members = eligible.loc[eligible["trade_date"] == as_of_date, "con_code"].astype(str).str.strip()
-    return {code for code in members if code and code.lower() != "nan"}
+def _members_asof(ordered: list[str], snaps: list[set[str]], trade_date: str) -> set[str]:
+    query_date = _normalize_trade_date(trade_date)
+    if not ordered or not query_date:
+        return set()
+    index = bisect.bisect_right(ordered, query_date) - 1
+    if index < 0:
+        return set()
+    return set(snaps[index])
+
+
+def members_on(weights: pd.DataFrame, index_code: str, trade_date: str) -> set[str]:
+    ordered, snaps = _member_snapshots(weights, index_code)
+    return _members_asof(ordered, snaps, trade_date)
 
 
 PIT_INDEX_CODES = ("000300.SH", "000905.SH")
@@ -71,6 +105,7 @@ DEFAULT_UNIVERSE_INDEX_CODES = PIT_INDEX_CODES
 UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
     "csi800": ("000300.SH", "000905.SH"),
     "csi1000": ("000852.SH",),
+    "csi2000": ("932000.CSI",),
     "csi800_single": ("000906.SH",),
     "csi_all": ("000985.CSI",),
     "cni2000": ("399303.SZ",),
@@ -98,11 +133,6 @@ def parse_universe_index_codes(value: object | None) -> tuple[str, ...]:
     return tuple(codes) or DEFAULT_UNIVERSE_INDEX_CODES
 
 
-def index_weight_path(raw_root: Path, index_code: str) -> Path:
-    slug = str(index_code).strip().upper().replace(".", "_")
-    return Path(raw_root) / "index_weight" / f"index_weight_{slug}.parquet"
-
-
 def membership_coverage_error(
     raw_root: Path,
     index_codes: tuple[str, ...] | list[str] | None = None,
@@ -113,7 +143,7 @@ def membership_coverage_error(
     missing = [code for code in codes if not index_weight_path(raw_root, code).is_file()]
     if missing:
         return f"缺少指数成分权重：{', '.join(missing)}。请先在数据中心下载 index_weight。"
-    weights = load_index_weight(Path(raw_root))
+    weights = load_index_weight(Path(raw_root), codes)
     if weights.empty:
         return "指数成分权重文件是空的。"
     present = set(weights["index_code"].astype(str))
@@ -150,22 +180,42 @@ def filter_index_universe_asof(
     code_col = next((name for name in ("instrument", "ts_code") if name in frame.columns), None)
     if date_col is None or code_col is None:
         return frame
+    union: dict[str, set[str]] = {}
+    for index_code in codes:
+        ordered, snaps = _member_snapshots(weights, index_code)
+        for day, members in zip(ordered, snaps, strict=False):
+            if not day:
+                continue
+            bucket = union.get(day)
+            if bucket is None:
+                union[day] = set(members)
+            else:
+                bucket.update(members)
+    snap_dates = sorted(union)
+    if not snap_dates:
+        return frame.iloc[0:0].copy()
+
     day_keys = frame[date_col].map(_normalize_trade_date)
-    cache: dict[str, set[str]] = {}
-    mask = pd.Series(False, index=frame.index)
-    for day in day_keys.unique():
-        if not day:
-            continue
-        members = cache.get(day)
-        if members is None:
-            members = set()
-            for index_code in codes:
-                members |= members_on(weights, index_code, day)
-            cache[day] = members
-        if not members:
-            continue
-        mask |= day_keys.eq(day) & frame[code_col].astype(str).isin(members)
-    return frame.loc[mask].copy()
+    code_keys = frame[code_col].astype(str).str.strip()
+    unique_days = [day for day in dict.fromkeys(day_keys.tolist()) if day]
+    day_to_snap: dict[str, str] = {}
+    for day in unique_days:
+        index = bisect.bisect_right(snap_dates, day) - 1
+        if index >= 0:
+            day_to_snap[day] = snap_dates[index]
+    asof = day_keys.map(day_to_snap)
+    members = pd.DataFrame(
+        ((day, name) for day, names in union.items() for name in names),
+        columns=["_snap", "_code"],
+    )
+    if members.empty:
+        return frame.iloc[0:0].copy()
+    members = members.drop_duplicates()
+    keyed = pd.DataFrame(
+        {"_row": frame.index, "_snap": asof.to_numpy(), "_code": code_keys.to_numpy()}
+    )
+    matched = keyed.merge(members, on=["_snap", "_code"], how="inner")
+    return frame.loc[matched["_row"].to_numpy()].copy()
 
 
 def apply_pit_index_universe(
@@ -175,25 +225,19 @@ def apply_pit_index_universe(
 ) -> pd.DataFrame:
     if raw_root is None:
         return frame
+    codes = parse_universe_index_codes(index_codes)
     return filter_index_universe_asof(
         frame,
-        load_index_weight(Path(raw_root)),
-        parse_universe_index_codes(index_codes),
+        load_index_weight(Path(raw_root), codes),
+        codes,
     )
 
 
 def latest_members(weights: pd.DataFrame, index_code: str) -> set[str]:
-    if weights.empty:
+    ordered, snaps = _member_snapshots(weights, index_code)
+    if not ordered:
         return set()
-
-    subset = weights.loc[weights["index_code"] == index_code].copy()
-    if subset.empty:
-        return set()
-
-    subset["trade_date"] = subset["trade_date"].map(_normalize_trade_date)
-    as_of_date = subset["trade_date"].max()
-    members = subset.loc[subset["trade_date"] == as_of_date, "con_code"].astype(str).str.strip()
-    return {code for code in members if code and code.lower() != "nan"}
+    return set(snaps[-1])
 
 
 def amount_unit(series: pd.Series) -> str:
