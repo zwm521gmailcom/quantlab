@@ -419,7 +419,7 @@ def resolve_membership_open_allow(frame, config, raw_root=None):
     from quantlab.services.index_membership import load_index_weight, members_on, parse_universe_index_codes
 
     index_codes = parse_universe_index_codes((config or {}).get("universe_index_codes"))
-    weights = load_index_weight(raw_root)
+    weights = load_index_weight(raw_root, index_codes)
     present = {str(code) for code in (weights["index_code"].tolist() if not weights.empty else [])}
     missing = [code for code in index_codes if code not in present]
     if weights.empty or missing:
@@ -669,10 +669,25 @@ def _filter_core(frame, section, notes=None):
     return result
 
 
-def _load_frame_core(self, path, config):
+def research_frame_date_span(config):
     train, test = config["train"], config["test"]
-    start = min(str(train["date_from"]).replace("-", "")[:8], str(test["date_from"]).replace("-", "")[:8])
-    end = max(str(train["date_to"]).replace("-", "")[:8], str(test["date_to"]).replace("-", "")[:8])
+
+    def compact(section, key):
+        return str(section[key]).replace("-", "")[:8]
+
+    test_from = compact(test, "date_from")
+    test_to = compact(test, "date_to")
+    nested = config.get("model") if isinstance(config.get("model"), dict) else {}
+    kind = resolve_kind(config.get("kind") or nested.get("kind"), config.get("hyperparameters"))
+    if kind == "factor_rank":
+        return test_from, test_to
+    train_from = compact(train, "date_from")
+    train_to = compact(train, "date_to")
+    return min(train_from, test_from), max(train_to, test_to)
+
+
+def _load_frame_core(self, path, config):
+    start, end = research_frame_date_span(config)
     names = set(pq.ParquetFile(path).schema_arrow.names)
     date_field = "trade_date" if "trade_date" in names else "date"
     warmup = load_warmup_start(start, config)
@@ -1121,14 +1136,29 @@ def _segment_portfolio_config(config, frame, raw_root=None):
     return portfolio_config
 
 
+def wants_segment_curves(config) -> bool:
+    payload = config if isinstance(config, dict) else {}
+    if "segment_curves" not in payload:
+        return True
+    return _as_bool(payload.get("segment_curves"), True)
+
+
 def _performance_metrics(trades, config, frame, equity_curve=None, raw_root=None):
     metrics = _compute_performance_metrics(
         trades, config, frame, equity_curve=equity_curve, raw_root=raw_root
     )
     captured_frame, predictions = peek_captured()
     source = captured_frame if captured_frame is not None else frame
-    portfolio_config = _segment_portfolio_config(config, source if source is not None else frame, raw_root)
-    metrics = attach_segment_curves(metrics, source, predictions, portfolio_config)
+    if wants_segment_curves(config):
+        portfolio_config = _segment_portfolio_config(
+            config, source if source is not None else frame, raw_root
+        )
+        metrics = attach_segment_curves(metrics, source, predictions, portfolio_config)
+    else:
+        metrics["segment_curves"] = {
+            "by_float_market_cap": {"field": "float_market_cap", "status": "skipped", "buckets": []},
+            "by_turn": {"field": "turn", "status": "skipped", "buckets": []},
+        }
     metrics = attach_ranking_metrics(metrics, frame, config)
     return _attach_extra_performance_metrics(metrics, equity_curve)
 
@@ -1709,15 +1739,21 @@ def _step(self, run_id: str, ordinal: int, status: str, error=None) -> None:
 
 
 def _load_frame_with_pack_factors(self, path, config):
-    from quantlab.services.canonical_pack_factors import attach_pack_factor_columns, default_sidecar_path
-    from quantlab.services.index_membership import apply_pit_index_universe, parse_universe_index_codes
+    from quantlab.services.canonical_pack_factors import default_sidecar_path
 
     frame = _load_frame_core(self, path, config)
-    refs = (config or {}).get("factor_versions") or []
-    frame = attach_pack_factor_columns(frame, refs, default_sidecar_path(path))
-    frame = _attach_config_sma(frame, config)
+    return prepare_research_frame(frame, config, self.settings.raw_root, default_sidecar_path(path))
+
+
+def prepare_research_frame(frame, config, raw_root, sidecar_path):
+    from quantlab.services.canonical_pack_factors import attach_pack_factor_columns
+    from quantlab.services.index_membership import apply_pit_index_universe, parse_universe_index_codes
+
     codes = parse_universe_index_codes((config or {}).get("universe_index_codes"))
-    return apply_pit_index_universe(frame, self.settings.raw_root, codes)
+    narrowed = apply_pit_index_universe(frame, raw_root, codes)
+    refs = (config or {}).get("factor_versions") or []
+    with_factors = attach_pack_factor_columns(narrowed, refs, sidecar_path)
+    return _attach_config_sma(with_factors, config)
 
 
 BacktestJobService._filter = staticmethod(_filter)

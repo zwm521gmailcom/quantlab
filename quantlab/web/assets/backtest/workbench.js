@@ -29,6 +29,7 @@
         {id: "csi500", label: "中证500", codes: ["000905.SH"]},
         {id: "csi800_single", label: "中证800", codes: ["000906.SH"]},
         {id: "csi1000", label: "中证1000", codes: ["000852.SH"]},
+        {id: "csi2000", label: "中证2000", codes: ["932000.CSI"]},
         {id: "csi_all", label: "中证全指", codes: ["000985.CSI"]},
         {id: "cni2000", label: "国证2000", codes: ["399303.SZ"]},
       ];
@@ -181,14 +182,29 @@
         if (collapse) collapse.textContent = "缩小";
       }
 
-      const RUN_STEP_LABELS = {
-        snapshot_validation: "快照校验",
-        model_training: "模型训练",
-        prediction: "预测打分",
-        positions: "生成仓位",
-        execution: "撮合成交",
-        metrics: "指标汇总",
-      };
+      function stepLabels(kind) {
+        const base = {
+          snapshot_validation: "快照校验",
+          model_training: "模型训练",
+          prediction: "预测打分",
+          positions: "生成仓位",
+          execution: "撮合成交",
+          metrics: "指标汇总",
+        };
+        if (kind === "factor_rank") {
+          return { ...base, model_training: "准备数据", prediction: "因子排序" };
+        }
+        return base;
+      }
+
+      function paintRunStepLabels(kind) {
+        const labels = stepLabels(kind);
+        document.querySelectorAll("#run-steps [data-step]").forEach((li) => {
+          const name = li.dataset.step;
+          const title = li.querySelector("span:not(.run-step-state)");
+          if (title && labels[name]) title.textContent = labels[name];
+        });
+      }
       const RUN_STEP_STATE = {
         pending: "等待",
         running: "进行中",
@@ -253,11 +269,14 @@
 
       function applyRunStatus(payload) {
         const steps = payload.steps || [];
+        const kind = payload.config?.kind || selectedKind();
+        const labels = stepLabels(kind);
+        paintRunStepLabels(kind);
         let runningLabel = "";
         steps.forEach((step) => {
           const name = step.step_name;
           const status = step.status || "pending";
-          const label = RUN_STEP_LABELS[name] || name;
+          const label = labels[name] || name;
           const li = document.querySelector(`#run-steps [data-step="${name}"]`);
           if (li) {
             const prev = li.dataset.status;
@@ -268,7 +287,12 @@
               if (status === "running") logRunOnce(`${name}:running`, `进入${label}`);
               if (status === "completed") {
                 logRunOnce(`${name}:completed`, `${label}完成`);
-                if (name === "model_training") logRunOnce("enter-backtest", "训练完成，进入回测");
+                if (name === "model_training") {
+                  logRunOnce(
+                    "enter-backtest",
+                    kind === "factor_rank" ? "数据准备完成，进入回测" : "训练完成，进入回测",
+                  );
+                }
               }
               if (status === "failed") {
                 logRunOnce(`${name}:failed`, `${label}失败${step.error_message ? `：${step.error_message}` : ""}`);
@@ -501,6 +525,7 @@
           const kinds = String(node.dataset.kinds || "").split(/\s+/).filter(Boolean);
           node.classList.toggle("hidden", !kinds.includes(current));
         });
+        paintRunStepLabels(current);
         syncRollPeriodFields();
       }
 

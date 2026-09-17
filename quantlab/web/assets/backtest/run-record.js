@@ -163,6 +163,12 @@ function renderSegmentDimension(raw, key, chartId, legendId, tableId, emptyText)
   const dimension = raw && raw.segment_curves && raw.segment_curves[key];
   const buckets = (dimension && dimension.buckets) || [];
   const ready = dimension && dimension.status === "available" && buckets.some((item) => (item.equity_curve || []).length);
+  if (dimension && dimension.status === "skipped") {
+    el.textContent = "这次按配置跳过了市值/换手分层回测。";
+    if (legend) legend.hidden = true;
+    if (tableHost) tableHost.replaceChildren();
+    return;
+  }
   if (!ready || typeof window.LightweightCharts === "undefined") {
     el.textContent = emptyText;
     if (legend) legend.hidden = true;
@@ -279,6 +285,7 @@ const UNIVERSE_SNAPSHOT_OPTIONS = [
   {label: "中证500", codes: ["000905.SH"]},
   {label: "中证800", codes: ["000906.SH"]},
   {label: "中证1000", codes: ["000852.SH"]},
+  {label: "中证2000", codes: ["932000.CSI"]},
   {label: "中证全指", codes: ["000985.CSI"]},
   {label: "国证2000", codes: ["399303.SZ"]},
 ];
@@ -359,14 +366,20 @@ function formatYearMetric(value, percent) {
   return percent ? (number * 100).toFixed(2) + "%" : number.toFixed(4);
 }
 
-const STEP_LABELS = {
-  snapshot_validation: "快照校验",
-  model_training: "模型训练",
-  prediction: "预测打分",
-  positions: "生成仓位",
-  execution: "撮合成交",
-  metrics: "指标汇总",
-};
+function stepLabels(kind) {
+  const base = {
+    snapshot_validation: "快照校验",
+    model_training: "模型训练",
+    prediction: "预测打分",
+    positions: "生成仓位",
+    execution: "撮合成交",
+    metrics: "指标汇总",
+  };
+  if (kind === "factor_rank") {
+    return Object.assign({}, base, {model_training: "准备数据", prediction: "因子排序"});
+  }
+  return base;
+}
 function renderStepTiming(d) {
   const total = q("timing-total");
   const target = q("step-timing");
@@ -379,6 +392,7 @@ function renderStepTiming(d) {
     target.textContent = "这次没有记下各模块时间。";
     return;
   }
+  const labels = stepLabels((d.config || d.configuration || {}).kind);
   const table = document.createElement("table");
   table.className = "fold-table";
   table.innerHTML = "<thead><tr><th>模块</th><th>耗时</th></tr></thead>";
@@ -386,7 +400,7 @@ function renderStepTiming(d) {
   rows.forEach((step) => {
     const tr = document.createElement("tr");
     [
-      step.step_label || STEP_LABELS[step.step_name] || step.step_name || "—",
+      step.step_label || labels[step.step_name] || step.step_name || "—",
       step.duration_display || "—",
     ].forEach((value) => {
       const td = document.createElement("td");

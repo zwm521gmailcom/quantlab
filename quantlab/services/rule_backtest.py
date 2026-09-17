@@ -144,9 +144,9 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
         frame = _read_frame(path, date_from=date_from, date_to=date_to)
         history = _upto(frame, date_to)
         market = _window(frame, date_from, date_to)
-        weights = load_index_weight(raw_root)
         params = _signal_params(config)
         params["universe_index_codes"] = list(parse_universe_index_codes(config.get("universe_index_codes")))
+        weights = load_index_weight(raw_root, params["universe_index_codes"])
         signals = generate_signals(history, weights, params)
         window_signals = _window(signals, date_from, date_to) if signals is not None else signals
         job_service._step(run_id, 4, "completed")

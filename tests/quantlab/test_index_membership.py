@@ -93,6 +93,34 @@ def test_load_index_weight_missing_returns_empty_columns(tmp_path):
     assert df.empty
 
 
+def test_load_index_weight_reads_only_requested_index_files(tmp_path):
+    weight_dir = tmp_path / "index_weight"
+    weight_dir.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{"index_code": "000300.SH", "con_code": "000001.SZ", "trade_date": "20180903", "weight": 0.5}]
+        ),
+        weight_dir / "index_weight_000300_SH.parquet",
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{"index_code": "000905.SH", "con_code": "600000.SH", "trade_date": "20180903", "weight": 0.3}]
+        ),
+        weight_dir / "index_weight_000905_SH.parquet",
+    )
+    pq.write_table(
+        pa.Table.from_pylist(
+            [{"index_code": "000001.SH", "con_code": "999999.SH", "trade_date": "20180903", "weight": 1.0}]
+        ),
+        weight_dir / "index_weight_000001_SH.parquet",
+    )
+
+    df = load_index_weight(tmp_path, ["000300.SH", "000905.SH"])
+    assert set(df["index_code"].astype(str)) == {"000300.SH", "000905.SH"}
+    assert "000001.SH" not in set(df["index_code"].astype(str))
+    assert len(df) == 2
+
+
 def test_amount_yuan_converts_thousand_yuan():
     series = pd.Series([50000.0, 60000.0, 70000.0])
     result = amount_yuan(series)
@@ -160,3 +188,63 @@ def test_filter_index_universe_asof_drops_future_constituents():
         ("20180920", "AAA.SZ"),
         ("20181008", "BBB.SZ"),
     }
+
+
+def test_filter_index_universe_asof_unions_two_indices():
+    frame = pd.DataFrame(
+        {
+            "date": ["20180920", "20180920", "20180920"],
+            "instrument": ["AAA.SZ", "BBB.SZ", "CCC.SZ"],
+            "close": [1.0, 1.0, 1.0],
+        }
+    )
+    weights = pd.DataFrame(
+        {
+            "index_code": ["000300.SH", "000905.SH"],
+            "con_code": ["AAA.SZ", "BBB.SZ"],
+            "trade_date": ["20180903", "20180903"],
+            "weight": [1.0, 1.0],
+        }
+    )
+    kept = filter_index_universe_asof(frame, weights, ("000300.SH", "000905.SH"))
+    assert set(kept["instrument"]) == {"AAA.SZ", "BBB.SZ"}
+
+
+def test_filter_index_universe_asof_drops_days_before_first_snapshot():
+    frame = pd.DataFrame(
+        {
+            "date": ["20180801", "20180920"],
+            "instrument": ["AAA.SZ", "AAA.SZ"],
+            "close": [1.0, 1.0],
+        }
+    )
+    weights = pd.DataFrame(
+        {
+            "index_code": ["000300.SH"],
+            "con_code": ["AAA.SZ"],
+            "trade_date": ["20180903"],
+            "weight": [1.0],
+        }
+    )
+    kept = filter_index_universe_asof(frame, weights, ("000300.SH",))
+    assert list(zip(kept["date"], kept["instrument"], strict=True)) == [("20180920", "AAA.SZ")]
+
+
+def test_filter_index_universe_asof_accepts_dashed_dates():
+    frame = pd.DataFrame(
+        {
+            "date": ["2018-09-20", "2018-09-20"],
+            "instrument": ["AAA.SZ", "BBB.SZ"],
+            "close": [1.0, 1.0],
+        }
+    )
+    weights = pd.DataFrame(
+        {
+            "index_code": ["000300.SH"],
+            "con_code": ["AAA.SZ"],
+            "trade_date": ["20180903"],
+            "weight": [1.0],
+        }
+    )
+    kept = filter_index_universe_asof(frame, weights, ("000300.SH",))
+    assert list(kept["instrument"]) == ["AAA.SZ"]
