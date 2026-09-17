@@ -4,7 +4,7 @@
 
 A local research workbench for factors, models, and backtests. Each instance declares an asset version (A-share by default). You operate it in the browser. FastAPI listens on LAN `0.0.0.0:8765` by default (loopback `127.0.0.1` still works). The UI port and LAN sync port are configurable. Metadata lives in SQLite; market data and factors stay in local Parquet files.
 
-Current version **`0.4.0`** (Alpha). The number lives in `quantlab/__init__.py`. Bump it on each user-facing feature so every machine shows the same sidebar version after `git pull` and restart. Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy).
+Current version **`0.4.1`** (Alpha). The number lives in `quantlab/__init__.py`. Bump it on each user-facing feature so every machine shows the same sidebar version after `git pull` and restart. Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy).
 
 Public briefing (screenshots and contact, no source): [quantlab-intro](https://github.com/zwm521gmailcom/quantlab-intro).
 
@@ -28,13 +28,16 @@ After start, open http://127.0.0.1:8765/ on this machine, or `http://<LAN-IP>:87
 | Factor mining | `/research/factor-mining` | Search candidate expressions on the wide table |
 | Factor jobs | `/research/factor-jobs` | Calculation jobs and progress |
 | Model center | `/models` | Register model kinds used by backtests; no training here |
-| Backtest workbench | `/backtests/new` | Freeze data, factors, model, and matching rules, then run |
+| Backtest workbench | `/backtests/new` | Freeze data, factors, universe, model, and matching rules, then run |
 | Backtest plan | `/backtests/plan` | A checklist of jobs; concurrent runs follow RAM and CPU |
 | Rule backtest | `/backtests/rules` | Built-in rule templates, no model training |
-| Result archive | `/backtests/runs` | History, metrics, artifacts; copy-as-draft does not auto-run |
-| Settings | `/settings` | Paths, asset and ports, Tushare token, LAN sync, compute resources, draft defaults |
+| Offline policy learning | `/backtests/offline-rl` | Discrete fitted Q from archived calendar-year backtests; opening the page does not run |
+| Result archive | `/backtests/runs` | History, metrics, artifacts; sortable columns; copy-as-draft does not auto-run |
+| Settings | `/settings` | Paths, asset and ports, Tushare token and points, LAN sync, compute resources, draft defaults |
 
-Model kinds include LightGBM / XGBoost ranking trees, plus random forest, Ridge, Lasso, and other regressors. Factor sets and training parameters are chosen on the backtest workbench; training starts when a backtest starts.
+Model kinds include LightGBM / XGBoost ranking trees, random forest, Ridge, Lasso, and other regressors, plus single-factor `factor_rank`. Tree and regressor parameters are set on the workbench; **training starts when a backtest starts**. `factor_rank` ranks the chosen factor cross-sectionally and does not train; it reads only the selected constituents and the test window (plus MA warmup). The UI labels those steps “prepare data / factor rank”.
+
+The stock universe is independent of the train/test date windows: exchange scope plus a multi-select of index memberships, shared by both splits, with duplicate codes removed. Membership is point-in-time from downloaded `index_weight` files (as-of, no next-period leak); multiple indexes are unioned. Default is CSI800 (CSI 300 ∪ CSI 500). The selected codes are stored in the run snapshot. An index without weight files cannot be used. The benchmark-MA open gate only blocks new entries. Batch scans may set `segment_curves: false` in the plan config to skip cap/turnover bucket equities; the main curve still runs.
 
 ## Requirements
 
@@ -66,11 +69,11 @@ By default the app reads `data/` under the repo and writes run output to `quantl
 
 Point an existing warehouse at QuantLab with environment variables or CLI flags; you do not need to move files. Use paths relative to the project root, such as `data` and `quantlab_runtime`.
 
-Canonical bars come from `data/canonical.parquet` (one row per stock per day). Configure the Tushare token on the settings page; raw API files go to `data/raw/`. Formula-pack factors are materialized from the canonical table with `quantlab materialize-pack-factors`.
+Canonical bars come from `data/canonical.parquet` (one row per stock per day). Configure the Tushare token and points on the settings page. Download rate and per-API daily caps follow [doc_id=290](https://tushare.pro/document/1?doc_id=290); with no points saved, the 120-point tier is used. On a cap hit, downloads stop until the next day. Raw API files go to `data/raw/` (including index daily bars and `index_weight`). Formula-pack factors are materialized from the canonical table with `quantlab materialize-pack-factors`.
 
 ## LAN
 
-All machines must listen on the LAN — not loopback only. Program updates still go through GitHub: push and merge here, then `git pull` and restart QuantLab on the other machines. Each machine keeps its own SQLite.
+All machines must listen on the LAN — not loopback only. Program updates still go through GitHub: push and merge here, then `git pull` and restart QuantLab on the other machines. If a machine cannot reach GitHub, copy the same commit with `git bundle` after merge and restart; do not sync source by copying disks. Each machine keeps its own SQLite.
 
 - UI defaults to `0.0.0.0:8765`; file sync uses `8766` (HTTP + UDP beacons, no UI, no database port, no token)
 - Both ports can be changed on Settings or via startup flags, and they must differ

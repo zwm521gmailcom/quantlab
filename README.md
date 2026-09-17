@@ -4,7 +4,7 @@
 
 本机因子、模型与回测研究平台。每个实例标明资产版本（默认 A 股）。浏览器操作；FastAPI 默认监听局域网 `0.0.0.0:8765`（本机仍可用 `127.0.0.1`）。页面端口和局域网同步端口可自行设定。元数据在 SQLite，行情与因子在本地 Parquet。
 
-当前版本 **`0.4.0`**（Alpha）。版本号在 `quantlab/__init__.py`。功能更新后改这个数字，各机 `git pull` 并重启，侧栏应显示同一版本。运行时不依赖 [vnpy](https://github.com/vnpy/vnpy)。
+当前版本 **`0.4.1`**（Alpha）。版本号在 `quantlab/__init__.py`。功能更新后改这个数字，各机 `git pull` 并重启，侧栏应显示同一版本。运行时不依赖 [vnpy](https://github.com/vnpy/vnpy)。
 
 对外方案介绍（界面截图、联系方式，不含源码）：[quantlab-intro](https://github.com/zwm521gmailcom/quantlab-intro)。
 
@@ -28,13 +28,16 @@ QuantLab 把数据、因子、模型、回测和结果档案收进同一个本�
 | 自动挖掘因子 | `/research/factor-mining` | 从宽表搜索候选表达式 |
 | 因子计算任务 | `/research/factor-jobs` | 计算任务与进度 |
 | 模型中心 | `/models` | 登记回测可用的模型种类，不在这里训练 |
-| 回测中心 | `/backtests/new` | 冻结数据、因子、模型与撮合规则后开跑 |
+| 回测中心 | `/backtests/new` | 冻结数据、因子、股票池、模型与撮合规则后开跑 |
 | 回测计划 | `/backtests/plan` | 把任务写进清单；同时跑几条由本机内存和核数自动定 |
 | 规则回测 | `/backtests/rules` | 内置规则模板，不训练模型 |
-| 结果档案 | `/backtests/runs` | 历史运行、指标、产物；复制配置不自动再跑 |
-| 设置 | `/settings` | 路径、资产与端口、Tushare token、局域网同步、运算资源、草稿默认参数 |
+| 离线策略学习 | `/backtests/offline-rl` | 用已归档的自然年回测做离散 Fitted Q；打开页面不自动开跑 |
+| 结果档案 | `/backtests/runs` | 历史运行、指标、产物；列可排序；复制配置不自动再跑 |
+| 设置 | `/settings` | 路径、资产与端口、Tushare token 与积分、局域网同步、运算资源、草稿默认参数 |
 
-模型种类包括 LightGBM / XGBoost 排序树，以及随机森林、Ridge、Lasso 等回归模型。因子组合和训练参数在回测中心设置，**开始回测时才训练**。
+模型种类包括 LightGBM / XGBoost 排序树，随机森林、Ridge、Lasso 等回归，以及单因子 `factor_rank`。树和回归的参数在回测中心设置，**开始回测时才训练**。单因子按所选因子值截面排名，不训练；只读所选成分和回测窗（另加年线预热），步骤显示为「准备数据 / 因子排序」。
+
+股票池独立于训练、回测日期窗：交易所范围 + 成分指数下拉多选去重，两边共用。成分按已下载的 `index_weight` 做时点 as-of（不用未来一期），多指数取并集。默认 CSI800（沪深300∪中证500）。选股范围写入运行快照。缺权重文件时该指数不能用。基准均线开仓只挡新开仓。大批量扫描可在计划配置写 `segment_curves: false`，跳过市值/换手分层净值，主曲线仍算。
 
 ## 环境
 
@@ -66,11 +69,11 @@ python -m playwright install chromium
 
 已有数据仓库可以只改环境变量或命令行参数，不必搬文件。路径用相对项目根的写法，例如 `data`、`quantlab_runtime`。
 
-标准行情来自 `data/canonical.parquet`（每股票每日一行）。Tushare token 在设置页配置，原始接口文件写入 `data/raw/`。公式包因子用 `quantlab materialize-pack-factors` 从标准宽表落地旁路 Parquet。
+标准行情来自 `data/canonical.parquet`（每股票每日一行）。Tushare token 和积分数在设置页配置。下载限速与单 API 日总量按 [doc_id=290](https://tushare.pro/document/1?doc_id=290) 对应档执行；未填积分时按 120 档保守限速，触顶停止、次日再续。原始接口文件写入 `data/raw/`（含指数日线与 `index_weight`）。公式包因子用 `quantlab materialize-pack-factors` 从标准宽表落地旁路 Parquet。
 
 ## 局域网
 
-三台都要监听局域网，不能只绑 `127.0.0.1`。程序更新仍走 GitHub：本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab。各台使用自己的 SQLite。
+三台都要监听局域网，不能只绑 `127.0.0.1`。程序更新仍走 GitHub：本机 push 并合并后，其他机器 `git pull` 再重启 QuantLab。某台机器若不能访问 GitHub，合并后用 `git bundle` 把同一提交拷过去再重启，不要拷盘同步源码。各台使用自己的 SQLite。
 
 - 页面默认 `0.0.0.0:8765`，文件同步另开 `8766`（HTTP + UDP 宣告，不提供页面、不开库、不传 Token）
 - 两个端口都可在设置页或启动参数里改，且必须不同
