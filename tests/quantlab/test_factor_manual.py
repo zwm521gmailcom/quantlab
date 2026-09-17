@@ -88,6 +88,24 @@ def test_expression_parser_accepts_grouped_transforms() -> None:
     assert parsed.max_window == 5
 
 
+def test_expression_parser_allows_cs_rank_on_arithmetic() -> None:
+    parsed = parse_expression(
+        "(hfq_open / hfq_close.shift(1) - 1).cs_rank(0)",
+        {"hfq_open", "hfq_close"},
+    )
+    assert parsed.input_fields == ["hfq_close", "hfq_open"]
+    assert parsed.max_window == 1
+
+
+def test_expression_parser_allows_cs_rank_on_method_chain() -> None:
+    parsed = parse_expression(
+        "hfq_close.rolling_bias(20).cs_rank(0)",
+        {"hfq_close"},
+    )
+    assert parsed.input_fields == ["hfq_close"]
+    assert parsed.max_window == 20
+
+
 def test_manual_preview_evaluates_relative_smooth_and_cross_section_transforms(
     tmp_path: Path,
 ) -> None:

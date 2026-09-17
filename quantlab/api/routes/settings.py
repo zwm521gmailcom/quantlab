@@ -35,6 +35,33 @@ async def tushare_token_update(request: Request) -> dict[str, object]:
     return request.app.state.settings_service.update_tushare_token(token)
 
 
+@router.get("/api/settings/tushare-points")
+def tushare_points_status(request: Request) -> dict[str, object]:
+    return request.app.state.settings_service.tushare_points_public()
+
+
+@router.post("/api/settings/tushare-points")
+async def tushare_points_update(request: Request) -> dict[str, object]:
+    body = await _json_body(request)
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail=_error_payload("TUSHARE_POINTS_INVALID", "points is required"))
+    raw = body.get("points", None)
+    try:
+        if raw is None or str(raw).strip() == "":
+            result = request.app.state.settings_service.update_tushare_points(None)
+        else:
+            result = request.app.state.settings_service.update_tushare_points(int(raw))
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail=_error_payload("TUSHARE_POINTS_INVALID", str(error)),
+        ) from error
+    download = getattr(request.app.state, "tushare_download_service", None)
+    if download is not None and hasattr(download, "apply_saved_quota"):
+        download.apply_saved_quota()
+    return result
+
+
 @router.get("/api/settings")
 def get_settings(request: Request) -> dict[str, object]:
     return request.app.state.settings_service.public()

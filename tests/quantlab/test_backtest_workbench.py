@@ -129,9 +129,14 @@ def test_config_normalizes_and_freezes_and_rejects_invalid_scope(tmp_path):
     svc = BacktestWorkbenchService(s, db)
     out = svc.validate(config())
     assert out["stock_scope"] == "中国A股（SH/SZ）" and out["buy_fee_minimum"] == 5.0
+    assert out["universe_index_codes"] == ["000300.SH", "000905.SH"]
     assert out["model"]["name"] == "模型"
     with pytest.raises(ValueError):
         svc.validate({**config(), "stock_scope": "中国A股（SH/SZ/BJ）"})
+    sh = svc.validate({**config(), "stock_scope": "沪市（SH）", "test": {**config()["test"], "stock_scope": "深市（SZ）"}})
+    assert sh["stock_scope"] == "沪市（SH）"
+    assert sh["train"]["stock_scope"] == "沪市（SH）"
+    assert sh["test"]["stock_scope"] == "沪市（SH）"
 
 
 def test_preview_reports_stages_and_submit_is_idempotent(tmp_path):

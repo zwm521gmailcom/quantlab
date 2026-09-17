@@ -5,7 +5,7 @@ let pageSize = QuantLabPager.readSize(ARCHIVE_PAGE_KEY, QuantLabPager.DEFAULT_SI
 let sortKey = "created_at";
 let sortDir = "desc";
 const COLUMNS = [
-  {key: "created_at", label: "回测", type: "date"},
+  {key: "created_at", label: "创建时间", type: "date"},
   {key: "strategy", label: "模型 / 因子", type: "text"},
   {key: "date_from", label: "测试区间", type: "date"},
   {key: "return", label: "累计收益", type: "number"},

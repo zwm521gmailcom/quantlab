@@ -48,6 +48,43 @@
           </div>
         </section>
         <section class="card">
+          <h3>Tushare 积分</h3>
+          <p class="muted">按你在 Tushare 权限中心的积分数填写。下载限速与日总量严格按积分档执行；未配置时按最低档（120 积分：50 次/分、8000 次/天）保守限速。</p>
+          <div class="settings-fields">
+            <label>积分数
+              <input id="tushare-points" type="number" min="0" step="1" placeholder="例如 2000">
+              <span class="field-help">自由输入整数，程序映射到对应档位（120 / 2000 / 5000 / 10000 / 15000）。</span>
+            </label>
+            <label>当前生效
+              <input id="tushare-points-effective" type="text" readonly>
+              <span class="field-help" id="tushare-points-hint">加载中…</span>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button id="tushare-points-save" type="button">保存积分</button>
+            <button id="tushare-points-clear" type="button">清除</button>
+            <span id="tushare-points-status" class="state"></span>
+          </div>
+        </section>
+        <section class="card">
+          <h3>Tushare 调用规则</h3>
+          <p class="muted">来源 <a href="https://tushare.pro/document/1?doc_id=290" target="_blank" rel="noopener">doc_id=290 积分与频次权限对应表</a>。本机下载必须遵守当前积分档的每分钟频次与单 API 日总量；触顶后停止，次日再续。</p>
+          <div class="table-wrap">
+            <table class="lan-peers" id="tushare-quota-table">
+              <thead>
+                <tr>
+                  <th>积分数</th>
+                  <th>每分钟频次</th>
+                  <th>每天总量上限</th>
+                  <th>说明</th>
+                </tr>
+              </thead>
+              <tbody id="tushare-quota-tbody"></tbody>
+            </table>
+          </div>
+          <p id="tushare-quota-active" class="settings-help"></p>
+        </section>
+        <section class="card">
           <h3>资产版本与端口</h3>
           <p class="settings-help">本实例标明面向哪一类资产。A 股和数字货币请用两套目录、两套端口，局域网只发现同一资产。页面端口和同步端口可自行设定；保存后写入 <code>quantlab_runtime/config/instance.json</code>，需重启 QuantLab 才切换监听。</p>
           <div class="settings-fields">
@@ -169,7 +206,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260911syncat"></script>
+    <script src="/assets/settings.js?v=20260916points"></script>
     <script src="/assets/nav.js?v=20260911ver"></script>
   </body>
 </html>

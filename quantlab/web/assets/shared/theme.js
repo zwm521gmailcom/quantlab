@@ -3,7 +3,7 @@
     if (window.qlTheme && typeof window.qlTheme.chartColors === "function") {
       return window.qlTheme.chartColors();
     }
-    return {bg: "#f3f4f0", text: "#1e2a24", grid: "#d2d7cf", border: "#c3c9c0"};
+    return {bg: "#1c241e", text: "#e6ebe4", grid: "#2a332d", border: "#334038"};
   };
 
   w.qlCss = function qlCss(prop, fallback) {

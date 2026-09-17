@@ -66,6 +66,69 @@ def members_on(weights: pd.DataFrame, index_code: str, trade_date: str) -> set[s
 
 
 PIT_INDEX_CODES = ("000300.SH", "000905.SH")
+DEFAULT_UNIVERSE_INDEX_CODES = PIT_INDEX_CODES
+
+UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
+    "csi800": ("000300.SH", "000905.SH"),
+    "csi1000": ("000852.SH",),
+    "csi800_single": ("000906.SH",),
+    "csi_all": ("000985.CSI",),
+    "cni2000": ("399303.SZ",),
+}
+
+
+def parse_universe_index_codes(value: object | None) -> tuple[str, ...]:
+    """Normalize config universe_index_codes; empty/None → default CSI800 (300∪500)."""
+    if value is None:
+        return DEFAULT_UNIVERSE_INDEX_CODES
+    raw: list[str]
+    if isinstance(value, str):
+        raw = [part.strip().upper().replace("-", ".") for part in value.replace(";", ",").split(",")]
+    elif isinstance(value, (list, tuple)):
+        raw = [str(item).strip().upper().replace("-", ".") for item in value]
+    else:
+        raise ValueError("universe_index_codes 要填指数代码列表")
+    codes: list[str] = []
+    seen: set[str] = set()
+    for part in raw:
+        if not part or part in seen:
+            continue
+        seen.add(part)
+        codes.append(part)
+    return tuple(codes) or DEFAULT_UNIVERSE_INDEX_CODES
+
+
+def index_weight_path(raw_root: Path, index_code: str) -> Path:
+    slug = str(index_code).strip().upper().replace(".", "_")
+    return Path(raw_root) / "index_weight" / f"index_weight_{slug}.parquet"
+
+
+def membership_coverage_error(
+    raw_root: Path,
+    index_codes: tuple[str, ...] | list[str] | None = None,
+    *,
+    date_from: str | None = None,
+) -> str | None:
+    codes = parse_universe_index_codes(index_codes)
+    missing = [code for code in codes if not index_weight_path(raw_root, code).is_file()]
+    if missing:
+        return f"缺少指数成分权重：{', '.join(missing)}。请先在数据中心下载 index_weight。"
+    weights = load_index_weight(Path(raw_root))
+    if weights.empty:
+        return "指数成分权重文件是空的。"
+    present = set(weights["index_code"].astype(str))
+    absent = [code for code in codes if code not in present]
+    if absent:
+        return f"成分权重里没有这些指数：{', '.join(absent)}。"
+    if date_from:
+        for code in codes:
+            if not members_on(weights, code, date_from):
+                return f"{code} 在回测起点 {date_from} 之前没有可用成分（as-of）。"
+        return None
+    for code in codes:
+        if not latest_members(weights, code):
+            return f"{code} 没有可用的最新成分。"
+    return None
 
 
 def filter_index_universe_asof(
@@ -77,7 +140,7 @@ def filter_index_universe_asof(
         return frame
     if weights is None or getattr(weights, "empty", True):
         return frame
-    codes = tuple(str(item).strip() for item in (index_codes or PIT_INDEX_CODES) if str(item).strip())
+    codes = parse_universe_index_codes(index_codes)
     if not codes:
         return frame
     present = set(weights["index_code"].astype(str))
@@ -105,10 +168,18 @@ def filter_index_universe_asof(
     return frame.loc[mask].copy()
 
 
-def apply_pit_index_universe(frame: pd.DataFrame, raw_root: Path | None) -> pd.DataFrame:
+def apply_pit_index_universe(
+    frame: pd.DataFrame,
+    raw_root: Path | None,
+    index_codes: tuple[str, ...] | list[str] | None = None,
+) -> pd.DataFrame:
     if raw_root is None:
         return frame
-    return filter_index_universe_asof(frame, load_index_weight(Path(raw_root)), PIT_INDEX_CODES)
+    return filter_index_universe_asof(
+        frame,
+        load_index_weight(Path(raw_root)),
+        parse_universe_index_codes(index_codes),
+    )
 
 
 def latest_members(weights: pd.DataFrame, index_code: str) -> set[str]:

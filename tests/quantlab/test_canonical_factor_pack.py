@@ -39,21 +39,25 @@ CANONICAL_FIELDS = {
 }
 
 
-def test_pack_has_twenty_two_stable_formulas() -> None:
+def test_pack_has_stable_formulas_including_overnight_cs_rank() -> None:
     fields = [item.field for item in CANONICAL_FACTOR_PACK]
     assert fields == [
         "momentum_1",
         "momentum_10",
         "momentum_20",
         "momentum_60",
+        "momentum_120",
         "close_bias_20",
         "close_bias_60",
         "close_zscore_20",
         "close_zscore_60",
         "close_ts_rank_20",
         "close_ts_rank_60",
+        "close_ts_rank_120",
+        "close_ts_rank_252",
         "amount_zscore_20",
         "vol_mean_20",
+        "volatility_20",
         "amount_cs_rank",
         "turn_cs_rank",
         "pe_ttm_cs_rank",
@@ -62,6 +66,10 @@ def test_pack_has_twenty_two_stable_formulas() -> None:
         "div_yield_cs_rank",
         "intraday_range",
         "overnight_ret",
+        "overnight_ret_cs_rank",
+        "vol_mean_20_cs_rank",
+        "close_bias_20_cs_rank",
+        "momentum_10_cs_rank",
         "close_location",
         "trade_vwap",
     ]
@@ -70,10 +78,21 @@ def test_pack_has_twenty_two_stable_formulas() -> None:
     assert pack_entity_id("momentum_20") == "factor_momentum_20"
     by_field = {item.field: item for item in CANONICAL_FACTOR_PACK}
     assert by_field["momentum_20"].formula == "hfq_close.pct_change(20)"
+    assert by_field["momentum_120"].formula == "hfq_close.pct_change(120)"
+    assert by_field["momentum_120"].direction == "positive"
+    assert by_field["volatility_20"].formula == "hfq_close.pct_change(1).rolling_std(20)"
+    assert by_field["volatility_20"].direction == "positive"
     assert by_field["intraday_range"].formula == "(hfq_high - hfq_low) / hfq_close"
     assert by_field["pe_ttm_cs_rank"].direction == "negative"
     assert by_field["pe_ttm_cs_rank"].coverage_floor == 0.60
     assert by_field["div_yield_cs_rank"].coverage_floor == 0.60
+    assert by_field["overnight_ret_cs_rank"].formula == (
+        "(hfq_open / hfq_close.shift(1) - 1).cs_rank(0)"
+    )
+    assert by_field["overnight_ret_cs_rank"].direction == "positive"
+    assert by_field["vol_mean_20_cs_rank"].formula == "vol.rolling_mean(20).cs_rank(0)"
+    assert by_field["close_bias_20_cs_rank"].formula == "hfq_close.rolling_bias(20).cs_rank(0)"
+    assert by_field["momentum_10_cs_rank"].formula == "hfq_close.pct_change(10).cs_rank(0)"
 
 
 def test_pack_formulas_parse_against_canonical_fields() -> None:
@@ -116,7 +135,7 @@ def test_finite_factor_values_turn_inf_into_missing() -> None:
 
 
 def _pack_env(tmp_path: Path) -> tuple[Settings, Database, CanonicalFactorPackService]:
-    dates = [d.strftime("%Y%m%d") for d in pd.bdate_range("2023-10-02", "2024-06-28")]
+    dates = [d.strftime("%Y%m%d") for d in pd.bdate_range("2022-01-04", "2024-06-28")]
     symbols = ("000001.SZ", "000002.SZ", "600000.SH")
     rows = []
     for offset, date in enumerate(dates):
@@ -220,7 +239,7 @@ def test_ingest_two_column_formula_and_full_pack(tmp_path: Path) -> None:
     overnight = service.ingest_one("overnight_ret")
     assert overnight["status"] == "published"
     packed = service.ingest()
-    assert packed["published_count"] + packed["skipped_count"] == 22
+    assert packed["published_count"] + packed["skipped_count"] == len(CANONICAL_FACTOR_PACK)
     assert packed["failed_count"] == 0
     assert packed["skipped_count"] >= 1
 
@@ -230,7 +249,7 @@ def test_pack_api_ingest_one_field(tmp_path: Path) -> None:
     client = TestClient(create_app(settings, database))
     listed = client.get("/api/factor-packs/canonical")
     assert listed.status_code == 200
-    assert listed.json()["count"] == 22
+    assert listed.json()["count"] == len(CANONICAL_FACTOR_PACK)
     created = client.post("/api/factor-packs/canonical/ingest", json={"field": "momentum_1"})
     assert created.status_code == 200
     payload = created.json()

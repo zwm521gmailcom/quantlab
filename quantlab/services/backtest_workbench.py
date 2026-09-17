@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +30,36 @@ def _now() -> str:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+_INDEX_CODE = re.compile(r"^\d{6}\.(SH|SZ)$")
+
+
+def normalize_open_ma_gates(raw: Any) -> list[dict[str, Any]]:
+    if raw in (None, "", []):
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("open_ma_gates 要填列表")
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, int]] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("open_ma_gates 每一项要有指数代码和均线窗口")
+        code = str(item.get("code") or "").strip().upper().replace("-", ".")
+        if not _INDEX_CODE.match(code):
+            raise ValueError("open_ma_gates 指数代码无效")
+        try:
+            window = int(item.get("window"))
+        except (TypeError, ValueError):
+            raise ValueError("open_ma_gates 均线窗口要填整数") from None
+        if window < 2 or window > 250:
+            raise ValueError("open_ma_gates 均线窗口要在 2–250")
+        key = (code, window)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"code": code, "window": window})
+    return out
 
 
 def _as_bool(value: Any, default: bool) -> bool:
@@ -128,8 +159,11 @@ class BacktestWorkbenchService:
         scalar_missing = [k for k in ("name", "dataset_id", "dataset_version_id") if not str(c.get(k, "")).strip()]
         if scalar_missing:
             raise ValueError("missing config: " + ", ".join(scalar_missing))
-        if c.get("stock_scope") != "中国A股（SH/SZ）":
-            raise ValueError("stock_scope must be 中国A股（SH/SZ）")
+        allowed_scopes = {"中国A股（SH/SZ）", "沪市（SH）", "深市（SZ）"}
+        scope = str(c.get("stock_scope") or "中国A股（SH/SZ）").strip()
+        if scope not in allowed_scopes:
+            raise ValueError("stock_scope 只能是中国A股（SH/SZ）、沪市（SH）或深市（SZ）")
+        c["stock_scope"] = scope
         if not isinstance(c["factor_versions"], list) or not c["factor_versions"]:
             raise ValueError("请至少选择一个因子")
         if not isinstance(c["model"], dict) or not str(c["model"].get("entity_id") or "").strip():
@@ -153,6 +187,9 @@ class BacktestWorkbenchService:
             if filt["close_gt_ma200"] and filt["close_lt_ma200"]:
                 raise ValueError("个股200日均线不能同时选站上和低于")
             c[part]["filter"] = filt
+            c[part]["stock_scope"] = scope
+        if isinstance(c.get("validation"), dict):
+            c["validation"]["stock_scope"] = scope
         kind = str(c.get("kind") or (c.get("model") or {}).get("kind") or "").strip()
         if kind == "factor_rank":
             c["walk_forward"] = "once"
@@ -218,6 +255,26 @@ class BacktestWorkbenchService:
         c["skip_open_limit"] = _as_bool(c.get("skip_open_limit"), True)
         c["skip_close_down_limit"] = _as_bool(c.get("skip_close_down_limit"), True)
         c["open_when_benchmark_gt_ma200"] = _as_bool(c.get("open_when_benchmark_gt_ma200"), False)
+        c["open_ma_gates"] = normalize_open_ma_gates(c.get("open_ma_gates"))
+        c["open_gate_by_membership"] = _as_bool(c.get("open_gate_by_membership"), False)
+        from quantlab.services.index_membership import parse_universe_index_codes
+
+        try:
+            c["universe_index_codes"] = list(parse_universe_index_codes(c.get("universe_index_codes")))
+        except ValueError as error:
+            raise ValueError(str(error)) from error
+        if c["open_gate_by_membership"]:
+            try:
+                window = int(c.get("membership_ma_window") or 200)
+            except (TypeError, ValueError):
+                raise ValueError("membership_ma_window 要填整数") from None
+            if window < 2 or window > 250:
+                raise ValueError("membership_ma_window 要在 2–250")
+            c["membership_ma_window"] = window
+        benchmark = str(c.get("benchmark") or "000300.SH").strip().upper().replace("-", ".")
+        if not benchmark:
+            raise ValueError("基准指数不能为空")
+        c["benchmark"] = benchmark
         for key in ("buy_fee_rate", "sell_fee_rate", "stamp_tax_rate", "slippage"):
             c[key] = float(c.get(key, 0) or 0)
             if c[key] < 0:
@@ -609,7 +666,7 @@ def validate(self, raw):
         out["validation"] = {
             "date_from": val_from,
             "date_to": val_to,
-            "stock_scope": validation.get("stock_scope") or out["train"].get("stock_scope"),
+            "stock_scope": validation.get("stock_scope") or out["train"].get("stock_scope") or out.get("stock_scope"),
             "filter": val_filter,
         }
         hp = dict(out.get("hyperparameters") or {})
