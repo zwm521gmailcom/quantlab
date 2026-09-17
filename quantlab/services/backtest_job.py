@@ -22,7 +22,7 @@ import pyarrow.parquet as pq
 from quantlab.domain.status import BacktestRunStatus
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.run_lifecycle import transition_backtest_run_status
-from quantlab.services.backtest_workbench import BacktestWorkbenchService, _as_bool
+from quantlab.services.backtest_workbench import BacktestWorkbenchService, _as_bool, normalize_open_ma_gates
 from quantlab.services.bucket_equity import attach_segment_curves, frame_nbytes
 from quantlab.services.compute_budget import (
     ResourceSampler,
@@ -362,27 +362,100 @@ def _benchmark_return(frame, config, raw_root=None):
     return end_px / start_px - 1.0
 
 
-def benchmark_trend_open_dates(frame, config, raw_root=None, window=MA200_WINDOW):
-    code = str(config.get("benchmark") or "").strip() or "000300.SH"
+def index_trend_open_dates(frame, config, raw_root=None, *, code: str, window: int):
     test = config.get("test") if isinstance(config.get("test"), dict) else {}
     date_from = _norm_yyyymmdd(test.get("date_from"))
     date_to = _norm_yyyymmdd(test.get("date_to"))
-    if len(date_from) != 8 or len(date_to) != 8 or window < 1:
+    if len(date_from) != 8 or len(date_to) != 8 or int(window) < 1:
         return set()
+    code = str(code or "").strip()
     rows = _select_benchmark_rows(frame if frame is not None else pd.DataFrame(), code, "00000000", "99999999")
     loaded = _select_benchmark_rows(_load_index_daily(raw_root, code), code, "00000000", "99999999")
     if len(loaded) > len(rows):
         rows = loaded
     if rows.empty:
-        return set()
+        raise ValueError(f"缺少指数日线 {code}，请先在数据中心下载。")
     prices = pd.to_numeric(rows.set_index("date")["price"], errors="coerce")
-    mean = prices.rolling(window, min_periods=window).mean()
+    mean = prices.rolling(int(window), min_periods=int(window)).mean()
     above = prices > mean
     return {
         str(day)
         for day, flag in above.items()
         if bool(flag) and date_from <= str(day) <= date_to
     }
+
+
+def benchmark_trend_open_dates(frame, config, raw_root=None, window=MA200_WINDOW):
+    code = str(config.get("benchmark") or "").strip() or "000300.SH"
+    return index_trend_open_dates(frame, config, raw_root, code=code, window=window)
+
+
+def resolve_open_dates(frame, config, raw_root=None):
+    gates_on = False
+    allowed = None
+    if _as_bool((config or {}).get("open_when_benchmark_gt_ma200"), False):
+        gates_on = True
+        dates = benchmark_trend_open_dates(frame, config, raw_root)
+        allowed = dates if allowed is None else allowed.intersection(dates)
+    for item in normalize_open_ma_gates((config or {}).get("open_ma_gates")):
+        gates_on = True
+        dates = index_trend_open_dates(frame, config, raw_root, code=item["code"], window=item["window"])
+        allowed = dates if allowed is None else allowed.intersection(dates)
+    if not gates_on:
+        return None
+    return allowed if allowed is not None else set()
+
+
+def resolve_membership_open_allow(frame, config, raw_root=None):
+    if not _as_bool((config or {}).get("open_gate_by_membership"), False):
+        return None
+    if raw_root is None:
+        raise ValueError("按成分开仓闸需要原始数据目录")
+    raw_root = Path(raw_root)
+    try:
+        window = int((config or {}).get("membership_ma_window") or MA200_WINDOW)
+    except (TypeError, ValueError):
+        raise ValueError("membership_ma_window 要填整数") from None
+    from quantlab.services.index_membership import load_index_weight, members_on, parse_universe_index_codes
+
+    index_codes = parse_universe_index_codes((config or {}).get("universe_index_codes"))
+    weights = load_index_weight(raw_root)
+    present = {str(code) for code in (weights["index_code"].tolist() if not weights.empty else [])}
+    missing = [code for code in index_codes if code not in present]
+    if weights.empty or missing:
+        raise ValueError(f"缺少股票池成分权重：{', '.join(missing) if missing else '（空）'}，请先在数据中心下载。")
+    open_days = {
+        code: index_trend_open_dates(frame, config, raw_root, code=code, window=window) for code in index_codes
+    }
+    test = config.get("test") if isinstance(config.get("test"), dict) else {}
+    date_from = _norm_yyyymmdd(test.get("date_from"))
+    date_to = _norm_yyyymmdd(test.get("date_to"))
+    market: set[str] = set()
+    if frame is not None and not getattr(frame, "empty", True) and "date" in frame.columns:
+        market.update(_norm_yyyymmdd(value) for value in frame["date"].tolist())
+    for code in index_codes:
+        rows = _select_benchmark_rows(_load_index_daily(raw_root, code), code, date_from, date_to)
+        if not rows.empty:
+            market.update(str(day) for day in rows["date"].tolist())
+        market.update(str(day) for day in open_days[code])
+    allow: dict[str, list[str]] = {}
+    cache: dict[str, dict[str, set[str]]] = {}
+    for day in sorted(item for item in market if len(item) == 8 and date_from <= item <= date_to):
+        by_index = cache.get(day)
+        if by_index is None:
+            by_index = {code: members_on(weights, code, day) for code in index_codes}
+            cache[day] = by_index
+        names: set[str] = set()
+        # Prefer earlier codes on overlap (CSI800: 300 before 500), even if earlier MA is closed.
+        claimed: set[str] = set()
+        for code in index_codes:
+            members = by_index.get(code) or set()
+            if day in open_days[code]:
+                names |= members - claimed
+            claimed |= members
+        if names:
+            allow[day] = sorted(names)
+    return allow
 
 
 def fill_benchmark_metrics(metrics, config, *, frame=None, raw_root=None):
@@ -770,15 +843,27 @@ def _execute_core(self, run_id):
         self._step(run_id, 3, "completed")
         self._step(run_id, 4, "running")
         portfolio_config = dict(config)
-        if _as_bool(portfolio_config.get("open_when_benchmark_gt_ma200"), False):
-            allowed = benchmark_trend_open_dates(frame, portfolio_config, raw_root=self.settings.raw_root)
-            portfolio_config["benchmark_open_dates"] = sorted(allowed)
-            model["benchmark_open_gate"] = {
+        if _as_bool(portfolio_config.get("open_gate_by_membership"), False):
+            allow = resolve_membership_open_allow(frame, portfolio_config, raw_root=self.settings.raw_root)
+            portfolio_config["membership_open_allow"] = allow or {}
+            model["membership_open_gate"] = {
                 "enabled": True,
-                "code": str(portfolio_config.get("benchmark") or "000300.SH"),
-                "window": MA200_WINDOW,
-                "open_days": len(allowed),
+                "window": int(portfolio_config.get("membership_ma_window") or MA200_WINDOW),
+                "open_days": len(allow or {}),
             }
+        else:
+            allowed = resolve_open_dates(frame, portfolio_config, raw_root=self.settings.raw_root)
+            if allowed is not None:
+                portfolio_config["benchmark_open_dates"] = sorted(allowed)
+                extras = normalize_open_ma_gates(portfolio_config.get("open_ma_gates"))
+                model["benchmark_open_gate"] = {
+                    "enabled": True,
+                    "code": str(portfolio_config.get("benchmark") or "000300.SH"),
+                    "window": MA200_WINDOW,
+                    "open_days": len(allowed),
+                    "year_line": _as_bool(portfolio_config.get("open_when_benchmark_gt_ma200"), False),
+                    "extra_gates": extras,
+                }
         trades, equity_curve = run_portfolio(frame, predictions, portfolio_config)
         self._step(run_id, 4, "completed")
         self._step(run_id, 5, "running")
@@ -1023,12 +1108,16 @@ def run_portfolio(frame, predictions, config):
 
 def _segment_portfolio_config(config, frame, raw_root=None):
     portfolio_config = dict(config or {})
-    if not _as_bool(portfolio_config.get("open_when_benchmark_gt_ma200"), False):
+    if _as_bool(portfolio_config.get("open_gate_by_membership"), False):
+        if "membership_open_allow" not in portfolio_config:
+            allow = resolve_membership_open_allow(frame, portfolio_config, raw_root=raw_root)
+            portfolio_config["membership_open_allow"] = allow or {}
         return portfolio_config
-    if portfolio_config.get("benchmark_open_dates"):
+    if "benchmark_open_dates" in portfolio_config:
         return portfolio_config
-    allowed = benchmark_trend_open_dates(frame, portfolio_config, raw_root=raw_root)
-    portfolio_config["benchmark_open_dates"] = sorted(allowed)
+    allowed = resolve_open_dates(frame, portfolio_config, raw_root=raw_root)
+    if allowed is not None:
+        portfolio_config["benchmark_open_dates"] = sorted(allowed)
     return portfolio_config
 
 
@@ -1621,11 +1710,14 @@ def _step(self, run_id: str, ordinal: int, status: str, error=None) -> None:
 
 def _load_frame_with_pack_factors(self, path, config):
     from quantlab.services.canonical_pack_factors import attach_pack_factor_columns, default_sidecar_path
+    from quantlab.services.index_membership import apply_pit_index_universe, parse_universe_index_codes
 
     frame = _load_frame_core(self, path, config)
     refs = (config or {}).get("factor_versions") or []
     frame = attach_pack_factor_columns(frame, refs, default_sidecar_path(path))
-    return _attach_config_sma(frame, config)
+    frame = _attach_config_sma(frame, config)
+    codes = parse_universe_index_codes((config or {}).get("universe_index_codes"))
+    return apply_pit_index_universe(frame, self.settings.raw_root, codes)
 
 
 BacktestJobService._filter = staticmethod(_filter)

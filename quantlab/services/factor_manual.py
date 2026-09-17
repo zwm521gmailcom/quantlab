@@ -150,10 +150,7 @@ def parse_expression(formula: str, available_fields: set[str]) -> ParsedExpressi
                     raise ExpressionError("comparison operator is not allowed")
                 visit(comparator)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if (
-                not isinstance(node.func.value, ast.Name)
-                or node.func.attr not in _METHODS
-            ):
+            if node.func.attr not in _METHODS:
                 raise ExpressionError("function is not allowed")
             if len(node.args) != 1 or node.keywords:
                 raise ExpressionError(

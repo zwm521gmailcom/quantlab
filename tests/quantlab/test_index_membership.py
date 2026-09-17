@@ -15,7 +15,23 @@ from quantlab.services.index_membership import (
     latest_members,
     load_index_weight,
     members_on,
+    membership_coverage_error,
+    parse_universe_index_codes,
 )
+
+
+def test_parse_universe_index_codes_defaults_and_normalizes():
+    assert parse_universe_index_codes(None) == ("000300.SH", "000905.SH")
+    assert parse_universe_index_codes("") == ("000300.SH", "000905.SH")
+    assert parse_universe_index_codes("000852.sh") == ("000852.SH",)
+    assert parse_universe_index_codes(["000906.SH", " 000852.SH "]) == ("000906.SH", "000852.SH")
+    assert parse_universe_index_codes(["000300.SH", "000300.SH", "000905.SH"]) == ("000300.SH", "000905.SH")
+
+
+def test_membership_coverage_error_reports_missing_weight(tmp_path: Path):
+    raw = tmp_path / "raw"
+    (raw / "index_weight").mkdir(parents=True)
+    assert "000852.SH" in (membership_coverage_error(raw, ["000852.SH"]) or "")
 
 
 def test_members_on_uses_last_month_not_future():

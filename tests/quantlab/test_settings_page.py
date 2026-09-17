@@ -12,6 +12,35 @@ def client(tmp_path: Path) -> TestClient:
     return TestClient(create_app(settings=settings, database=Database(settings.database_path)))
 
 
+def test_settings_persist_tushare_points_and_map_doc290_tiers(tmp_path: Path) -> None:
+    api = client(tmp_path)
+    empty = api.get("/api/settings/tushare-points")
+    assert empty.status_code == 200
+    assert empty.json()["configured"] is False
+    assert empty.json()["calls_per_minute"] == 50
+    saved = api.post("/api/settings/tushare-points", json={"points": 2000})
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["configured"] is True
+    assert body["points"] == 2000
+    assert body["tier"] == 2000
+    assert body["calls_per_minute"] == 200
+    assert body["daily_limit_per_api"] == 100_000
+    assert api.get("/api/settings").json()["secrets"]["tushare_points"] is True
+    assert api.get("/api/settings").json()["tushare_quota"]["points"] == 2000
+    high = api.post("/api/settings/tushare-points", json={"points": 5000})
+    assert high.json()["calls_per_minute"] == 500
+    assert high.json()["daily_limit_per_api"] is None
+    mid = api.post("/api/settings/tushare-points", json={"points": 1999})
+    assert mid.json()["tier"] == 120
+    assert mid.json()["calls_per_minute"] == 50
+    cleared = api.post("/api/settings/tushare-points", json={"points": None})
+    assert cleared.status_code == 200
+    assert cleared.json()["configured"] is False
+    bad = api.post("/api/settings/tushare-points", json={"points": -1})
+    assert bad.status_code == 400
+
+
 def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> None:
     api = client(tmp_path)
     response = api.get("/api/settings")
@@ -26,7 +55,12 @@ def test_settings_are_masked_and_persist_allowed_defaults(tmp_path: Path) -> Non
     assert body["directory_plan"]["asset_classes"][0]["code"] == "cn_a"
     assert body["directory_plan"]["asset_classes"][0]["paths"]["canonical"] == "data/canonical.parquet"
     assert body["directory_plan"]["asset_classes"][1]["paths"]["raw"] == "data/hk/raw/"
-    assert body["secrets"] == {"tushare_token": False}
+    assert body["secrets"] == {"tushare_token": False, "tushare_points": False}
+    assert body["tushare_quota"]["configured"] is False
+    assert body["tushare_quota"]["tier"] == 120
+    assert body["tushare_quota"]["calls_per_minute"] == 50
+    assert body["tushare_quota"]["daily_limit_per_api"] == 8000
+    assert body["tushare_quota"]["doc"].endswith("doc_id=290")
     assert body["compute"] == {"fold_workers": 0, "bucket_workers": 0, "bucket_pool": "process"}
     assert body["lan"]["market_sync_at_0400"] is False
     assert body["lan"]["market_sync_categories"] == ["canonical", "derived", "raw", "source_tables"]
@@ -52,10 +86,24 @@ def test_max_concurrent_backtests_follows_installed_ram_and_cpu() -> None:
     assert max_concurrent_backtests(16 * gb, cpu=10) == 1
     assert max_concurrent_backtests(16 * gb, cpu=32) == 1
     assert max_concurrent_backtests(64 * gb, cpu=8) == 2
-    assert max_concurrent_backtests(96 * gb, cpu=16) == 3
+    assert max_concurrent_backtests(96 * gb, cpu=16) == 4
     assert max_concurrent_backtests(128 * gb, cpu=8) == 2
-    assert max_concurrent_backtests(128 * gb, cpu=32) == 4
+    assert max_concurrent_backtests(128 * gb, cpu=32) == 6
     assert max_concurrent_backtests(256 * gb, cpu=64) == 8
+
+
+def test_max_concurrent_backtests_env_override(monkeypatch) -> None:
+    from quantlab.services.settings import max_concurrent_backtests
+
+    monkeypatch.setenv("QUANTLAB_MAX_CONCURRENT_BACKTESTS", "6")
+    gb = 1024**3
+    assert max_concurrent_backtests(16 * gb, cpu=10) == 6
+    monkeypatch.setenv("QUANTLAB_MAX_CONCURRENT_BACKTESTS", "99")
+    assert max_concurrent_backtests(16 * gb, cpu=10) == 16
+    monkeypatch.setenv("QUANTLAB_MAX_CONCURRENT_BACKTESTS", "0")
+    assert max_concurrent_backtests(16 * gb, cpu=10) == 1
+    monkeypatch.delenv("QUANTLAB_MAX_CONCURRENT_BACKTESTS", raising=False)
+    assert max_concurrent_backtests(128 * gb, cpu=32) == 6
 
 
 def test_settings_persist_compute_workers_without_touching_draft_defaults(tmp_path: Path) -> None:
@@ -143,6 +191,11 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert page.status_code == 200
     assert "系统设置" in page.text
     assert "/api/backtests" not in page.text
+    assert 'id="tushare-token"' in page.text
+    assert "Tushare 积分" in page.text
+    assert 'id="tushare-points"' in page.text
+    assert 'id="tushare-quota-table"' in page.text
+    assert "doc_id=290" in page.text
     assert 'id="bucket-workers"' in page.text
     assert 'id="fold-workers"' in page.text
     assert 'id="bucket-pool"' in page.text
@@ -177,6 +230,8 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert "总进度" in js
     assert "quantlab-lan-sync-progress" in js
     assert "sessionStorage" in js
+    assert "/api/settings/tushare-points" in js
+    assert "paintTushareQuota" in js
     assert 'id="lan-market-0400"' in page.text
     assert "8766" in page.text
     assert "防火墙" in page.text

@@ -1,4 +1,10 @@
       const q = (id) => document.getElementById(id);
+      const newToken = () => {
+        try {
+          if (globalThis.crypto && typeof globalThis.crypto.randomUUID === "function") return globalThis.crypto.randomUUID();
+        } catch (_error) {}
+        return `tok-${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`;
+      };
       let openDraft = null;
       const DRAFT_STORAGE_KEY = "quantlab-backtest-last-draft-id";
       const PLAN_STORAGE_KEY = "quantlab-backtest-optional-plan-id";
@@ -8,7 +14,7 @@
       let factorCatalog = [];
       let selectedFactors = [];
       let factorMenuIndex = 0;
-      let submissionToken = crypto.randomUUID();
+      let submissionToken = newToken();
       const DEFAULT_OPEN_LIMIT_EXPR = "open < up_limit AND open > down_limit";
       const DEFAULT_STOCK_EXPRS = [
         "st_status == 0",
@@ -17,6 +23,111 @@
         "close != up_limit AND close != down_limit",
       ];
       let datasetFields = ["open", "close", "low", "hfq_open", "hfq_close", "up_limit", "down_limit", "st_status", "is_suspended"];
+      const UNIVERSE_OPTIONS = [
+        {id: "csi800", label: "CSI800（沪深300∪中证500）", codes: ["000300.SH", "000905.SH"]},
+        {id: "hs300", label: "沪深300", codes: ["000300.SH"]},
+        {id: "csi500", label: "中证500", codes: ["000905.SH"]},
+        {id: "csi800_single", label: "中证800", codes: ["000906.SH"]},
+        {id: "csi1000", label: "中证1000", codes: ["000852.SH"]},
+        {id: "csi_all", label: "中证全指", codes: ["000985.CSI"]},
+        {id: "cni2000", label: "国证2000", codes: ["399303.SZ"]},
+      ];
+      const DEFAULT_UNIVERSE_IDS = ["csi800"];
+      let selectedUniverseIds = DEFAULT_UNIVERSE_IDS.slice();
+
+      function universeOption(id) {
+        return UNIVERSE_OPTIONS.find((item) => item.id === id);
+      }
+
+      function uniqueUniverseCodes(ids) {
+        const seen = new Set();
+        const codes = [];
+        (ids || []).forEach((id) => {
+          (universeOption(id)?.codes || []).forEach((code) => {
+            if (seen.has(code)) return;
+            seen.add(code);
+            codes.push(code);
+          });
+        });
+        return codes;
+      }
+
+      function selectedUniverseCodes() {
+        const codes = uniqueUniverseCodes(selectedUniverseIds);
+        return codes.length ? codes : uniqueUniverseCodes(DEFAULT_UNIVERSE_IDS);
+      }
+
+      function universeIdsFromCodes(raw) {
+        const wanted = [];
+        const seen = new Set();
+        (Array.isArray(raw) ? raw : String(raw || "").split(/[,;，]/)).forEach((item) => {
+          const code = String(item || "").trim().toUpperCase().replace(/-/g, ".");
+          if (!code || seen.has(code)) return;
+          seen.add(code);
+          wanted.push(code);
+        });
+        const remaining = new Set(wanted);
+        const ids = [];
+        UNIVERSE_OPTIONS.forEach((option) => {
+          if (!option.codes.length || option.codes.some((code) => !remaining.has(code))) return;
+          ids.push(option.id);
+          option.codes.forEach((code) => remaining.delete(code));
+        });
+        return ids.length ? ids : DEFAULT_UNIVERSE_IDS.slice();
+      }
+
+      function renderUniverseChips() {
+        const root = q("universe-index-chips");
+        const preview = q("universe-index-preview");
+        if (!root) return;
+        root.replaceChildren();
+        selectedUniverseIds.forEach((id) => {
+          const option = universeOption(id);
+          if (!option) return;
+          const chip = document.createElement("span");
+          chip.className = "factor-chip";
+          chip.append(option.label);
+          const remove = document.createElement("button");
+          remove.type = "button";
+          remove.setAttribute("aria-label", `移除 ${option.label}`);
+          remove.textContent = "×";
+          remove.addEventListener("click", () => {
+            selectedUniverseIds = selectedUniverseIds.filter((item) => item !== id);
+            if (!selectedUniverseIds.length) selectedUniverseIds = DEFAULT_UNIVERSE_IDS.slice();
+            else selectedUniverseIds = universeIdsFromCodes(selectedUniverseCodes());
+            renderUniverseChips();
+          });
+          chip.append(remove);
+          root.append(chip);
+        });
+        const have = new Set(selectedUniverseCodes());
+        const select = q("universe-index-add");
+        if (select) {
+          [...select.options].forEach((opt) => {
+            if (!opt.value) {
+              opt.disabled = false;
+              return;
+            }
+            const option = universeOption(opt.value);
+            opt.disabled = !option || option.codes.every((code) => have.has(code));
+          });
+        }
+        if (preview) preview.textContent = `当前代码：${selectedUniverseCodes().join(", ")}`;
+      }
+
+      function addUniverseSelection(id) {
+        const option = universeOption(id);
+        if (!option) return;
+        const have = new Set(selectedUniverseCodes());
+        if (option.codes.every((code) => have.has(code))) return;
+        selectedUniverseIds = universeIdsFromCodes(selectedUniverseCodes().concat(option.codes));
+        renderUniverseChips();
+      }
+
+      function setUniverseFromCodes(raw) {
+        selectedUniverseIds = universeIdsFromCodes(raw);
+        renderUniverseChips();
+      }
 
       function draftIdFromLocation() {
         return new URLSearchParams(window.location.search).get("draft_id");
@@ -476,8 +587,7 @@
         const first = selectedFactors[0];
         const datasetId = dataset?.dataset?.dsId || first?.dsId || "";
         const datasetVersion = dataset?.dataset?.dsVersion || first?.dsVersion || "";
-        const trainScope = q("train-scope").value;
-        const testScope = q("test-scope").value;
+        const stockScope = q("universe-scope")?.value || "中国A股（SH/SZ）";
         return {
           submission_token: submissionToken,
           name: q("name").value,
@@ -492,9 +602,9 @@
           factor_versions: selectedFactorRefs(),
           model: model || {},
           kind: selectedKind(),
-          stock_scope: "中国A股（SH/SZ）",
-          train: parseRange(q("train-from")?.value, "2019-01-01", "2019-12-31", trainScope, "train"),
-          test: parseRange(q("test-from")?.value, "2020-01-02", "2020-12-31", testScope, "test"),
+          stock_scope: stockScope,
+          train: parseRange(q("train-from")?.value, "2019-01-01", "2019-12-31", stockScope, "train"),
+          test: parseRange(q("test-from")?.value, "2020-01-02", "2020-12-31", stockScope, "test"),
           top_n: Number(q("topN").value),
           weighting: q("weighting").value,
           rebalance_every: Number(q("rebalance").value),
@@ -515,6 +625,7 @@
           unfilled_policy: "keep_cash",
           initial_capital: 1000000,
           benchmark: q("benchmark").value,
+          universe_index_codes: selectedUniverseCodes(),
           missing_policy: {valuation: "drop", technical: "drop"},
           walk_forward: selectedKind() === "factor_rank" ? "once" : (q("bt-walk-forward")?.value || "once"),
           train_period_months: Number(q("bt-train-period")?.value || 12),
@@ -899,12 +1010,18 @@
         const datasetVersion = configPayload.dataset_version_id || configPayload.train_dataset_version_id;
         const datasetTarget = [...(q("dataset")?.options || [])].find((option) => option.dataset.dsId === datasetId && option.dataset.dsVersion === datasetVersion);
         if (datasetTarget) q("dataset").value = datasetTarget.value;
-        q("train-scope").value = configPayload.train?.stock_scope || configPayload.stock_scope || q("train-scope").value;
-        q("test-scope").value = configPayload.test?.stock_scope || configPayload.stock_scope || q("test-scope").value;
+        if (q("universe-scope")) {
+          const scope = configPayload.stock_scope || configPayload.train?.stock_scope || configPayload.test?.stock_scope || q("universe-scope").value;
+          if ([...q("universe-scope").options].some((option) => option.value === scope)) q("universe-scope").value = scope;
+        }
         q("topN").value = configPayload.top_n ?? q("topN").value;
         q("weighting").value = configPayload.weighting || q("weighting").value;
         q("rebalance").value = configPayload.rebalance_every ?? q("rebalance").value;
-        q("benchmark").value = configPayload.benchmark || q("benchmark").value;
+        if (q("benchmark")) {
+          const bench = configPayload.benchmark || q("benchmark").value;
+          if ([...q("benchmark").options].some((option) => option.value === bench)) q("benchmark").value = bench;
+        }
+        setUniverseFromCodes(configPayload.universe_index_codes);
         q("buyFee").value = configPayload.buy_fee_rate ?? q("buyFee").value;
         q("sellFee").value = configPayload.sell_fee_rate ?? q("sellFee").value;
         q("buyMin").value = configPayload.buy_fee_minimum ?? q("buyMin").value;
@@ -1035,6 +1152,7 @@
           await loadDatasetFields();
           refreshTestUsage();
           await loadOpenPlans();
+          renderUniverseChips();
           q("identity-plan")?.addEventListener("change", () => {
             try {
               const planId = q("identity-plan").value;
@@ -1104,7 +1222,7 @@
             q("factor-search")?.focus();
             return;
           }
-          submissionToken = crypto.randomUUID();
+          submissionToken = newToken();
           q("start").disabled = true;
           setStopEnabled(false);
           const payload = await request("/api/backtests", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(configValue())});
@@ -1156,6 +1274,12 @@
       q("add-pretrade-benchmark")?.addEventListener("click", () => addFilterRow("pretrade-benchmark-list", ""));
       q("add-train-filter")?.addEventListener("click", () => addFilterRow("train-filter-list", ""));
       q("add-test-filter")?.addEventListener("click", () => addFilterRow("test-filter-list", ""));
+      q("universe-index-add")?.addEventListener("change", () => {
+        const select = q("universe-index-add");
+        addUniverseSelection(select.value);
+        select.value = "";
+      });
+      renderUniverseChips();
       q("dataset")?.addEventListener("change", () => loadDatasetFields());
       q("test-from")?.addEventListener("change", () => refreshTestUsage());
       q("bt-walk-forward")?.addEventListener("change", () => syncRollPeriodFields());

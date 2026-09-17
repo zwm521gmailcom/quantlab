@@ -49,6 +49,7 @@ def _fingerprint_payload(config: dict[str, Any]) -> dict[str, Any]:
         "holding_days": config.get("holding_days"),
         "rebalance_every": config.get("rebalance_every"),
         "open_when_benchmark_gt_ma200": config.get("open_when_benchmark_gt_ma200"),
+        "universe_index_codes": config.get("universe_index_codes"),
         "open_gate_by_membership": config.get("open_gate_by_membership"),
         "test_filter": _filter_payload(config.get("test")),
         "train_filter": _filter_payload(config.get("train")),

@@ -270,8 +270,40 @@ const JSON_FOLD_LABELS = {
   label: "标签",
   missing_policy: "缺失规则",
   filter: "过滤",
+  universe_index_codes: "选股范围",
 };
-const JSON_FOLD_ORDER = ["hyperparameters", "train", "test", "factor_versions", "model", "buy_fee", "sell_fee", "missing_policy", "label", "filter"];
+const JSON_FOLD_ORDER = ["hyperparameters", "train", "test", "universe_index_codes", "factor_versions", "model", "buy_fee", "sell_fee", "missing_policy", "label", "filter"];
+const UNIVERSE_SNAPSHOT_OPTIONS = [
+  {label: "CSI800（沪深300∪中证500）", codes: ["000300.SH", "000905.SH"]},
+  {label: "沪深300", codes: ["000300.SH"]},
+  {label: "中证500", codes: ["000905.SH"]},
+  {label: "中证800", codes: ["000906.SH"]},
+  {label: "中证1000", codes: ["000852.SH"]},
+  {label: "中证全指", codes: ["000985.CSI"]},
+  {label: "国证2000", codes: ["399303.SZ"]},
+];
+
+function universeSnapshotText(config) {
+  const raw = config && config.universe_index_codes;
+  const wanted = [];
+  const seen = new Set();
+  (Array.isArray(raw) ? raw : String(raw || "").split(/[,;，]/)).forEach((item) => {
+    const code = String(item || "").trim().toUpperCase().replace(/-/g, ".");
+    if (!code || seen.has(code)) return;
+    seen.add(code);
+    wanted.push(code);
+  });
+  if (!wanted.length) return "—";
+  const remaining = new Set(wanted);
+  const labels = [];
+  UNIVERSE_SNAPSHOT_OPTIONS.forEach((option) => {
+    if (!option.codes.length || option.codes.some((code) => !remaining.has(code))) return;
+    labels.push(option.label);
+    option.codes.forEach((code) => remaining.delete(code));
+  });
+  remaining.forEach((code) => labels.push(code));
+  return `${labels.join(" + ")}；${wanted.join(", ")}`;
+}
 
 function walkForwardLabel(value) {
   if (value === "lookback" || value === "rolling" || value === "monthly") return "定长回看";
@@ -444,6 +476,7 @@ async function load() {
     ["运行名称", d.name],
     ["数据快照", c.dataset_id + " · " + c.dataset_version_id],
     ["股票范围", c.stock_scope || "—"],
+    ["选股范围", universeSnapshotText(c)],
     ["训练区间", ((c.train && c.train.date_from) || "—") + " 至 " + ((c.train && c.train.date_to) || "—")],
     ["测试区间", ((c.test && c.test.date_from) || "—") + " 至 " + ((c.test && c.test.date_to) || "—")],
     ["因子组合", (c.factor_versions || []).map((f) => f.factor_id + ":" + f.version_id).join("，") || "—"],

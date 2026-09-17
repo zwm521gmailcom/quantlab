@@ -367,7 +367,10 @@ def run_portfolio(
     stamp_tax_rate = float(config.get("stamp_tax_rate") or 0)
     skip_close_down_limit = bool(config.get("skip_close_down_limit", True))
     signal_exprs, fill_exprs = split_open_filters(open_expressions(config))
-    open_gate = bool(config.get("open_when_benchmark_gt_ma200"))
+    membership_gate = bool(config.get("open_gate_by_membership"))
+    open_gate = (not membership_gate) and (
+        bool(config.get("open_when_benchmark_gt_ma200")) or bool(config.get("open_ma_gates"))
+    )
     allowed_opens = None
     if open_gate:
         allowed_opens = {
@@ -375,6 +378,15 @@ def run_portfolio(
             for day in (config.get("benchmark_open_dates") or [])
             if str(day).replace("-", "")[:8]
         }
+    membership_allow = None
+    if membership_gate:
+        raw_map = config.get("membership_open_allow")
+        membership_allow = {}
+        if isinstance(raw_map, dict):
+            membership_allow = {
+                str(day).replace("-", "")[:8]: {str(name) for name in (names or [])}
+                for day, names in raw_map.items()
+            }
     unfilled_policy = str(config.get("unfilled_policy") or "keep_cash")
     weighting = str(config.get("weighting") or "equal")
     buy_col = str(config.get("buy_price") or "open")
@@ -519,6 +531,12 @@ def run_portfolio(
                 pending_signal = day
             else:
                 day_preds = scored if scored.empty else scored.loc[scored["date"] == day]
+                if membership_allow is not None:
+                    allowed_names = membership_allow.get(day) or set()
+                    if day_preds.empty:
+                        pass
+                    else:
+                        day_preds = day_preds.loc[day_preds["instrument"].astype(str).isin(allowed_names)]
                 if signal_exprs and not day_preds.empty:
                     allowed: set[str] = set()
                     for instrument in day_preds["instrument"].astype(str):

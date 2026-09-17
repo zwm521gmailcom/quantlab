@@ -7,7 +7,13 @@ from typing import Any
 
 import pandas as pd
 
-from quantlab.services.index_membership import amount_unit, amount_yuan, is_main_sme_chinext, members_on
+from quantlab.services.index_membership import (
+    amount_unit,
+    amount_yuan,
+    is_main_sme_chinext,
+    members_on,
+    parse_universe_index_codes,
+)
 from quantlab.services.rule_indicators import enrich_indicators
 
 _LOG = logging.getLogger(__name__)
@@ -22,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
     "target_weight": 0.10,
     "min_list_days": 365,
     "min_amount_yuan": 50_000_000,
+    "universe_index_codes": [HS300_CODE, CSI500_CODE],
 }
 
 
@@ -57,7 +64,11 @@ def _normalize_frame_dates(frame: pd.DataFrame) -> pd.DataFrame:
     return normalize_rule_frame(frame)
 
 
-def _universe_on(membership: pd.DataFrame | dict[Any, set[str]], trade_date: pd.Timestamp) -> set[str]:
+def _universe_on(
+    membership: pd.DataFrame | dict[Any, set[str]],
+    trade_date: pd.Timestamp,
+    index_codes: tuple[str, ...] | list[str] | None = None,
+) -> set[str]:
     key = trade_date.strftime("%Y%m%d")
     if isinstance(membership, dict):
         universe: set[str] = set()
@@ -75,7 +86,11 @@ def _universe_on(membership: pd.DataFrame | dict[Any, set[str]], trade_date: pd.
             for members in membership.values():
                 universe |= set(members)
         return universe
-    return members_on(membership, HS300_CODE, key) | members_on(membership, CSI500_CODE, key)
+    codes = parse_universe_index_codes(index_codes)
+    out: set[str] = set()
+    for code in codes:
+        out |= members_on(membership, code, key)
+    return out
 
 
 def _truthy_flag(value: Any) -> bool:
@@ -265,7 +280,7 @@ def generate_signals(
         cache_key = trade_date.strftime("%Y%m%d")
         universe = asof_cache.get(cache_key)
         if universe is None:
-            universe = _universe_on(membership, trade_date)
+            universe = _universe_on(membership, trade_date, cfg.get("universe_index_codes"))
             asof_cache[cache_key] = universe
         if not universe:
             continue

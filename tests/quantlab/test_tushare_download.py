@@ -89,11 +89,23 @@ def test_download_index_weight_clamps_future_end_date(tmp_path, monkeypatch):
     svc = TushareDownloadService(_settings(tmp_path))
     monkeypatch.setattr(svc, "_call", fake_call)
     monkeypatch.setattr(svc, "_today_yyyymmdd", lambda: "20240915")
-    svc.download_index_weight("000300.SH", "20240801", "20991231")
+    out = svc.download_index_weight("000300.SH", "20240801", "20991231")
     assert calls
     assert max(c["end_date"] for c in calls) <= "20240915"
-    assert calls[-1]["start_date"] == "20240901"
-    assert calls[-1]["end_date"] == "20240915"
+    assert any(c["end_date"] == "20240915" for c in calls)
+    assert out["calls"] >= 1
+
+
+def test_index_weight_chunk_ranges_grow_with_small_constituents(tmp_path):
+    from quantlab.services.tushare_download import TushareDownloadService
+
+    svc = TushareDownloadService(_settings(tmp_path))
+    # ~50 cons → many months per call
+    chunks = svc._index_weight_chunk_ranges("20161010", "20260831", cons_hint=50)
+    assert len(chunks) < 20
+    # ~500 cons → fewer months per call, more chunks
+    dense = svc._index_weight_chunk_ranges("20161010", "20260831", cons_hint=500)
+    assert len(dense) > len(chunks)
 
 
 def test_data_center_raw_dialog_has_index_weight_download_button():
@@ -215,6 +227,51 @@ def test_raw_interface_files_allows_empty_index_weight(tmp_path):
     assert payload["items"] == []
 
 
+def test_resolve_tushare_quota_follows_doc290():
+    from quantlab.services.tushare_download import resolve_tushare_quota
+
+    unset = resolve_tushare_quota(None)
+    assert unset.configured is False
+    assert unset.calls_per_minute == 50
+    assert unset.daily_limit_per_api == 8000
+    low = resolve_tushare_quota(120)
+    assert low.tier == 120
+    assert low.calls_per_minute == 50
+    mid = resolve_tushare_quota(2000)
+    assert mid.tier == 2000
+    assert mid.calls_per_minute == 200
+    assert mid.daily_limit_per_api == 100_000
+    high = resolve_tushare_quota(5000)
+    assert high.calls_per_minute == 500
+    assert high.daily_limit_per_api is None
+
+
+def test_daily_budget_stops_at_doc290_limit(tmp_path):
+    from quantlab.services.tushare_download import TushareDailyBudget
+
+    path = tmp_path / "budget.json"
+    budget = TushareDailyBudget(path, daily_limit_per_api=2)
+    budget.consume("index_weight")
+    budget.consume("index_weight")
+    try:
+        budget.consume("index_weight")
+        assert False, "expected daily limit error"
+    except ValueError as error:
+        assert "daily limit" in str(error)
+    budget.consume("index_daily")
+
+
+def test_download_service_applies_saved_points_quota(tmp_path, monkeypatch):
+    from quantlab.services.tushare_download import TushareDownloadService
+
+    settings = _settings(tmp_path)
+    (settings.runtime_root / "config").mkdir(parents=True, exist_ok=True)
+    (settings.runtime_root / "config/tushare_points.json").write_text('{"points": 2000}', encoding="utf-8")
+    svc = TushareDownloadService(settings)
+    assert svc._rate_limiter.max_calls_per_minute == 200
+    assert svc._daily_budget.daily_limit_per_api == 100_000
+
+
 def test_rate_limiter_enforces_sliding_window(monkeypatch):
     from quantlab.services.tushare_download import TushareRateLimiter
 
@@ -271,3 +328,26 @@ def test_call_retries_on_rate_limit_message(tmp_path, monkeypatch):
     monkeypatch.setattr(svc, "_token", lambda: "test-token")
     rows = svc._call("index_weight", {"index_code": "000300.SH", "start_date": "20180901", "end_date": "20180930"})
     assert rows[0]["con_code"] == "000001.SZ"
+
+
+def test_refresh_index_daily_writes_per_code_parquet(tmp_path, monkeypatch):
+    from quantlab.services.tushare_download import TushareDownloadService
+
+    svc = TushareDownloadService(_settings(tmp_path))
+    monkeypatch.setattr(
+        svc,
+        "_call",
+        lambda api, params: [
+            {
+                "ts_code": params["ts_code"],
+                "trade_date": "20180102",
+                "close": 3400.1,
+            }
+        ],
+    )
+    out = svc.refresh_index_daily("000001.SH", "20180101", "20180131")
+    assert out["target"] == "raw/index_daily/index_daily_000001_SH.parquet"
+    assert (tmp_path / "data/raw/index_daily/index_daily_000001_SH.parquet").is_file()
+    assert not (tmp_path / "data/raw/index_daily/index_daily_000300_SH.parquet").exists()
+    csi = svc.refresh_index_daily("000300.SH", "20180101", "20180131")
+    assert csi["target"] == "raw/index_daily/index_daily_000300_SH.parquet"

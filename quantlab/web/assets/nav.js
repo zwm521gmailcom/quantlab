@@ -2,6 +2,7 @@
   const _savedTheme = localStorage.getItem("theme");
   if (_savedTheme === "dark") document.documentElement.classList.add("dark");
   else if (_savedTheme === "light") document.documentElement.classList.add("light");
+  else document.documentElement.classList.add("dark");
   const NAV_HIDE_KEY = "nav-autohide";
   if (localStorage.getItem(NAV_HIDE_KEY) === "1") document.documentElement.classList.add("nav-autohide");
 
@@ -10,10 +11,10 @@
     css(prop) { return getComputedStyle(document.documentElement).getPropertyValue(prop).trim(); },
     chartColors() {
       return {
-        bg: this.css("--color-bg-card") || "#f3f4f0",
-        text: this.css("--color-text") || "#1e2a24",
-        grid: this.css("--color-border-light") || "#d2d7cf",
-        border: this.css("--color-border") || "#c3c9c0",
+        bg: this.css("--color-bg-card") || "#1c241e",
+        text: this.css("--color-text") || "#e6ebe4",
+        grid: this.css("--color-border-light") || "#2a332d",
+        border: this.css("--color-border") || "#334038",
       };
     },
   };

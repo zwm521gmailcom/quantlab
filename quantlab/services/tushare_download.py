@@ -6,11 +6,14 @@ import calendar
 import json
 import logging
 import re
+import threading
 import time
 import urllib.error
 import urllib.request
 from collections import deque
+from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -24,18 +27,120 @@ from quantlab.config import Settings
 _TUSHARE_API = "https://api.tushare.pro"
 logger = logging.getLogger(__name__)
 
-# Official per-minute limits: https://tushare.pro/document/1?doc_id=290
-# 120 points → 50/min; 2000+ → 200/min; 5000+ → 500/min.
-# index_weight requires 2000 points; error text cites 200/min (doc_id=108).
-_TUSHARE_TIER_LIMITS: dict[str, int] = {
-    "120": 50,
-    "2000": 200,
-    "5000": 500,
-}
-_DEFAULT_TIER = "2000"
-_DEFAULT_MAX_CALLS_PER_MINUTE = 180  # 200/min official, 10% headroom
+# Official limits: https://tushare.pro/document/1?doc_id=290
+# Strict: use table values as-is (no headroom discount).
+TUSHARE_FREQ_DOC = "https://tushare.pro/document/1?doc_id=290"
+TUSHARE_FREQ_TIERS: tuple[dict[str, Any], ...] = (
+    {
+        "min_points": 120,
+        "tier": 120,
+        "calls_per_minute": 50,
+        "daily_limit_per_api": 8000,
+        "note": "非复权日线等；其他接口可能无法调取",
+    },
+    {
+        "min_points": 2000,
+        "tier": 2000,
+        "calls_per_minute": 200,
+        "daily_limit_per_api": 100_000,
+        "note": "可参考各接口文档积分要求；100000次/个API/天",
+    },
+    {
+        "min_points": 5000,
+        "tier": 5000,
+        "calls_per_minute": 500,
+        "daily_limit_per_api": None,
+        "note": "常规数据无日总量上限",
+    },
+    {
+        "min_points": 10000,
+        "tier": 10000,
+        "calls_per_minute": 500,
+        "daily_limit_per_api": None,
+        "note": "常规无日上限；特色数据 300次/分",
+    },
+    {
+        "min_points": 15000,
+        "tier": 15000,
+        "calls_per_minute": 500,
+        "daily_limit_per_api": None,
+        "note": "特色数据无总量限制",
+    },
+)
+_DEFAULT_MAX_CALLS_PER_MINUTE = 50  # safest until points are configured; 2000积分档实测硬顶 200/min
 _RATE_LIMIT_PATTERN = re.compile(r"频率超限|每分钟最多访问")
 _MAX_RATE_LIMIT_RETRIES = 5
+
+
+@dataclass(frozen=True)
+class TushareQuota:
+    points: int | None
+    tier: int
+    calls_per_minute: int
+    daily_limit_per_api: int | None
+    configured: bool
+    doc: str = TUSHARE_FREQ_DOC
+
+
+def resolve_tushare_quota(points: int | None) -> TushareQuota:
+    """Map saved points to doc_id=290 frequency tier (floor match)."""
+    if points is None:
+        tier = TUSHARE_FREQ_TIERS[0]
+        return TushareQuota(
+            points=None,
+            tier=int(tier["tier"]),
+            calls_per_minute=int(tier["calls_per_minute"]),
+            daily_limit_per_api=tier["daily_limit_per_api"],
+            configured=False,
+        )
+    value = int(points)
+    if value < 0:
+        raise ValueError("tushare points must be >= 0")
+    chosen = TUSHARE_FREQ_TIERS[0]
+    for tier in TUSHARE_FREQ_TIERS:
+        if value >= int(tier["min_points"]):
+            chosen = tier
+    return TushareQuota(
+        points=value,
+        tier=int(chosen["tier"]),
+        calls_per_minute=int(chosen["calls_per_minute"]),
+        daily_limit_per_api=chosen["daily_limit_per_api"],
+        configured=True,
+    )
+
+
+def points_config_path(runtime_root: Path) -> Path:
+    return Path(runtime_root) / "config" / "tushare_points.json"
+
+
+def load_tushare_points(runtime_root: Path) -> int | None:
+    path = points_config_path(runtime_root)
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or value.get("points") is None:
+        return None
+    try:
+        return int(value["points"])
+    except (TypeError, ValueError):
+        return None
+
+
+def quota_public(runtime_root: Path) -> dict[str, Any]:
+    points = load_tushare_points(runtime_root)
+    quota = resolve_tushare_quota(points)
+    return {
+        "configured": quota.configured,
+        "points": quota.points,
+        "tier": quota.tier,
+        "calls_per_minute": quota.calls_per_minute,
+        "daily_limit_per_api": quota.daily_limit_per_api,
+        "doc": quota.doc,
+        "tiers": list(TUSHARE_FREQ_TIERS),
+    }
 
 
 class TushareRateLimiter:
@@ -48,6 +153,12 @@ class TushareRateLimiter:
         self.min_interval_seconds = 60.0 / max_calls_per_minute
         self._window: deque[float] = deque()
         self._last_call_at: float | None = None
+
+    def configure(self, max_calls_per_minute: int) -> None:
+        if max_calls_per_minute < 1:
+            raise ValueError("max_calls_per_minute must be positive")
+        self.max_calls_per_minute = max_calls_per_minute
+        self.min_interval_seconds = 60.0 / max_calls_per_minute
 
     def wait(self) -> None:
         now = time.monotonic()
@@ -80,7 +191,51 @@ class TushareRateLimiter:
         self._last_call_at = now
 
 
-_GLOBAL_RATE_LIMITER = TushareRateLimiter()
+class TushareDailyBudget:
+    """Per-API daily call budget from doc_id=290 (None = unlimited)."""
+
+    def __init__(self, path: Path, daily_limit_per_api: int | None) -> None:
+        self.path = path
+        self.daily_limit_per_api = daily_limit_per_api
+        self._lock = threading.Lock()
+
+    def configure(self, daily_limit_per_api: int | None) -> None:
+        with self._lock:
+            self.daily_limit_per_api = daily_limit_per_api
+
+    def _today(self) -> str:
+        return datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+
+    def _read(self) -> dict[str, Any]:
+        if self.path.is_file():
+            try:
+                value = json.loads(self.path.read_text(encoding="utf-8"))
+                if isinstance(value, dict) and value.get("date") == self._today():
+                    counts = value.get("apis") or {}
+                    if isinstance(counts, dict):
+                        return {"date": self._today(), "apis": {str(k): int(v) for k, v in counts.items()}}
+            except (OSError, json.JSONDecodeError, TypeError, ValueError):
+                pass
+        return {"date": self._today(), "apis": {}}
+
+    def _write(self, data: dict[str, Any]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def consume(self, api_name: str) -> None:
+        if self.daily_limit_per_api is None:
+            return
+        with self._lock:
+            data = self._read()
+            key = str(api_name)
+            used = int(data["apis"].get(key, 0))
+            if used >= int(self.daily_limit_per_api):
+                raise ValueError(
+                    f"tushare daily limit reached for {key}: {used}/{self.daily_limit_per_api} "
+                    f"(doc_id=290 tier limit); resume tomorrow"
+                )
+            data["apis"][key] = used + 1
+            self._write(data)
 
 
 def _is_rate_limit_error(message: str) -> bool:
@@ -90,7 +245,26 @@ def _is_rate_limit_error(message: str) -> bool:
 class TushareDownloadService:
     def __init__(self, settings: Settings, *, rate_limiter: TushareRateLimiter | None = None) -> None:
         self.settings = settings
-        self._rate_limiter = rate_limiter or _GLOBAL_RATE_LIMITER
+        self._enforce_quota = rate_limiter is None
+        self._rate_limiter = rate_limiter if rate_limiter is not None else TushareRateLimiter()
+        budget_path = Path(settings.runtime_root) / "config" / "tushare_daily_budget.json"
+        self._daily_budget = TushareDailyBudget(budget_path, daily_limit_per_api=8000)
+        if self._enforce_quota:
+            self.apply_saved_quota()
+
+    def apply_saved_quota(self) -> TushareQuota:
+        quota = resolve_tushare_quota(load_tushare_points(self.settings.runtime_root))
+        self._rate_limiter.configure(quota.calls_per_minute)
+        self._daily_budget.configure(quota.daily_limit_per_api)
+        logger.info(
+            "Tushare quota applied: points=%s tier=%s %d/min daily_per_api=%s (%s)",
+            quota.points,
+            quota.tier,
+            quota.calls_per_minute,
+            quota.daily_limit_per_api if quota.daily_limit_per_api is not None else "unlimited",
+            quota.doc,
+        )
+        return quota
 
     def _token(self) -> str:
         token_path = self.settings.runtime_root / "config/tushare_token.json"
@@ -121,6 +295,8 @@ class TushareDownloadService:
         last_error: ValueError | None = None
         for attempt in range(1, _MAX_RATE_LIMIT_RETRIES + 1):
             self._rate_limiter.wait()
+            if self._enforce_quota:
+                self._daily_budget.consume(api_name)
             try:
                 with urllib.request.urlopen(request, timeout=60) as response:
                     body = json.loads(response.read().decode("utf-8"))
@@ -179,6 +355,23 @@ class TushareDownloadService:
                 cursor = cursor.replace(month=cursor.month + 1, day=1)
         return ranges
 
+    # Empirically index_weight responses truncate around 7000 rows (newest kept).
+    _INDEX_WEIGHT_ROW_CAP = 7000
+
+    def _index_weight_chunk_ranges(self, start_date: str, end_date: str, cons_hint: int) -> list[tuple[str, str]]:
+        """Chunk by months sized from constituent hint so each call stays under row cap."""
+        months = self._month_ranges(start_date, end_date)
+        if not months:
+            return []
+        cons = max(int(cons_hint or 1), 1)
+        # leave headroom: cap*0.9 / cons
+        months_per_call = max(1, int((self._INDEX_WEIGHT_ROW_CAP * 0.9) // cons))
+        chunks: list[tuple[str, str]] = []
+        for i in range(0, len(months), months_per_call):
+            part = months[i : i + months_per_call]
+            chunks.append((part[0][0], part[-1][1]))
+        return chunks
+
     def download_index_weight(self, index_code: str, start_date: str, end_date: str) -> dict[str, Any]:
         api_code = self._index_weight_api_code(index_code)
         today = self._today_yyyymmdd()
@@ -187,14 +380,45 @@ class TushareDownloadService:
         file_stem = api_code.replace(".", "_")
         output = self.settings.raw_root / "index_weight" / f"index_weight_{file_stem}.parquet"
         existing = pq.read_table(output).to_pandas() if output.exists() else pd.DataFrame()
-        rows: list[dict[str, Any]] = []
-        for month_start, month_end in self._month_ranges(start_date, end_date):
-            rows.extend(
-                self._call(
-                    "index_weight",
-                    {"index_code": api_code, "start_date": month_start, "end_date": month_end},
-                )
+        # Probe latest month for constituent count → adaptive window (much fewer calls than 1-month).
+        months = self._month_ranges(start_date, end_date)
+        cons_hint = 300
+        if months:
+            probe = self._call(
+                "index_weight",
+                {"index_code": api_code, "start_date": months[-1][0], "end_date": months[-1][1]},
             )
+            if probe:
+                cons_hint = max(len(probe), 1)
+        rows: list[dict[str, Any]] = []
+        chunks = self._index_weight_chunk_ranges(start_date, end_date, cons_hint)
+        calls = 0
+        for chunk_start, chunk_end in chunks:
+            chunk_rows = self._call(
+                "index_weight",
+                {"index_code": api_code, "start_date": chunk_start, "end_date": chunk_end},
+            )
+            calls += 1
+            # If still hitting row cap, split this chunk month-by-month.
+            if len(chunk_rows) >= self._INDEX_WEIGHT_ROW_CAP:
+                logger.warning(
+                    "index_weight row cap hit for %s %s-%s (rows=%d cons_hint=%d); fallback monthly",
+                    api_code,
+                    chunk_start,
+                    chunk_end,
+                    len(chunk_rows),
+                    cons_hint,
+                )
+                chunk_rows = []
+                for month_start, month_end in self._month_ranges(chunk_start, chunk_end):
+                    chunk_rows.extend(
+                        self._call(
+                            "index_weight",
+                            {"index_code": api_code, "start_date": month_start, "end_date": month_end},
+                        )
+                    )
+                    calls += 1
+            rows.extend(chunk_rows)
         if not rows and existing.empty:
             raise ValueError(f"tushare returned no index_weight rows for {index_code}")
         frame = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True).drop_duplicates(
@@ -203,7 +427,14 @@ class TushareDownloadService:
         output.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), output)
         relative = f"raw/index_weight/index_weight_{file_stem}.parquet"
-        result: dict[str, Any] = {"rows": len(rows), "target": relative, "file_name": output.name}
+        result: dict[str, Any] = {
+            "rows": len(rows),
+            "target": relative,
+            "file_name": output.name,
+            "cons_hint": cons_hint,
+            "chunks": len(chunks),
+            "calls": calls,
+        }
         if index_code != api_code:
             result["mapped_from"] = index_code
             result["note"] = f"请求代码 {index_code} 已映射为 {api_code}"
@@ -245,13 +476,22 @@ class TushareDownloadService:
         return {"rows": len(rows), "target": "raw/trade_cal/calendar.parquet"}
 
     def refresh_index_daily(self, ts_code: str, start_date: str, end_date: str) -> dict[str, Any]:
-        rows = self._call("index_daily", {"ts_code": ts_code, "start_date": start_date, "end_date": end_date})
-        output = self.settings.raw_root / "index_daily/index_daily_000300_SH.parquet"
+        code = str(ts_code or "").strip().upper().replace("-", ".")
+        if not code:
+            raise ValueError("ts_code is required")
+        rows = self._call("index_daily", {"ts_code": code, "start_date": start_date, "end_date": end_date})
+        slug = code.replace(".", "_")
+        relative = f"raw/index_daily/index_daily_{slug}.parquet"
+        output = self.settings.raw_root / "index_daily" / f"index_daily_{slug}.parquet"
         existing = pq.read_table(output).to_pandas() if output.exists() else pd.DataFrame()
-        frame = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True).drop_duplicates(["ts_code", "trade_date"], keep="last")
+        frame = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
+        if not frame.empty:
+            keys = [column for column in ("ts_code", "trade_date") if column in frame.columns]
+            if keys:
+                frame = frame.drop_duplicates(keys, keep="last")
         output.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), output)
-        return {"rows": len(rows), "target": "raw/index_daily/index_daily_000300_SH.parquet"}
+        return {"rows": len(rows), "target": relative}
 
     def download_suspend_d(self, start_date: str, end_date: str) -> dict[str, Any]:
         today = self._today_yyyymmdd()

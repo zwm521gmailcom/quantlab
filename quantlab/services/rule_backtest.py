@@ -15,7 +15,11 @@ import pyarrow.parquet as pq
 
 from quantlab.domain.status import BacktestRunStatus
 from quantlab.repositories.run_lifecycle import transition_backtest_run_status
-from quantlab.services.index_membership import latest_members, load_index_weight, members_on
+from quantlab.services.index_membership import (
+    load_index_weight,
+    membership_coverage_error,
+    parse_universe_index_codes,
+)
 from quantlab.services.rule_portfolio import run_target_weight_portfolio
 from quantlab.strategies.registry import RULE_STRATEGIES
 from quantlab.strategies.wiki_trend_follow import DEFAULTS as WIKI_DEFAULTS
@@ -125,7 +129,11 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
         date_from = _norm_yyyymmdd(config["test"]["date_from"])
         date_to = _norm_yyyymmdd(config["test"]["date_to"])
         job_service._step(run_id, 1, "running")
-        membership_error = _membership_error(raw_root, date_from=date_from)
+        membership_error = _membership_error(
+            raw_root,
+            date_from=date_from,
+            index_codes=config.get("universe_index_codes"),
+        )
         if membership_error:
             raise RuleBacktestError(membership_error)
         job_service._step(run_id, 1, "completed")
@@ -138,6 +146,7 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
         market = _window(frame, date_from, date_to)
         weights = load_index_weight(raw_root)
         params = _signal_params(config)
+        params["universe_index_codes"] = list(parse_universe_index_codes(config.get("universe_index_codes")))
         signals = generate_signals(history, weights, params)
         window_signals = _window(signals, date_from, date_to) if signals is not None else signals
         job_service._step(run_id, 4, "completed")
@@ -180,24 +189,17 @@ def _require_published_dataset(database: Any, dataset_id: str, dataset_version_i
         raise ValueError("published quality-passed dataset version is required")
 
 
-def _membership_error(raw_root: Path, date_from: str | None = None) -> str | None:
-    path_300 = raw_root / "index_weight" / "index_weight_000300_SH.parquet"
-    path_905 = raw_root / "index_weight" / "index_weight_000905_SH.parquet"
-    if not path_300.is_file() or not path_905.is_file():
-        return _MEMBERSHIP_ERROR
-    weights = load_index_weight(raw_root)
-    if weights.empty:
-        return _MEMBERSHIP_ERROR
-    codes = set(weights["index_code"].astype(str))
-    if "000300.SH" not in codes or "000905.SH" not in codes:
-        return _MEMBERSHIP_ERROR
-    if date_from:
-        if not members_on(weights, "000300.SH", date_from) or not members_on(weights, "000905.SH", date_from):
-            return _ASOF_ERROR
+def _membership_error(
+    raw_root: Path,
+    date_from: str | None = None,
+    index_codes: object | None = None,
+) -> str | None:
+    error = membership_coverage_error(raw_root, index_codes, date_from=date_from)
+    if error is None:
         return None
-    if not latest_members(weights, "000300.SH") or not latest_members(weights, "000905.SH"):
-        return _MEMBERSHIP_ERROR
-    return None
+    if date_from and "之前没有可用成分" in error:
+        return _ASOF_ERROR
+    return error or _MEMBERSHIP_ERROR
 
 
 def _signal_params(config: dict[str, Any]) -> dict[str, Any]:

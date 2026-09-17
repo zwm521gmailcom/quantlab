@@ -40,6 +40,8 @@ def test_quantlab_core_pages_and_api_contracts_are_connected(tmp_path: Path) -> 
     assert client.get("/api/strategies").status_code == 200
     assert client.get("/api/backtests/runs").status_code == 200
     assert client.get("/api/settings").json()["secrets"]["tushare_token"] is False
+    assert client.get("/api/settings").json()["secrets"]["tushare_points"] is False
+    assert client.get("/api/settings").json()["tushare_quota"]["tier"] == 120
 
     model = strategy_service.create_model("model_lgbm", "LightGBM排序")
     version = strategy_service.create_model_version(model["entity_id"], _model_config())

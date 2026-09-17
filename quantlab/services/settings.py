@@ -77,13 +77,19 @@ def compute_hint() -> dict[str, Any]:
 
 
 def max_concurrent_backtests(ram: int | None = None, cpu: int | None = None) -> int:
+    raw = str(environ.get("QUANTLAB_MAX_CONCURRENT_BACKTESTS") or "").strip()
+    if raw:
+        try:
+            return max(1, min(int(raw), 16))
+        except ValueError:
+            pass
     total = int(ram if ram is not None else total_ram_bytes() or 0)
     gb = total / (1024**3) if total else 0.0
     cores = max(1, int(cpu if cpu is not None else (cpu_count() or 1)))
     if gb <= 0:
         by_ram = 1
     else:
-        by_ram = max(1, int(max(0.0, gb - 8.0) // 28))
+        by_ram = max(1, int(max(0.0, gb - 8.0) // 19))
     by_cpu = max(1, cores // 4)
     return min(by_ram, by_cpu, 8)
 
@@ -144,6 +150,9 @@ class SettingsService:
     def token_path(self) -> Path:
         return self.path.parent / "tushare_token.json"
 
+    def points_path(self) -> Path:
+        return self.path.parent / "tushare_points.json"
+
     def token_configured(self) -> bool:
         token_path = self.token_path()
         if not token_path.is_file():
@@ -164,6 +173,27 @@ class SettingsService:
         else:
             token_path.unlink(missing_ok=True)
         return {"configured": bool(cleaned)}
+
+    def tushare_points_public(self) -> dict[str, Any]:
+        from quantlab.services.tushare_download import quota_public
+
+        return quota_public(self.settings.runtime_root)
+
+    def update_tushare_points(self, points: int | None) -> dict[str, Any]:
+        from quantlab.services.tushare_download import resolve_tushare_quota
+
+        path = self.points_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if points is None:
+            path.unlink(missing_ok=True)
+            return self.tushare_points_public()
+        value = int(points)
+        if value < 0:
+            raise ValueError("tushare points must be >= 0")
+        resolve_tushare_quota(value)  # validate mapping
+        path.write_text(json.dumps({"points": value}, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.chmod(0o600)
+        return self.tushare_points_public()
 
     def _read(self) -> dict[str, Any]:
         empty = {"defaults": dict(DEFAULTS), "compute": dict(COMPUTE_DEFAULTS), "lan": dict(LAN_DEFAULTS)}
@@ -286,7 +316,11 @@ class SettingsService:
             "lan": value["lan"],
             "compute_hint": compute_hint(),
             "machine": load_machine_identity(self.settings.runtime_root),
-            "secrets": {"tushare_token": self.token_configured()},
+            "secrets": {
+                "tushare_token": self.token_configured(),
+                "tushare_points": self.tushare_points_public()["configured"],
+            },
+            "tushare_quota": self.tushare_points_public(),
         }
 
     def update(self, payload: dict[str, Any]) -> dict[str, Any]:

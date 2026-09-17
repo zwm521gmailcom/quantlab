@@ -129,6 +129,8 @@ def test_run_record_api_and_page_use_run_record_not_workbench(tmp_path: Path) ->
     assert "仓位与交易规则" not in html
     assert "保存为模板" not in html
     assert "可追溯性检查" in html
+    assert '["选股范围", universeSnapshotText(c)]' in js
+    assert "function universeSnapshotText" in js
     assert "模块耗时" in html
     assert "总耗时" in html
     assert response.json()["dag"][1]["duration_display"] == "53.0 秒"

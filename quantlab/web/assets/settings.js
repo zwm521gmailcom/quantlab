@@ -138,6 +138,92 @@ document.getElementById("tushare-token-clear").addEventListener("click", async (
 });
 refreshTushareTokenStatus();
 
+function formatDailyLimit(limit) {
+  if (limit == null) return "常规无上限";
+  return `${limit} 次/个API`;
+}
+
+function paintTushareQuota(p) {
+  const input = $("tushare-points");
+  const effective = $("tushare-points-effective");
+  const hint = $("tushare-points-hint");
+  const status = $("tushare-points-status");
+  const tbody = $("tushare-quota-tbody");
+  const active = $("tushare-quota-active");
+  if (!input || !tbody) return;
+  if (p.configured && p.points != null) {
+    input.value = String(p.points);
+    input.placeholder = "已配置，可改后保存";
+  } else {
+    input.value = "";
+    input.placeholder = "例如 2000";
+  }
+  if (effective) {
+    effective.value = p.configured
+      ? `${p.points} 积分 → ${p.tier} 档 · ${p.calls_per_minute} 次/分 · ${formatDailyLimit(p.daily_limit_per_api)}`
+      : `未配置 → 按 ${p.tier} 档保守限速 · ${p.calls_per_minute} 次/分 · ${formatDailyLimit(p.daily_limit_per_api)}`;
+  }
+  if (hint) {
+    hint.textContent = p.configured
+      ? "下载服务已按此档限速；保存后立即生效，无需重启。"
+      : "未保存积分时按 120 档保守限速，避免超限。";
+  }
+  if (status) status.textContent = p.configured ? "已配置" : "未配置";
+  tbody.replaceChildren();
+  const tiers = p.tiers || [];
+  for (const tier of tiers) {
+    const row = document.createElement("tr");
+    if (Number(tier.tier) === Number(p.tier)) row.className = "is-active-tier";
+    const cells = [
+      `${tier.min_points} 以上`,
+      `${tier.calls_per_minute} 次`,
+      formatDailyLimit(tier.daily_limit_per_api),
+      tier.note || "",
+    ];
+    for (const text of cells) {
+      const td = document.createElement("td");
+      td.textContent = text;
+      row.appendChild(td);
+    }
+    tbody.appendChild(row);
+  }
+  if (active) {
+    active.textContent = p.configured
+      ? `当前生效：${p.points} 积分 → ${p.tier} 档，${p.calls_per_minute} 次/分钟，日上限 ${formatDailyLimit(p.daily_limit_per_api)}。`
+      : `当前生效：未配置积分，按 ${p.tier} 档保守限速（${p.calls_per_minute} 次/分钟，日上限 ${formatDailyLimit(p.daily_limit_per_api)}）。`;
+  }
+}
+
+async function refreshTusharePoints() {
+  const r = await fetch("/api/settings/tushare-points");
+  if (!r.ok) return;
+  paintTushareQuota(await r.json());
+}
+
+if ($("tushare-points-save")) {
+  $("tushare-points-save").onclick = async () => {
+    const raw = $("tushare-points").value.trim();
+    const body = raw === "" ? {points: null} : {points: Number(raw)};
+    const r = await fetch("/api/settings/tushare-points", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    const p = await r.json();
+    $("tushare-points-status").textContent = r.ok ? (p.configured ? "已保存" : "已清除") : "保存失败";
+    if (r.ok) paintTushareQuota(p);
+  };
+  $("tushare-points-clear").onclick = async () => {
+    const r = await fetch("/api/settings/tushare-points", {
+      method: "POST",
+      headers: {"content-type": "application/json"},
+      body: JSON.stringify({points: null}),
+    });
+    if (r.ok) paintTushareQuota(await r.json());
+  };
+  refreshTusharePoints();
+}
+
 function lanStatus(text, ok) {
   const node = $("lan-status");
   if (!node) return;

@@ -361,6 +361,8 @@ main, .card { min-width: 0; }
 .settings-fields input[readonly] { background: var(--color-bg-muted); color: var(--color-text-secondary); cursor: default; font-family: var(--font-mono); }
 .settings-fields .field-help { color: var(--color-text-muted); font-size: 11px; line-height: 1.5; font-weight: 400; }
 .settings-fields .field-help code { font-size: 11px; }
+#tushare-quota-table tr.is-active-tier td { background: var(--color-bg-muted); font-weight: 600; }
+#tushare-quota-table { margin-top: 8px; }
 .settings-help, .card > p.muted { margin: 0 0 14px; color: var(--color-text-muted); font-size: 12px; line-height: 1.65; }
 .settings-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .lan-sync-cats { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0 4px; }
@@ -623,7 +625,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .trace-item.warn b { color: var(--color-warn); }
 
 .factor-charts { position: relative; min-height: 120px; margin-top: 18px; }
-.factor-chart-title { position: absolute; z-index: 2; top: 6px; left: 8px; padding: 3px 8px; border-radius: var(--radius-md); background: rgba(255,255,255,.9); color: var(--color-text); font-size: 12px; font-weight: 600; pointer-events: none; }
+.factor-chart-title { position: absolute; z-index: 2; top: 6px; left: 8px; padding: 3px 8px; border-radius: var(--radius-md); background: var(--color-bg-card); color: var(--color-text); font-size: 12px; font-weight: 600; pointer-events: none; }
 
 .factor-charts { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 18px; }
 .factor-chart-block { position: relative; min-height: 220px; border: 1px solid var(--color-border-light); border-radius: var(--radius-md); background: var(--color-bg-card); padding: 4px; }
@@ -775,7 +777,7 @@ main { position: relative; }
 .factor-ic-lines { min-height: 260px; }
 .factor-ic-line-host { height: 220px; }
 .factor-ic-bucket-legend { position: absolute; z-index: 3; top: 34px; left: 62px; display: flex; flex-wrap: wrap; gap: 5px; max-width: calc(100% - 140px); font-size: 11px; }
-.factor-ic-bucket-toggle { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border: 1px solid var(--color-border-light); border-radius: 4px; background: rgba(255,255,255,.88); color: var(--color-text-secondary); cursor: pointer; line-height: 1.25; }
+.factor-ic-bucket-toggle { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border: 1px solid var(--color-border-light); border-radius: 4px; background: var(--color-bg-card); color: var(--color-text-secondary); cursor: pointer; line-height: 1.25; }
 .factor-ic-bucket-toggle:hover { border-color: var(--color-primary); color: var(--color-text); }
 .factor-ic-bucket-toggle[aria-pressed="false"] { opacity: .42; text-decoration: line-through; }
 .factor-ic-bucket-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
@@ -864,6 +866,9 @@ button.secondary { background: var(--color-bg-card); border-color: var(--color-b
 .factor-combo-option { display: block; width: 100%; text-align: left; padding: 8px 12px; border: 0; background: transparent; color: var(--color-text); font-size: 12px; cursor: pointer; }
 .factor-combo-option:hover, .factor-combo-option.active { background: var(--color-bg-muted); }
 .factor-combo-empty { padding: 8px 12px; color: var(--color-text-secondary); font-size: 12px; }
+.universe-picker { display: grid; gap: 8px; }
+.universe-picker .factor-combo-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 0; }
+.universe-picker .select { width: 100%; }
 .root { position: relative; padding-right: 40px; }
 .root-edit { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; width: 26px; height: 26px; margin: 0; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--color-sidebar-muted); cursor: pointer; }
 .root-edit svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }

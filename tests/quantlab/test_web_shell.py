@@ -28,6 +28,22 @@ def test_shared_shell_contains_all_navigation_entries_and_states() -> None:
     assert 'id="error-state"' in html
 
 
+def test_dark_theme_is_default_and_light_mode_remains_an_explicit_fallback() -> None:
+    nav = Path("quantlab/web/assets/nav.js").read_text(encoding="utf-8")
+    css = Path("quantlab/web/assets/app.css").read_text(encoding="utf-8")
+    shared_theme = Path("quantlab/web/assets/shared/theme.js").read_text(encoding="utf-8")
+    assert 'const _savedTheme = localStorage.getItem("theme");' in nav
+    assert 'else document.documentElement.classList.add("dark");' in nav
+    assert 'themeLabel.textContent = dark ? "浅色模式" : "深色模式";' in nav
+    assert "html.dark" in css
+    assert "color-scheme: dark" in css
+    assert 'bg: this.css("--color-bg-card") || "#1c241e"' in nav
+    assert 'text: this.css("--color-text") || "#e6ebe4"' in nav
+    assert 'return {bg: "#1c241e", text: "#e6ebe4", grid: "#2a332d", border: "#334038"};' in shared_theme
+    assert 'background: rgba(255,255,255,.9)' not in css
+    assert 'background: rgba(255,255,255,.88)' not in css
+
+
 def test_model_page_uses_shared_shell_and_empty_state() -> None:
     html = _page("models.html")
     assert 'class="shell"' in html
@@ -43,7 +59,7 @@ def test_backtest_new_uses_formal_workbench_structure() -> None:
     assert 'class="shell"' in html
     assert 'aria-current="page"' in html
     for label in (
-        "回测名称", "股票范围", "中国A股（SH/SZ）", "沪市（SH）", "深市（SZ）", "因子组合", "模型选择",
+        "回测名称", "交易所范围", "中国A股（SH/SZ）", "沪市（SH）", "深市（SZ）", "因子组合", "模型选择",
         "训练样本", "回测样本", "盘前过滤", "训练区间", "回测区间", "Top N", "等权", "调仓间隔",
         "未复权开盘价", "未复权收盘价", "买入费率", "卖出费率", "印花税", "最低费用", "滑点",
         "基准", "保存配置", "运行状态", "开始回测", "回测强行停止", "结果档案",
@@ -67,12 +83,20 @@ def test_backtest_new_uses_formal_workbench_structure() -> None:
     assert 'id="test-close-gt-ma200"' not in html
     assert "同一张标准行情宽表带上这些因子后，下面训练、回测各切一份" in html
     assert 'id="hs300-gt-ma200"' in html
-    assert "沪深300均线开仓" in html
+    assert 'id="universe-scope"' in html
+    assert 'id="universe-index-add"' in html
+    assert 'id="universe-index-chips"' in html
+    assert 'data-panel-id="universe"' in html
+    assert "基准均线开仓" in html
+    assert "股票池" in html
 
 
 def test_workbench_copy_restores_open_gate_and_roll_periods() -> None:
     js = Path("quantlab/web/assets/backtest/workbench.js").read_text(encoding="utf-8")
     assert 'q("hs300-gt-ma200").checked = Boolean(configPayload.open_when_benchmark_gt_ma200)' in js
+    assert "universe_index_codes" in js
+    assert "UNIVERSE_OPTIONS" in js
+    assert "function addUniverseSelection" in js
     assert 'kind !== "factor_rank" && q("bt-walk-forward")' not in js
     assert "q(\"bt-train-period\").value = params.train_lookback_months || params.train_period_months || 12" in js
     assert "q(\"bt-test-period\").value = params.test_period_months" in js
@@ -234,7 +258,7 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     for marker in (
         'class="top"', 'class="root"', 'class="banner"', 'class="layout"',
         'data-panel-id="actions"', 'id="start"', 'id="stop-backtest"', 'id="save"', 'id="preview"',
-        "运行身份", "因子组合", "训练样本", "回测样本", "盘前过滤", "模型与信号", "仓位", "交易规则",
+        "运行身份", "因子组合", "股票池", "训练样本", "回测样本", "盘前过滤", "模型与信号", "仓位", "交易规则",
         "开始回测", "保存配置", "运行 ID", 'id="identity-plan"',
     ):
         assert marker in html
@@ -257,13 +281,14 @@ def test_backtest_workbench_matches_the_formal_design_sections() -> None:
     assert 'class="field wide"' in model_panel
     assert 'id="dataset"' in html
     assert 'id="train-dataset"' not in html and 'id="test-dataset"' not in html
-    assert 'id="train-scope"' in html and 'id="test-scope"' in html
+    assert 'id="universe-scope"' in html
+    assert 'id="train-scope"' not in html and 'id="test-scope"' not in html
     assert 'id="val-scope"' not in html and "验证样本" not in html
     assert 'id="scope"' not in html
     assert "数据、因子和区间" not in html
-    for tag in ("模块 1", "模块 2", "模块 3", "模块 4", "模块 5", "模块 6", "模块 7", "模块 8", "模块 9"):
+    for tag in ("模块 1", "模块 2", "模块 3", "模块 4", "模块 5", "模块 6", "模块 7", "模块 8", "模块 9", "模块 10"):
         assert tag in html
-    assert html.index("模块 1") < html.index("模块 2") < html.index("模块 3") < html.index("模块 4") < html.index("模块 5") < html.index("模块 6") < html.index("模块 7") < html.index("模块 8") < html.index("模块 9")
+    assert html.index("模块 1") < html.index("模块 2") < html.index("模块 3") < html.index("模块 4") < html.index("模块 5") < html.index("模块 6") < html.index("模块 7") < html.index("模块 8") < html.index("模块 9") < html.index("模块 10")
     assert html.index(">盘前过滤<") < html.index(">交易规则<")
     assert html.index(">仓位<") < html.index(">盘前过滤<")
     assert html.index(">交易规则<") < html.index(">运行<")
@@ -290,7 +315,7 @@ def test_backtest_workbench_panels_can_be_dragged_to_reorder() -> None:
     js = _first_party_js()
     source = html + js
     css = Path("quantlab/web/assets/app.css").read_text()
-    for panel_id in ("identity", "factors", "train", "test", "model", "position", "pretrade", "execution", "actions", "run-status"):
+    for panel_id in ("identity", "factors", "universe", "train", "test", "model", "position", "pretrade", "execution", "actions", "run-status"):
         assert f'data-panel-id="{panel_id}"' in html
     assert "columns[0]?.append(panel)" not in source
     assert "panel.parentElement?.append(panel)" in js
@@ -653,8 +678,8 @@ def test_result_archive_filters_use_model_not_strategy_labels() -> None:
     assert "table-pager.js" in html
     assert "quantlab-archive-page-size" in js
     assert 'class="archive-page"' in html
-    assert "app.css?v=20260912archivesort" in html
-    assert "archive.js?v=20260912archivesort" in html
+    assert "app.css?v=20260913createdat" in html
+    assert "archive.js?v=20260913createdat" in html
     assert "<label>排序" not in html
     assert 'id="sort"' not in html
     assert "archive-sortable" in js
@@ -708,6 +733,7 @@ def test_nav_exposes_rule_backtest_page() -> None:
     assert "/api/health" in nav
     assert "asset_label" in nav
     assert "health.version" in nav
+
 
 def test_offline_rl_page_declares_nav_run_and_results_table() -> None:
     html = _page("offline_rl.html")
