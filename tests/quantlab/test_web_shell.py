@@ -379,6 +379,18 @@ def test_data_center_page_shows_only_raw_table_without_quality_panels() -> None:
     assert "asset_class" in js
 
 
+def test_data_center_backfill_column_follows_tushare_docs() -> None:
+    js = Path("quantlab/web/assets/data/datasets.js").read_text(encoding="utf-8")
+    css = Path("quantlab/web/assets/app.css").read_text(encoding="utf-8")
+    tushare = js.index('appendText(header, "span", null, "Tushare 接口")')
+    backfill = js.index('appendText(header, "span", null, "补数据")')
+    assert tushare < backfill
+    assert "startRawBackfill" in js
+    assert "/api/datasets/raw/${encodeURIComponent(interfaceName)}/backfill" in js
+    assert "/api/datasets/raw/backfill/" in js
+    assert "1.1fr .9fr .55fr .9fr 1.05fr .75fr .75fr auto 1fr .85fr auto" in css
+
+
 def test_file_config_dialog_shows_asset_directory_plan() -> None:
     js = Path("quantlab/web/assets/bootstrap.js").read_text(encoding="utf-8")
     css = Path("quantlab/web/assets/app.css").read_text()

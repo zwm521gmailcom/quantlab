@@ -243,7 +243,10 @@ button.factor-run-analysis {
 .dataset-version-row { display: grid; grid-template-columns: minmax(150px, .9fr) minmax(0, 1.6fr); gap: 12px; align-items: center; padding: 7px 9px; border: 1px solid var(--color-border-light); border-radius: var(--radius-md); background: var(--color-bg-input); }
 .dataset-version-row strong { overflow-wrap: anywhere; color: var(--color-text); font: 12px ui-monospace, monospace; }
 .dataset-version-row span { color: var(--color-text-muted); font-size: 12px; }
-.dataset-row { display: grid; grid-template-columns: 1.1fr .9fr .55fr .9fr 1.05fr .75fr .75fr auto 1fr .85fr; gap: 12px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--color-border-light); }
+.dataset-row { display: grid; grid-template-columns: 1.1fr .9fr .55fr .9fr 1.05fr .75fr .75fr auto 1fr .85fr auto; gap: 12px; align-items: center; padding: 13px 0; border-bottom: 1px solid var(--color-border-light); }
+.dataset-backfill { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dataset-backfill button { white-space: nowrap; }
+.backfill-note { color: var(--color-text-muted); font-size: 12px; }
 .dataset-header { font-family: var(--font-display); font-weight: 600; background: transparent; color: var(--color-text-secondary); }
 .dataset-name-cell { display: grid; gap: 3px; min-width: 0; }
 .dataset-name-cell strong { overflow-wrap: anywhere; color: var(--color-text); }

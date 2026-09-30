@@ -12,9 +12,10 @@ import urllib.error
 import urllib.request
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -249,6 +250,9 @@ class TushareDownloadService:
         self._rate_limiter = rate_limiter if rate_limiter is not None else TushareRateLimiter()
         budget_path = Path(settings.runtime_root) / "config" / "tushare_daily_budget.json"
         self._daily_budget = TushareDailyBudget(budget_path, daily_limit_per_api=8000)
+        self._backfill_guard = threading.Lock()
+        self._backfill_running = False
+        self._backfill_jobs: dict[str, dict[str, Any]] = {}
         if self._enforce_quota:
             self.apply_saved_quota()
 
@@ -493,6 +497,323 @@ class TushareDownloadService:
         pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), output)
         return {"rows": len(rows), "target": relative}
 
+    # doc_id=170: 单次最大 6000 行，超出是静默截断。打包预算留出余量。
+    _MONEYFLOW_ROW_CAP = 6000
+    _MONEYFLOW_PACK_BUDGET = 5800
+
+    def _moneyflow_windows(self, dates: list[str], row_hints: dict[str, int]) -> list[list[str]]:
+        """Pack adjacent trade dates only while estimated rows stay under the doc cap."""
+        windows: list[list[str]] = []
+        current: list[str] = []
+        used = 0
+        for date in dates:
+            hint = row_hints.get(date)
+            cost = int(hint) if hint is not None else self._MONEYFLOW_PACK_BUDGET
+            if cost < 1:
+                cost = 1
+            if current and used + cost > self._MONEYFLOW_PACK_BUDGET:
+                windows.append(current)
+                current = []
+                used = 0
+            current.append(date)
+            used += cost
+        if current:
+            windows.append(current)
+        return windows
+
+    def _calendar_covers(self, start_date: str, end_date: str) -> bool:
+        path = self.settings.raw_root / "trade_cal" / "calendar.parquet"
+        if not path.is_file():
+            return False
+        try:
+            dates = [str(value) for value in pq.read_table(path, columns=["cal_date"]).column("cal_date").to_pylist()]
+        except (OSError, KeyError):
+            return False
+        return bool(dates) and min(dates) <= start_date and max(dates) >= end_date
+
+    def _sse_open_dates(self, start_date: str, end_date: str) -> list[str]:
+        if not self._calendar_covers(start_date, end_date):
+            self.refresh_trade_cal(start_date, end_date)
+        path = self.settings.raw_root / "trade_cal" / "calendar.parquet"
+        frame = pq.read_table(path, columns=["exchange", "cal_date", "is_open"]).to_pandas()
+        mask = (frame["exchange"].astype(str) == "SSE") & (frame["is_open"].astype(int) == 1)
+        dates = sorted(str(value) for value in frame.loc[mask, "cal_date"] if start_date <= str(value) <= end_date)
+        return dates
+
+    def _moneyflow_row_hints(self, dates: list[str]) -> dict[str, int]:
+        daily = self.settings.raw_root / "daily"
+        hints: dict[str, int] = {}
+        if not daily.is_dir():
+            return hints
+        for date in dates:
+            path = daily / f"{date}.parquet"
+            if not path.is_file():
+                continue
+            try:
+                hints[date] = int(pq.ParquetFile(path).metadata.num_rows)
+            except OSError:
+                continue
+        return hints
+
+    def download_moneyflow(self, start_date: str, end_date: str) -> dict[str, Any]:
+        start_date = str(start_date or "").strip()
+        end_date = str(end_date or "").strip()
+        if not re.fullmatch(r"\d{8}", start_date) or not re.fullmatch(r"\d{8}", end_date):
+            raise ValueError("start_date、end_date 必须是 YYYYMMDD")
+        today = self._today_yyyymmdd()
+        if end_date > today:
+            end_date = today
+        if start_date > end_date:
+            raise ValueError("start_date cannot be after end_date")
+        if self._enforce_quota:
+            self.apply_saved_quota()
+        open_dates = self._sse_open_dates(start_date, end_date)
+        target = self.settings.raw_root / "moneyflow"
+        skipped = 0
+        runs: list[list[str]] = []
+        current: list[str] = []
+        for date in open_dates:
+            if (target / f"{date}.parquet").is_file():
+                skipped += 1
+                if current:
+                    runs.append(current)
+                    current = []
+                continue
+            current.append(date)
+        if current:
+            runs.append(current)
+        missing = [date for run in runs for date in run]
+        windows: list[list[str]] = []
+        hints = self._moneyflow_row_hints(missing)
+        for run in runs:
+            windows.extend(self._moneyflow_windows(run, hints))
+        target.mkdir(parents=True, exist_ok=True)
+        calls = 0
+        written_rows = 0
+        files = 0
+        stopped: str | None = None
+
+        def write_day(day: str, rows: list[dict[str, Any]]) -> None:
+            nonlocal written_rows, files
+            frame = pd.DataFrame(rows)
+            keys = [column for column in ("ts_code", "trade_date") if column in frame.columns]
+            if keys:
+                frame = frame.drop_duplicates(keys, keep="last")
+            pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), target / f"{day}.parquet")
+            written_rows += len(frame)
+            files += 1
+
+        def fetch(params: dict[str, Any]) -> list[dict[str, Any]] | None:
+            nonlocal calls, stopped
+            try:
+                rows = self._call("moneyflow", params)
+            except ValueError as error:
+                if "daily limit" in str(error):
+                    stopped = str(error)
+                    return None
+                raise
+            calls += 1
+            return rows
+
+        def fetch_day(day: str) -> list[dict[str, Any]] | None:
+            rows = fetch({"trade_date": day})
+            if rows is None:
+                return None
+            if len(rows) >= self._MONEYFLOW_ROW_CAP:
+                raise ValueError(f"moneyflow {day} 达到单次 6000 行上限（doc_id=170），拒绝写入不完整文件")
+            return rows
+
+        for window in windows:
+            if stopped:
+                break
+            if len(window) == 1:
+                rows = fetch_day(window[0])
+                if rows is None:
+                    break
+                if rows:
+                    write_day(window[0], rows)
+                continue
+            rows = fetch({"start_date": window[0], "end_date": window[-1]})
+            if rows is None:
+                break
+            by_date: dict[str, list[dict[str, Any]]] = {day: [] for day in window}
+            truncated = len(rows) >= self._MONEYFLOW_ROW_CAP
+            if not truncated:
+                for row in rows:
+                    day = str(row.get("trade_date") or "")
+                    if day in by_date:
+                        by_date[day].append(row)
+                if any(not by_date[day] for day in window):
+                    truncated = True
+            if truncated:
+                logger.warning(
+                    "moneyflow window %s-%s hit the 6000 row cap or dropped a date; refetch by trade_date",
+                    window[0],
+                    window[-1],
+                )
+                for day in window:
+                    if stopped:
+                        break
+                    day_rows = fetch_day(day)
+                    if day_rows is None:
+                        break
+                    if day_rows:
+                        write_day(day, day_rows)
+                continue
+            for day in window:
+                if by_date[day]:
+                    write_day(day, by_date[day])
+        if written_rows == 0 and skipped == 0 and not stopped:
+            raise ValueError("tushare returned no moneyflow rows")
+        result: dict[str, Any] = {
+            "rows": written_rows,
+            "target": "raw/moneyflow",
+            "calls": calls,
+            "skipped": skipped,
+            "files": files,
+        }
+        if stopped:
+            result["stopped"] = stopped
+        return result
+
+    def _period_end_dates(self, open_dates: list[str], freq: str) -> list[str]:
+        if freq not in {"week", "month"}:
+            raise ValueError("freq 必须是 week 或 month")
+        groups: dict[tuple[int, int], str] = {}
+        for day in open_dates:
+            current = datetime.strptime(day, "%Y%m%d")
+            key = current.isocalendar()[:2] if freq == "week" else (current.year, current.month)
+            previous = groups.get(key)
+            if previous is None or day > previous:
+                groups[key] = day
+        return [groups[key] for key in sorted(groups)]
+
+    def download_stk_week_month_adj(self, start_date: str, end_date: str, freq: str | None = None) -> dict[str, Any]:
+        start_date = str(start_date or "").strip()
+        end_date = str(end_date or "").strip()
+        if not re.fullmatch(r"\d{8}", start_date) or not re.fullmatch(r"\d{8}", end_date):
+            raise ValueError("start_date、end_date 必须是 YYYYMMDD")
+        freqs = ["week", "month"] if not freq else [str(freq)]
+        if any(item not in {"week", "month"} for item in freqs):
+            raise ValueError("freq 必须是 week 或 month")
+        today = self._today_yyyymmdd()
+        if end_date > today:
+            end_date = today
+        if start_date > end_date:
+            raise ValueError("start_date cannot be after end_date")
+        if self._enforce_quota:
+            self.apply_saved_quota()
+        open_dates = self._sse_open_dates(start_date, end_date)
+        target = self.settings.raw_root / "stk_week_month_adj"
+        target.mkdir(parents=True, exist_ok=True)
+        calls = 0
+        written_rows = 0
+        files = 0
+        skipped = 0
+        stopped: str | None = None
+
+        def write_file(name: str, rows: list[dict[str, Any]]) -> None:
+            nonlocal written_rows, files
+            frame = pd.DataFrame(rows)
+            keys = [column for column in ("ts_code", "trade_date", "freq") if column in frame.columns]
+            if keys:
+                frame = frame.drop_duplicates(keys, keep="last")
+            pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), target / name)
+            written_rows += len(frame)
+            files += 1
+
+        def fetch(params: dict[str, Any]) -> list[dict[str, Any]] | None:
+            nonlocal calls, stopped
+            try:
+                rows = self._call("stk_week_month_adj", params)
+            except ValueError as error:
+                if "daily limit" in str(error):
+                    stopped = str(error)
+                    return None
+                raise
+            calls += 1
+            return rows
+
+        for item in freqs:
+            if stopped:
+                break
+            ends = self._period_end_dates(open_dates, item)
+            missing: list[str] = []
+            for day in ends:
+                if (target / f"{item}_{day}.parquet").is_file():
+                    skipped += 1
+                else:
+                    missing.append(day)
+            if not missing:
+                continue
+            hints = self._moneyflow_row_hints(missing)
+            windows = self._moneyflow_windows(missing, hints)
+
+            def fetch_one(day: str, freq_name: str = item) -> list[dict[str, Any]] | None:
+                rows = fetch({"trade_date": day, "freq": freq_name})
+                if rows is None:
+                    return None
+                if len(rows) >= self._MONEYFLOW_ROW_CAP:
+                    raise ValueError(
+                        f"stk_week_month_adj {freq_name} {day} 达到单次 6000 行上限（doc_id=365），拒绝写入不完整文件"
+                    )
+                return rows
+
+            for window in windows:
+                if stopped:
+                    break
+                if len(window) == 1:
+                    rows = fetch_one(window[0])
+                    if rows is None:
+                        break
+                    if rows:
+                        write_file(f"{item}_{window[0]}.parquet", rows)
+                    continue
+                rows = fetch({"start_date": window[0], "end_date": window[-1], "freq": item})
+                if rows is None:
+                    break
+                by_date: dict[str, list[dict[str, Any]]] = {day: [] for day in window}
+                truncated = len(rows) >= self._MONEYFLOW_ROW_CAP
+                if not truncated:
+                    for row in rows:
+                        day = str(row.get("trade_date") or "")
+                        if day in by_date:
+                            by_date[day].append(row)
+                    if any(not by_date[day] for day in window):
+                        truncated = True
+                if truncated:
+                    logger.warning(
+                        "stk_week_month_adj %s %s-%s hit the 6000 row cap; refetch one period at a time",
+                        item,
+                        window[0],
+                        window[-1],
+                    )
+                    for day in window:
+                        if stopped:
+                            break
+                        day_rows = fetch_one(day)
+                        if day_rows is None:
+                            break
+                        if day_rows:
+                            write_file(f"{item}_{day}.parquet", day_rows)
+                    continue
+                for day in window:
+                    if by_date[day]:
+                        write_file(f"{item}_{day}.parquet", by_date[day])
+        if written_rows == 0 and skipped == 0 and not stopped:
+            raise ValueError("tushare returned no stk_week_month_adj rows")
+        result: dict[str, Any] = {
+            "rows": written_rows,
+            "target": "raw/stk_week_month_adj",
+            "calls": calls,
+            "skipped": skipped,
+            "files": files,
+            "freqs": freqs,
+        }
+        if stopped:
+            result["stopped"] = stopped
+        return result
+
     def download_suspend_d(self, start_date: str, end_date: str) -> dict[str, Any]:
         today = self._today_yyyymmdd()
         if end_date > today:
@@ -526,6 +847,313 @@ class TushareDownloadService:
                 pq.write_table(pa.Table.from_pylist(rows), output)
                 totals[status] = len(rows)
         return {"rows": totals}
+
+    _DATE_FILE_APIS = ("daily", "daily_basic", "adj_factor", "stk_limit")
+
+    def _stored_sse_open_dates(self) -> list[str]:
+        path = self.settings.raw_root / "trade_cal" / "calendar.parquet"
+        if not path.is_file():
+            return []
+        frame = pq.read_table(path, columns=["exchange", "cal_date", "is_open"]).to_pandas()
+        mask = (frame["exchange"].astype(str) == "SSE") & (frame["is_open"].astype(int) == 1)
+        return sorted(str(value) for value in frame.loc[mask, "cal_date"])
+
+    def backfill_cutoff(self, now: datetime) -> str:
+        """Last usable SSE session. Before 16:00 Shanghai, today is excluded."""
+        local = now.astimezone(ZoneInfo("Asia/Shanghai"))
+        today = local.strftime("%Y%m%d")
+        dates = self._stored_sse_open_dates()
+        if local.hour < 16:
+            dates = [day for day in dates if day < today]
+        else:
+            dates = [day for day in dates if day <= today]
+        if not dates:
+            raise ValueError("没有可用的截止交易日")
+        return dates[-1]
+
+    def submit_backfill(self, interface: str, *, now: datetime | None = None) -> dict[str, Any]:
+        """Start one background backfill. A second call is rejected until it finishes."""
+        if interface not in self._known_backfill_interfaces():
+            raise ValueError(f"未知接口 {interface}")
+        moment = now or datetime.now(ZoneInfo("Asia/Shanghai"))
+        job_id = uuid4().hex[:12]
+        with self._backfill_guard:
+            if self._backfill_running:
+                raise ValueError("已有补数在进行")
+            self._backfill_running = True
+            self._backfill_jobs[job_id] = {
+                "job_id": job_id,
+                "interface": interface,
+                "status": "running",
+                "processed": 0,
+                "total": 0,
+                "filled": 0,
+                "failed_dates": [],
+                "error": "",
+                "summary": "",
+            }
+        thread = threading.Thread(
+            target=self._run_backfill_job,
+            args=(job_id, interface, moment),
+            name=f"quantlab-backfill-{interface}",
+            daemon=True,
+        )
+        thread.start()
+        return {"job_id": job_id, "interface": interface, "status": "running"}
+
+    def backfill_job(self, job_id: str) -> dict[str, Any]:
+        with self._backfill_guard:
+            job = self._backfill_jobs.get(job_id)
+            if job is None:
+                raise ValueError("补数任务不存在")
+            return dict(job)
+
+    def _run_backfill_job(self, job_id: str, interface: str, now: datetime) -> None:
+        try:
+            result = self._backfill_one(interface, now)
+            self._write_backfill_job(job_id, status="succeeded", **self._backfill_view(result))
+        except Exception as error:
+            self._write_backfill_job(job_id, status="failed", error=str(error))
+        finally:
+            with self._backfill_guard:
+                self._backfill_running = False
+
+    def _write_backfill_job(self, job_id: str, **fields: Any) -> None:
+        with self._backfill_guard:
+            job = self._backfill_jobs.get(job_id)
+            if job is not None:
+                job.update(fields)
+
+    @staticmethod
+    def _backfill_view(result: dict[str, Any]) -> dict[str, Any]:
+        failed = [str(day) for day in result.get("failed") or []]
+        filled_dates = result.get("filled")
+        rows = result.get("rows")
+        if isinstance(filled_dates, list):
+            filled = int(result.get("done", len(filled_dates)) or 0)
+            total = len(filled_dates)
+            processed = filled + len(failed)
+            summary = "已是最新" if filled == 0 and not failed else f"补入 {filled} 个交易日"
+        elif isinstance(rows, dict):
+            filled = sum(int(value) for value in rows.values())
+            processed = total = len(rows)
+            summary = f"刷新 {filled} 行"
+        elif isinstance(rows, int):
+            filled = rows
+            processed = total = int(result.get("calls") or result.get("files") or (1 if filled else 0))
+            summary = "已是最新" if filled == 0 and int(result.get("calls") or 0) == 0 else f"刷新 {filled} 行"
+        else:
+            filled = int(result.get("calls") or 0)
+            processed = total = filled
+            summary = "已是最新" if str(result.get("status") or "") == "已是最新" or filled == 0 else f"补入 {filled} 个交易日"
+        if str(result.get("status") or "") == "已是最新":
+            summary = "已是最新"
+            filled = 0
+        stopped = str(result.get("stopped") or "")
+        return {
+            "processed": processed,
+            "total": total,
+            "filled": filled,
+            "failed_dates": failed,
+            "error": stopped,
+            "summary": summary,
+        }
+
+    def backfill(self, interface: str, *, now: datetime) -> dict[str, Any]:
+        """Fill one raw interface forward. Does not extend history before existing files."""
+        with self._backfill_guard:
+            if self._backfill_running:
+                raise ValueError("已有补数在进行")
+            self._backfill_running = True
+        try:
+            return self._backfill_one(interface, now)
+        finally:
+            with self._backfill_guard:
+                self._backfill_running = False
+
+    def _known_backfill_interfaces(self) -> set[str]:
+        return {
+            *self._DATE_FILE_APIS,
+            "moneyflow",
+            "suspend_d",
+            "index_daily",
+            "index_weight",
+            "stk_week_month_adj",
+            "stock_basic",
+            "index_basic",
+            "trade_cal",
+        }
+
+    def _backfill_one(self, interface: str, now: datetime) -> dict[str, Any]:
+        if interface not in self._known_backfill_interfaces():
+            raise ValueError(f"未知接口 {interface}")
+        cutoff = self.backfill_cutoff(now)
+        if interface in self._DATE_FILE_APIS:
+            return self._backfill_date_files(interface, cutoff)
+        if interface == "moneyflow":
+            return self._backfill_moneyflow(cutoff)
+        if interface == "suspend_d":
+            return self._backfill_suspend(cutoff)
+        if interface == "index_daily":
+            return self._backfill_index_daily(cutoff)
+        if interface == "index_weight":
+            return self._backfill_index_weight(cutoff)
+        if interface == "stk_week_month_adj":
+            return self._backfill_week_month(cutoff)
+        if interface == "stock_basic":
+            return self.refresh_stock_basic()
+        if interface == "index_basic":
+            return self.download_index_basic()
+        return self._backfill_trade_cal(cutoff)
+
+    def _file_dates(self, folder: Path) -> list[str]:
+        found: list[str] = []
+        if not folder.is_dir():
+            return found
+        for path in folder.glob("*.parquet"):
+            if re.fullmatch(r"\d{8}", path.stem):
+                found.append(path.stem)
+        return sorted(found)
+
+    def _open_after(self, start: str, cutoff: str) -> list[str]:
+        if start >= cutoff:
+            return []
+        return [day for day in self._sse_open_dates(start, cutoff) if day > start]
+
+    def _backfill_date_files(self, api_name: str, cutoff: str) -> dict[str, Any]:
+        folder = self.settings.raw_root / api_name
+        have = self._file_dates(folder)
+        if not have:
+            return {"interface": api_name, "calls": 0, "status": "已是最新", "filled": []}
+        missing = self._open_after(have[-1], cutoff)
+        if not missing:
+            return {"interface": api_name, "calls": 0, "status": "已是最新", "filled": []}
+        result = self.download_interface_dates(api_name, api_name, missing, pause=0)
+        result["interface"] = api_name
+        result["filled"] = missing
+        return result
+
+    def _backfill_moneyflow(self, cutoff: str) -> dict[str, Any]:
+        have = self._file_dates(self.settings.raw_root / "moneyflow")
+        if not have:
+            return {"interface": "moneyflow", "calls": 0, "status": "已是最新"}
+        missing = self._open_after(have[-1], cutoff)
+        if not missing:
+            return {"interface": "moneyflow", "calls": 0, "status": "已是最新"}
+        result = self.download_moneyflow(missing[0], cutoff)
+        result["interface"] = "moneyflow"
+        return result
+
+    def _max_column_date(self, path: Path, column: str) -> str | None:
+        if not path.is_file():
+            return None
+        try:
+            values = [str(value) for value in pq.read_table(path, columns=[column]).column(column).to_pylist() if value]
+        except (OSError, KeyError):
+            return None
+        return max(values) if values else None
+
+    def _backfill_suspend(self, cutoff: str) -> dict[str, Any]:
+        path = self.settings.raw_root / "suspend_d" / "suspend_d.parquet"
+        latest = self._max_column_date(path, "trade_date")
+        if latest is None or latest >= cutoff:
+            return {"interface": "suspend_d", "calls": 0, "status": "已是最新"}
+        missing = self._open_after(latest, cutoff)
+        if not missing:
+            return {"interface": "suspend_d", "calls": 0, "status": "已是最新"}
+        result = self.download_suspend_d(missing[0], cutoff)
+        result["interface"] = "suspend_d"
+        return result
+
+    def _index_code_from_stem(self, prefix: str, stem: str) -> str | None:
+        if not stem.startswith(prefix):
+            return None
+        body = stem[len(prefix) :]
+        if "_" not in body:
+            return None
+        left, right = body.rsplit("_", 1)
+        if not left or not right:
+            return None
+        return f"{left}.{right}"
+
+    def _backfill_index_daily(self, cutoff: str) -> dict[str, Any]:
+        folder = self.settings.raw_root / "index_daily"
+        calls = 0
+        if not folder.is_dir():
+            return {"interface": "index_daily", "calls": 0, "status": "已是最新"}
+        for path in sorted(folder.glob("index_daily_*.parquet")):
+            code = self._index_code_from_stem("index_daily_", path.stem)
+            latest = self._max_column_date(path, "trade_date")
+            if code is None or latest is None or latest >= cutoff:
+                continue
+            missing = self._open_after(latest, cutoff)
+            if not missing:
+                continue
+            self.refresh_index_daily(code, missing[0], cutoff)
+            calls += 1
+        return {"interface": "index_daily", "calls": calls, "status": "已是最新" if calls == 0 else "已补"}
+
+    def _completed_month_end(self, cutoff: str) -> str | None:
+        stored = self._stored_sse_open_dates()
+        dates = [day for day in stored if day <= cutoff]
+        if not dates:
+            return None
+        by_month: dict[str, list[str]] = {}
+        for day in dates:
+            by_month.setdefault(day[:6], []).append(day)
+        ends = [max(days) for days in by_month.values()]
+        cutoff_month = cutoff[:6]
+        if any(day > cutoff and day.startswith(cutoff_month) for day in stored):
+            ends = [day for day in ends if not day.startswith(cutoff_month)]
+        return max(ends) if ends else None
+
+    def _backfill_index_weight(self, cutoff: str) -> dict[str, Any]:
+        folder = self.settings.raw_root / "index_weight"
+        target = self._completed_month_end(cutoff)
+        calls = 0
+        if target is None or not folder.is_dir():
+            return {"interface": "index_weight", "calls": 0, "status": "已是最新", "target_date": target}
+        for path in sorted(folder.glob("index_weight_*.parquet")):
+            code = self._index_code_from_stem("index_weight_", path.stem)
+            latest = self._max_column_date(path, "trade_date")
+            if code is None or latest is None or latest >= target:
+                continue
+            start = (datetime.strptime(latest, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+            self.download_index_weight(code, start, target)
+            calls += 1
+        return {"interface": "index_weight", "calls": calls, "status": "已是最新" if calls == 0 else "已补", "target_date": target}
+
+    def _prefixed_dates(self, folder: Path, prefix: str) -> list[str]:
+        found: list[str] = []
+        if not folder.is_dir():
+            return found
+        for path in folder.glob(f"{prefix}_*.parquet"):
+            day = path.stem[len(prefix) + 1 :]
+            if re.fullmatch(r"\d{8}", day):
+                found.append(day)
+        return sorted(found)
+
+    def _backfill_week_month(self, cutoff: str) -> dict[str, Any]:
+        folder = self.settings.raw_root / "stk_week_month_adj"
+        weeks = self._prefixed_dates(folder, "week")
+        months = self._prefixed_dates(folder, "month")
+        if not weeks and not months:
+            return {"interface": "stk_week_month_adj", "calls": 0, "status": "已是最新"}
+        anchor = min(weeks[-1] if weeks else cutoff, months[-1] if months else cutoff)
+        missing = self._open_after(anchor, cutoff)
+        if not missing:
+            return {"interface": "stk_week_month_adj", "calls": 0, "status": "已是最新"}
+        result = self.download_stk_week_month_adj(missing[0], cutoff)
+        result["interface"] = "stk_week_month_adj"
+        return result
+
+    def _backfill_trade_cal(self, cutoff: str) -> dict[str, Any]:
+        year_end = cutoff[:4] + "1231"
+        if self._calendar_covers(cutoff, year_end):
+            return {"interface": "trade_cal", "calls": 0, "status": "已是最新"}
+        result = self.refresh_trade_cal(cutoff, year_end)
+        result["interface"] = "trade_cal"
+        return result
 
     def download_interface_dates(self, api_name: str, interface_dir: str, dates: list[str], pause: float = 0.35, max_retries: int = 3) -> dict[str, Any]:
         target_dir = self.settings.raw_root / interface_dir

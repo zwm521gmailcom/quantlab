@@ -51,6 +51,7 @@ async function loadDatasets() {
     appendText(header, "span", null, "质量");
     appendText(header, "span", null, "文件目录");
     appendText(header, "span", null, "Tushare 接口");
+    appendText(header, "span", null, "补数据");
     payload.items.forEach((item) => {
       const row = appendText(table, "div", "dataset-row", "");
       row.setAttribute("role", "row");
@@ -78,7 +79,17 @@ async function loadDatasets() {
       link.textContent = "接口文档 ↗";
       link.className = "raw-doc-link";
       linkCell.append(link);
+      const actionCell = appendText(row, "span", "dataset-backfill", "");
+      const backfillButton = document.createElement("button");
+      backfillButton.type = "button";
+      backfillButton.dataset.backfill = item.name;
+      backfillButton.textContent = "补数据";
+      backfillButton.addEventListener("click", () => startRawBackfill(item.name));
+      const note = document.createElement("small");
+      note.className = "backfill-note";
+      actionCell.append(backfillButton, note);
     });
+    applyBackfillButtons();
     bindTablePager(document.getElementById("dataset-pagination"), {
       page: payload.page || datasetPage,
       pages,
@@ -93,6 +104,69 @@ async function loadDatasets() {
     error.classList.remove("hidden");
   }
   result.classList.add("hidden");
+}
+
+let backfillState = null;
+let backfillTimer = null;
+
+function applyBackfillButtons() {
+  const running = Boolean(backfillState && backfillState.phase === "running");
+  document.querySelectorAll("[data-backfill]").forEach((button) => {
+    button.disabled = running;
+    button.textContent = running && button.dataset.backfill === backfillState.interface ? "补数中" : "补数据";
+    const note = button.parentElement && button.parentElement.querySelector(".backfill-note");
+    if (note) note.textContent = backfillState && button.dataset.backfill === backfillState.interface ? backfillState.note : "";
+  });
+}
+
+function backfillErrorMessage(payload, status) {
+  if (payload && payload.detail && payload.detail.message) return payload.detail.message;
+  return `HTTP ${status}`;
+}
+
+async function startRawBackfill(interfaceName) {
+  if (backfillState && backfillState.phase === "running") return;
+  backfillState = { interface: interfaceName, phase: "running", note: "", jobId: "" };
+  applyBackfillButtons();
+  try {
+    const response = await fetch(`/api/datasets/raw/${encodeURIComponent(interfaceName)}/backfill`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      backfillState = { interface: interfaceName, phase: "done", note: backfillErrorMessage(payload, response.status), jobId: "" };
+      applyBackfillButtons();
+      return;
+    }
+    backfillState.jobId = payload.job_id;
+    if (backfillTimer) clearInterval(backfillTimer);
+    backfillTimer = setInterval(() => { pollRawBackfill(); }, 2000);
+    await pollRawBackfill();
+  } catch (errorValue) {
+    backfillState = { interface: interfaceName, phase: "done", note: errorValue.message, jobId: "" };
+    applyBackfillButtons();
+  }
+}
+
+async function pollRawBackfill() {
+  if (!backfillState || backfillState.phase !== "running" || !backfillState.jobId) return;
+  const response = await fetch(`/api/datasets/raw/backfill/${encodeURIComponent(backfillState.jobId)}`);
+  const job = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (backfillTimer) clearInterval(backfillTimer);
+    backfillTimer = null;
+    backfillState = { interface: backfillState.interface, phase: "done", note: backfillErrorMessage(job, response.status), jobId: "" };
+    applyBackfillButtons();
+    return;
+  }
+  if (job.status === "running") return;
+  if (backfillTimer) clearInterval(backfillTimer);
+  backfillTimer = null;
+  const failed = Array.isArray(job.failed_dates) && job.failed_dates.length ? `，失败 ${job.failed_dates.join("、")}` : "";
+  let note = job.status === "failed" ? (job.error || "补数失败") : `${job.summary || ""}${failed}`;
+  if (job.status !== "failed" && job.error) note = note ? `${note}；${job.error}` : job.error;
+  const interfaceName = backfillState.interface;
+  backfillState = { interface: interfaceName, phase: "done", note, jobId: job.job_id || "" };
+  if (job.status === "succeeded") await loadDatasets();
+  else applyBackfillButtons();
 }
 
 
@@ -150,6 +224,94 @@ function appendIndexWeightDownload(panel, entityId, displayName) {
     } finally {
       downloadButton.disabled = false;
       downloadButton.textContent = "下载成分权重";
+    }
+  });
+  actions.append(hint, downloadButton);
+  panel.append(actions);
+}
+
+function appendStkWeekMonthAdjDownload(panel, entityId, displayName) {
+  const actions = document.createElement("div");
+  actions.className = "raw-files-actions";
+  const hint = document.createElement("p");
+  hint.className = "form-note";
+  hint.textContent = "接口 stk_week_month_adj（doc 365）。周线、月线一起下，写入 raw/stk_week_month_adj/week_YYYYMMDD.parquet 和 month_YYYYMMDD.parquet。只拉每周、每月最后一个交易日。单次最多 6000 行，跨周会被截断。频次和日总量按设置里的 Tushare 积分档；已有文件跳过，可重复点继续。";
+  const downloadButton = document.createElement("button");
+  downloadButton.type = "button";
+  downloadButton.className = "btn primary";
+  downloadButton.textContent = "下载周月线";
+  downloadButton.addEventListener("click", async () => {
+    const startDate = window.prompt("开始日期 YYYYMMDD", "19900101");
+    if (!startDate) return;
+    const endDate = window.prompt("结束日期 YYYYMMDD", todayYyyymmdd());
+    if (!endDate) return;
+    downloadButton.disabled = true;
+    downloadButton.textContent = "正在下载…";
+    try {
+      const downloadResponse = await fetch("/api/raw/download/stk_week_month_adj", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_date: startDate.trim(), end_date: endDate.trim() }),
+      });
+      const downloadPayload = await downloadResponse.json();
+      if (!downloadResponse.ok) {
+        window.alert(downloadPayload.message || downloadPayload.detail?.message || "下载失败");
+        return;
+      }
+      const skipped = downloadPayload.skipped || 0;
+      const summary = `写入 ${downloadPayload.rows} 行，跳过 ${skipped} 个已有周期，${downloadPayload.calls || 0} 次调用，${downloadPayload.target}`;
+      window.alert(downloadPayload.stopped ? `${summary}。已按设置中的日上限停止：${downloadPayload.stopped}` : `下载完成：${summary}`);
+      document.getElementById("raw-files-dialog")?.remove();
+      showRawInterfaceFiles(entityId, displayName);
+    } catch (errorValue) {
+      window.alert(`下载失败：${errorValue.message}`);
+    } finally {
+      downloadButton.disabled = false;
+      downloadButton.textContent = "下载周月线";
+    }
+  });
+  actions.append(hint, downloadButton);
+  panel.append(actions);
+}
+
+function appendMoneyflowDownload(panel, entityId, displayName) {
+  const actions = document.createElement("div");
+  actions.className = "raw-files-actions";
+  const hint = document.createElement("p");
+  hint.className = "form-note";
+  hint.textContent = "接口 moneyflow（doc 170）。按交易日写入 raw/moneyflow/YYYYMMDD.parquet。单次最多 6000 行，跨日会被截断，所以只在估算行数低于上限时合并相邻交易日。频次和日总量按设置里的 Tushare 积分档；已有文件跳过，可重复点继续。";
+  const downloadButton = document.createElement("button");
+  downloadButton.type = "button";
+  downloadButton.className = "btn primary";
+  downloadButton.textContent = "下载资金流向";
+  downloadButton.addEventListener("click", async () => {
+    const startDate = window.prompt("开始日期 YYYYMMDD", "20100101");
+    if (!startDate) return;
+    const endDate = window.prompt("结束日期 YYYYMMDD", todayYyyymmdd());
+    if (!endDate) return;
+    downloadButton.disabled = true;
+    downloadButton.textContent = "正在下载…";
+    try {
+      const downloadResponse = await fetch("/api/raw/download/moneyflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ start_date: startDate.trim(), end_date: endDate.trim() }),
+      });
+      const downloadPayload = await downloadResponse.json();
+      if (!downloadResponse.ok) {
+        window.alert(downloadPayload.message || downloadPayload.detail?.message || "下载失败");
+        return;
+      }
+      const skipped = downloadPayload.skipped || 0;
+      const summary = `写入 ${downloadPayload.rows} 行，跳过 ${skipped} 个已有交易日，${downloadPayload.calls || 0} 次调用，${downloadPayload.target}`;
+      window.alert(downloadPayload.stopped ? `${summary}。已按设置中的日上限停止：${downloadPayload.stopped}` : `下载完成：${summary}`);
+      document.getElementById("raw-files-dialog")?.remove();
+      showRawInterfaceFiles(entityId, displayName);
+    } catch (errorValue) {
+      window.alert(`下载失败：${errorValue.message}`);
+    } finally {
+      downloadButton.disabled = false;
+      downloadButton.textContent = "下载资金流向";
     }
   });
   actions.append(hint, downloadButton);
@@ -261,6 +423,22 @@ async function showRawInterfaceFiles(entityId, displayName) {
       panel.append(empty);
       appendIndexWeightDownload(panel, entityId, displayName);
     }
+    if (interfaceName === "moneyflow") {
+      loading.remove();
+      const empty = document.createElement("p");
+      empty.className = "raw-files-summary";
+      empty.textContent = "尚未下载任何资金流向文件。";
+      panel.append(empty);
+      appendMoneyflowDownload(panel, entityId, displayName);
+    }
+    if (interfaceName === "stk_week_month_adj") {
+      loading.remove();
+      const empty = document.createElement("p");
+      empty.className = "raw-files-summary";
+      empty.textContent = "尚未下载任何周月线文件。";
+      panel.append(empty);
+      appendStkWeekMonthAdjDownload(panel, entityId, displayName);
+    }
     if (interfaceName === "suspend_d") {
       loading.remove();
       const empty = document.createElement("p");
@@ -304,6 +482,12 @@ async function showRawInterfaceFiles(entityId, displayName) {
   }
   if (interfaceName === "index_weight") {
     appendIndexWeightDownload(panel, entityId, displayName);
+  }
+  if (interfaceName === "moneyflow") {
+    appendMoneyflowDownload(panel, entityId, displayName);
+  }
+  if (interfaceName === "stk_week_month_adj") {
+    appendStkWeekMonthAdjDownload(panel, entityId, displayName);
   }
   if (interfaceName === "suspend_d") {
     appendSuspendDDownload(panel, entityId, displayName);

@@ -46,6 +46,31 @@ def raw_download_index_weight(request: Request, body: dict[str, object] = Body(.
         raise HTTPException(status_code=400, detail=_error_payload("TUSHARE_DOWNLOAD_FAILED", str(error))) from error
 
 
+@router.post("/api/raw/download/stk_week_month_adj")
+def raw_download_stk_week_month_adj(request: Request, body: dict[str, object] = Body(...)) -> dict[str, object]:
+    try:
+        start_date = str(body.get("start_date") or "").strip()
+        end_date = str(body.get("end_date") or "").strip()
+        freq = str(body.get("freq") or "").strip() or None
+        if not start_date or not end_date:
+            raise ValueError("start_date、end_date 均为必填")
+        return request.app.state.tushare_download_service.download_stk_week_month_adj(start_date, end_date, freq)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=_error_payload("TUSHARE_DOWNLOAD_FAILED", str(error))) from error
+
+
+@router.post("/api/raw/download/moneyflow")
+def raw_download_moneyflow(request: Request, body: dict[str, object] = Body(...)) -> dict[str, object]:
+    try:
+        start_date = str(body.get("start_date") or "").strip()
+        end_date = str(body.get("end_date") or "").strip()
+        if not start_date or not end_date:
+            raise ValueError("start_date、end_date 均为必填")
+        return request.app.state.tushare_download_service.download_moneyflow(start_date, end_date)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=_error_payload("TUSHARE_DOWNLOAD_FAILED", str(error))) from error
+
+
 @router.post("/api/raw/download/suspend_d")
 def raw_download_suspend_d(request: Request, body: dict[str, object] = Body(...)) -> dict[str, object]:
     try:
@@ -126,6 +151,27 @@ def raw_datasets(
     total = len(items)
     start = (page - 1) * page_size
     return {"items": items[start:start + page_size], "total": total, "page": page, "page_size": page_size, "pages": max(1, (total + page_size - 1) // page_size)}
+
+
+@router.post("/api/datasets/raw/{interface}/backfill")
+def raw_backfill(request: Request, interface: str) -> dict[str, object]:
+    try:
+        return request.app.state.tushare_download_service.submit_backfill(interface)
+    except ValueError as error:
+        message = str(error)
+        busy = message == "已有补数在进行"
+        raise HTTPException(
+            status_code=409 if busy else 400,
+            detail=_error_payload("RAW_BACKFILL_BUSY" if busy else "RAW_BACKFILL_INVALID", message),
+        ) from error
+
+
+@router.get("/api/datasets/raw/backfill/{job_id}")
+def raw_backfill_job(request: Request, job_id: str) -> dict[str, object]:
+    try:
+        return request.app.state.tushare_download_service.backfill_job(job_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=_error_payload("RAW_BACKFILL_NOT_FOUND", str(error))) from error
 
 
 @router.get("/api/datasets/quality-alerts")
