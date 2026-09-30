@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>QuantLab · 结果档案</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20260913createdat">
+  <link rel="stylesheet" href="/assets/app.css?v=20260918archivewrap4">
 </head>
 <body>
 <div class="shell">
@@ -43,6 +43,8 @@
         <label>模型<input id="strategy" placeholder="模型名称或ID"></label>
         <label>测试开始<input id="dateFrom" type="date"></label>
         <label>测试结束<input id="dateTo" type="date"></label>
+        <label>门控<input id="gate" placeholder="如 MA150 或 000300.SH:150"></label>
+        <label>因子<input id="factor" placeholder="如 close_bias_20"></label>
         <button id="refresh" class="primary">查询</button>
         <a id="export" class="button-link" href="/api/backtests/runs.csv">导出清单</a>
       </div>
@@ -53,7 +55,7 @@
   </main>
 </div>
 <script src="/assets/table-pager.js?v=20260909pager"></script>
-<script src="/assets/backtest/archive.js?v=20260913createdat"></script>
-<script src="/assets/nav.js?v=20260911ver"></script>
+<script src="/assets/backtest/archive.js?v=20260918archivewrap4"></script>
+<script src="/assets/nav.js?v=20260930nojobs"></script>
 </body>
 </html>

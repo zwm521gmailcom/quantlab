@@ -292,6 +292,7 @@ const UNIVERSE_SNAPSHOT_OPTIONS = [
 
 function universeSnapshotText(config) {
   const raw = config && config.universe_index_codes;
+  if (Array.isArray(raw) && raw.length === 0) return "无成分约束（交易所范围内全 A）";
   const wanted = [];
   const seen = new Set();
   (Array.isArray(raw) ? raw : String(raw || "").split(/[,;，]/)).forEach((item) => {
@@ -380,6 +381,16 @@ function stepLabels(kind) {
   }
   return base;
 }
+function timingChip(label, value) {
+  const item = document.createElement("div");
+  item.className = "timing-chip";
+  const name = document.createElement("span");
+  name.textContent = label;
+  const time = document.createElement("b");
+  time.textContent = value;
+  item.append(name, time);
+  return item;
+}
 function renderStepTiming(d) {
   const total = q("timing-total");
   const target = q("step-timing");
@@ -393,24 +404,12 @@ function renderStepTiming(d) {
     return;
   }
   const labels = stepLabels((d.config || d.configuration || {}).kind);
-  const table = document.createElement("table");
-  table.className = "fold-table";
-  table.innerHTML = "<thead><tr><th>模块</th><th>耗时</th></tr></thead>";
-  const body = document.createElement("tbody");
   rows.forEach((step) => {
-    const tr = document.createElement("tr");
-    [
+    target.append(timingChip(
       step.step_label || labels[step.step_name] || step.step_name || "—",
       step.duration_display || "—",
-    ].forEach((value) => {
-      const td = document.createElement("td");
-      td.textContent = value;
-      tr.append(td);
-    });
-    body.append(tr);
+    ));
   });
-  table.append(body);
-  target.append(table);
 }
 
 function formatRssGiB(bytes) {
@@ -426,7 +425,11 @@ function renderResourceSummary(d) {
   const peak = formatRssGiB(resources.peak_rss_bytes);
   const fold = resources.fold_workers == null || resources.fold_workers === "" ? "—" : String(resources.fold_workers);
   const bucket = resources.bucket_workers == null || resources.bucket_workers === "" ? "—" : String(resources.bucket_workers);
-  target.textContent = `峰值内存 ${peak} · 折并行 ${fold} · 分层 ${bucket}`;
+  target.replaceChildren(
+    timingChip("峰值内存", peak),
+    timingChip("折并行", fold),
+    timingChip("分层", bucket),
+  );
 }
 
 function renderAnnualSummary(d) {
@@ -456,6 +459,165 @@ function renderAnnualSummary(d) {
   target.append(table);
 }
 
+const TRADE_COLUMNS = [
+  ["signal_date", "信号日", "date"],
+  ["instrument", "股票", "text"],
+  ["buy_date", "买入日", "date"],
+  ["sell_date", "卖出日", "date"],
+  ["status", "状态", "status"],
+  ["quantity", "数量", "int"],
+  ["buy_price", "买入价", "price"],
+  ["sell_price", "卖出价", "price"],
+  ["buy_amount", "买入金额", "money"],
+  ["sell_amount", "卖出金额", "money"],
+  ["buy_fee", "买入费用", "money"],
+  ["sell_fee", "卖出费用", "money"],
+  ["stamp_tax", "印花税", "money"],
+  ["pnl", "盈亏", "pnl"],
+  ["reason", "原因", "reason"],
+];
+
+function formatTradeDate(value) {
+  const text = String(value || "").replace(/-/g, "");
+  if (/^\d{8}$/.test(text)) return text.slice(0, 4) + "-" + text.slice(4, 6) + "-" + text.slice(6, 8);
+  return value ? String(value) : "—";
+}
+
+function formatTradeNumber(value, digits) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return number.toLocaleString("zh-CN", {minimumFractionDigits: digits, maximumFractionDigits: digits});
+}
+
+function tradeCell(row, key, kind) {
+  const value = row[key];
+  if (kind === "date") return formatTradeDate(value);
+  if (kind === "status") {
+    if (value === "filled") return "已成交";
+    if (value === "unfilled") return "未成交";
+    return value ? String(value) : "—";
+  }
+  if (kind === "reason") {
+    if (value === "suspended_or_limit") return "停牌或涨跌停";
+    return value ? String(value) : "—";
+  }
+  if (kind === "int") {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number).toLocaleString("zh-CN") : "—";
+  }
+  if (kind === "price") return formatTradeNumber(value, 3);
+  if (kind === "money" || kind === "pnl") return formatTradeNumber(value, 2);
+  return value == null || value === "" ? "—" : String(value);
+}
+
+function displayTrade(row) {
+  const side = row && row.side;
+  if (side !== "buy" && side !== "sell") return row;
+  const view = Object.assign({}, row);
+  if (side === "buy") {
+    if (view.buy_price == null) view.buy_price = row.price;
+    if (view.buy_amount == null) view.buy_amount = row.amount;
+    if (view.buy_fee == null) view.buy_fee = row.fee;
+    return view;
+  }
+  if (view.sell_date == null) view.sell_date = row.date;
+  if (view.sell_price == null) view.sell_price = row.price;
+  if (view.sell_amount == null) view.sell_amount = row.amount;
+  if (view.sell_fee == null) view.sell_fee = row.fee;
+  return view;
+}
+
+function renderTradeTable(host, rows) {
+  const list = (Array.isArray(rows) ? rows : []).map(displayTrade);
+  host.replaceChildren();
+  const summary = document.createElement("p");
+  summary.className = "muted";
+  summary.textContent = list.length ? list.length + " 笔" : "没有成交。";
+  host.append(summary);
+  if (!list.length) return;
+  const showReason = list.some((row) => row && row.reason);
+  const columns = TRADE_COLUMNS.filter((column) => column[0] !== "reason" || showReason);
+  const wrap = document.createElement("div");
+  wrap.className = "trade-table-wrap";
+  const table = document.createElement("table");
+  table.className = "fold-table trade-table";
+  const head = document.createElement("tr");
+  columns.forEach((column) => {
+    const cell = document.createElement("th");
+    cell.textContent = column[1];
+    if (column[2] !== "date" && column[2] !== "text" && column[2] !== "status" && column[2] !== "reason") cell.className = "num";
+    head.append(cell);
+  });
+  const thead = document.createElement("thead");
+  thead.append(head);
+  const body = document.createElement("tbody");
+  list.forEach((row) => {
+    const line = document.createElement("tr");
+    columns.forEach((column) => {
+      const cell = document.createElement("td");
+      cell.textContent = tradeCell(row, column[0], column[2]);
+      if (column[2] === "int" || column[2] === "price" || column[2] === "money" || column[2] === "pnl") cell.className = "num";
+      if (column[2] === "pnl") {
+        const number = Number(row[column[0]]);
+        if (number > 0) cell.classList.add("trade-pnl-pos");
+        if (number < 0) cell.classList.add("trade-pnl-neg");
+      }
+      line.append(cell);
+    });
+    body.append(line);
+  });
+  table.append(thead, body);
+  wrap.append(table);
+  host.append(wrap);
+}
+
+function isTradeArtifact(artifact) {
+  return artifact.artifact_role === "trades" || artifact.original_name === "trades.json" || artifact.display_name === "成交明细";
+}
+
+function renderArtifacts(artifacts) {
+  const host = q("artifacts");
+  host.replaceChildren();
+  if (!artifacts.length) {
+    host.textContent = "尚未生成";
+    return;
+  }
+  const trade = artifacts.find(isTradeArtifact);
+  artifacts.filter((artifact) => artifact !== trade).forEach((artifact) => {
+    const row = document.createElement("div");
+    const link = document.createElement("a");
+    link.href = "/api/artifacts/" + artifact.artifact_id + "/download";
+    link.textContent = artifact.display_name || artifact.original_name || "文件";
+    row.append(link, document.createTextNode(" · " + (artifact.original_name || "") + " · " + (artifact.size_bytes || 0) + " bytes"));
+    host.append(row);
+  });
+  if (!trade) return;
+  const block = document.createElement("div");
+  block.className = "trade-block";
+  const title = document.createElement("h3");
+  title.textContent = "成交明细";
+  const meta = document.createElement("p");
+  meta.className = "muted";
+  const download = document.createElement("a");
+  download.href = "/api/artifacts/" + trade.artifact_id + "/download";
+  download.textContent = "下载";
+  meta.append(document.createTextNode((trade.original_name || "trades.json") + " · " + (trade.size_bytes || 0) + " bytes · "), download);
+  const tableHost = document.createElement("div");
+  tableHost.id = "trade-table";
+  tableHost.textContent = "正在加载成交明细…";
+  block.append(title, meta, tableHost);
+  host.append(block);
+  fetch("/api/artifacts/" + encodeURIComponent(trade.artifact_id) + "/download")
+    .then((response) => {
+      if (!response.ok) throw new Error("load failed");
+      return response.json();
+    })
+    .then((payload) => renderTradeTable(tableHost, payload))
+    .catch(() => {
+      tableHost.textContent = "成交明细没有读出来。";
+    });
+}
+
 async function load() {
   const r = await fetch("/api/backtests/runs/" + encodeURIComponent(id));
   const d = await r.json();
@@ -468,6 +630,19 @@ async function load() {
   const totalText = d.timing && d.timing.duration_display && d.timing.duration_display !== "—" ? " · 总耗时 " + d.timing.duration_display : "";
   q("identity").textContent = d.run_id + " · " + d.status_name + " · 创建 " + d.created_at + (d.finished_at ? " · 完成 " + d.finished_at : "") + totalText + (d.machine_id ? " · 机器 " + d.machine_id : "");
   const c = d.configuration || {};
+  const noteText = String(c.note || d.note || "").trim();
+  const noteEl = q("run-note");
+  if (noteEl) {
+    if (noteText) {
+      noteEl.hidden = false;
+      noteEl.textContent = noteText;
+      noteEl.title = noteText;
+    } else {
+      noteEl.hidden = true;
+      noteEl.textContent = "";
+      noteEl.removeAttribute("title");
+    }
+  }
   q("summary").innerHTML = (fail ? `<p class="state error">${esc(fail)}</p>` : "")
     + Object.entries(d.metrics).map(([k, v]) => `<span class="metric"><b>${esc(metricLabels[k] || k)}</b> ${esc(v.display)}</span>`).join("")
     + ruleRawMetricHtml(d.metrics_raw)
@@ -488,6 +663,7 @@ async function load() {
   const isRule = isRuleSignal(c);
   const snapshot = [
     ["运行名称", d.name],
+    ["备注", noteText || "—"],
     ["数据快照", c.dataset_id + " · " + c.dataset_version_id],
     ["股票范围", c.stock_scope || "—"],
     ["选股范围", universeSnapshotText(c)],
@@ -500,6 +676,8 @@ async function load() {
     snapshot.push(
       ["Top N / 权重", (c.top_n != null ? c.top_n : "—") + " / " + (c.weighting || "—")],
       ["调仓间隔", c.rebalance_every != null ? c.rebalance_every + " 个交易日" : "—"],
+      ["调仓方式", c.rebalance_mode === "target_weight" ? "目标权重" : "槽位到期"],
+      ["持仓天数", c.holding_days != null ? String(c.holding_days) : "—"],
       ["买入 / 卖出", (c.buy_price || "—") + " / " + (c.sell_price || "—")],
       ["训练方式", "规则信号（不训练）"],
       ["基准", c.benchmark || "—"],
@@ -510,6 +688,8 @@ async function load() {
       ["模型", ((c.model && (c.model.name || c.model.entity_id)) || "—") + " · " + ((c.model && c.model.version_id) || "—")],
       ["Top N / 权重", (c.top_n != null ? c.top_n : "—") + " / " + (c.weighting || "—")],
       ["调仓间隔", c.rebalance_every != null ? c.rebalance_every + " 个交易日" : "—"],
+      ["调仓方式", c.rebalance_mode === "target_weight" ? "目标权重" : "槽位到期"],
+      ["持仓天数", c.holding_days != null ? String(c.holding_days) : "—"],
       ["买入 / 卖出", (c.buy_price || "—") + " / " + (c.sell_price || "—")],
       ["训练方式", walkForwardLabel(c.walk_forward || (c.hyperparameters && c.hyperparameters.walk_forward))],
       ["基准", c.benchmark || "—"],
@@ -560,7 +740,7 @@ async function load() {
   ];
   q("traceability").innerHTML = traceHtml(trace);
   q("run-directory").textContent = [d.results_root || "尚未生成结果目录", (d.artifacts || []).map((a) => "└─ " + a.original_name + " · " + (a.size_bytes || 0) + " bytes")].flat().join("\n");
-  q("artifacts").innerHTML = (d.artifacts || []).map((a) => `<div><a href="${esc("/api/artifacts/" + a.artifact_id + "/download")}">${esc(a.display_name)}</a> · ${esc(a.original_name)} · ${esc(a.size_bytes)} bytes</div>`).join("") || "尚未生成";
+  renderArtifacts(d.artifacts || []);
   q("copy").onclick = async () => {
     const x = await fetch(d.actions.copy_config_url, {method: "POST"});
     const y = await x.json();

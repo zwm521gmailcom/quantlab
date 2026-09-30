@@ -276,8 +276,14 @@ class FactorDataService:
         return created
 
     @staticmethod
-    def _footer_stats(path: Path, field: str) -> dict[str, Any]:
-        parquet = pq.ParquetFile(path)
+    def _footer_stats(path: Path, field: str, opened: dict[str, Any] | None = None) -> dict[str, Any]:
+        key = str(path)
+        if opened is not None and key in opened:
+            parquet = opened[key]
+        else:
+            parquet = pq.ParquetFile(path)
+            if opened is not None:
+                opened[key] = parquet
         names = parquet.schema_arrow.names
         if field not in names:
             raise ValueError(f"factor field is missing from dataset: {field}")
@@ -307,13 +313,14 @@ class FactorDataService:
                 for row in connection.execute("SELECT entity_id, name, asset_class FROM factors")
             }
         items: list[dict[str, Any]] = []
+        opened: dict[str, Any] = {}
         for factor_id in FEATURE_FIELDS:
             try:
                 binding = self._dataset_binding(factor_id)
             except ValueError:
                 continue
             try:
-                stats = self._footer_stats(self.settings.require_read_path(binding["path"]), factor_id)
+                stats = self._footer_stats(self.settings.require_read_path(binding["path"]), factor_id, opened)
                 quality_status = binding["quality_status"]
             except (ValueError, OSError):
                 stats = {"row_count": binding["row_count"], "missing_rows": None, "coverage": None}
@@ -364,11 +371,11 @@ class FactorDataService:
             factor_id = factor_entity_id.removeprefix("factor_") if factor_entity_id.startswith("factor_") else factor_entity_id
             try:
                 path = self.settings.require_read_path(row["path"])
-                stats = self._footer_stats(path, factor_id)
+                stats = self._footer_stats(path, factor_id, opened)
             except (ValueError, OSError):
                 sidecar = self.settings.resolve_user_path(row["path"]).parent / "derived" / "canonical_pack_factors.parquet"
                 try:
-                    stats = self._footer_stats(self.settings.require_read_path(sidecar), factor_id)
+                    stats = self._footer_stats(self.settings.require_read_path(sidecar), factor_id, opened)
                 except (ValueError, OSError):
                     stats = {"row_count": row["row_count"], "missing_rows": None, "coverage": None}
             metadata = json.loads(row["metadata_json"] or "{}")

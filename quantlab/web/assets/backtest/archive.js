@@ -8,19 +8,22 @@ const COLUMNS = [
   {key: "created_at", label: "创建时间", type: "date"},
   {key: "strategy", label: "模型 / 因子", type: "text"},
   {key: "date_from", label: "测试区间", type: "date"},
+  {key: "metrics", label: "指标", type: "metrics"},
+  {key: "", label: "操作"},
+];
+const METRIC_SORTS = [
   {key: "return", label: "累计收益", type: "number"},
   {key: "annual_return", label: "年化", type: "number"},
   {key: "sharpe", label: "夏普", type: "number"},
   {key: "max_drawdown", label: "最大回撤", type: "number"},
   {key: "win_rate", label: "胜率", type: "number"},
   {key: "benchmark", label: "基准", type: "text"},
-  {key: "", label: "操作"},
 ];
 
 function params() {
   const query = new URLSearchParams({page, page_size: pageSize, sort: sortKey, order: sortDir});
-  for (const [key, id] of [["q", "query"], ["status", "status"], ["strategy", "strategy"], ["date_from", "dateFrom"], ["date_to", "dateTo"]]) {
-    if ($(id).value) query.set(key, $(id).value);
+  for (const [key, id] of [["q", "query"], ["status", "status"], ["strategy", "strategy"], ["date_from", "dateFrom"], ["date_to", "dateTo"], ["gate", "gate"], ["factor", "factor"]]) {
+    if ($(id)?.value) query.set(key, $(id).value);
   }
   const exportQuery = new URLSearchParams(query);
   exportQuery.delete("page");
@@ -35,19 +38,27 @@ function fmtTime(value) {
   return match ? `${match[1]} ${match[2]}` : (text || "—");
 }
 
-function metricCell(item, key) {
+function columnByKey(key) {
+  return COLUMNS.find((column) => column.key === key) || METRIC_SORTS.find((column) => column.key === key);
+}
+
+function metricLine(item, key, label) {
+  const line = document.createElement("div");
+  const name = document.createElement("span");
+  name.textContent = label;
+  const value = document.createElement("strong");
   const metric = item.metrics?.[key];
-  const cell = document.createElement("td");
   const display = metric?.display || "未生成";
-  cell.className = "archive-num";
-  cell.textContent = display;
+  value.className = "archive-num";
+  value.textContent = display;
   if (display === "未生成" || metric?.value == null || metric?.value === "") {
-    cell.classList.add("is-empty");
-    return cell;
+    value.classList.add("is-empty");
+  } else {
+    const number = Number(metric.value);
+    if (!Number.isNaN(number) && number !== 0) value.classList.add(number < 0 ? "is-neg" : "is-pos");
   }
-  const number = Number(metric.value);
-  if (!Number.isNaN(number) && number !== 0) cell.classList.add(number < 0 ? "is-neg" : "is-pos");
-  return cell;
+  line.append(name, value);
+  return line;
 }
 
 function resetArchiveDelete(button) {
@@ -96,8 +107,8 @@ function textCell(text, className) {
 }
 
 function setSort(key) {
-  const column = COLUMNS.find((item) => item.key === key);
-  if (!column || !column.key) return;
+  const column = columnByKey(key);
+  if (!column || !column.key || column.type === "metrics") return;
   const first = column.type === "text" ? "asc" : "desc";
   const second = first === "desc" ? "asc" : "desc";
   if (sortKey !== key) {
@@ -134,6 +145,24 @@ async function load() {
     const th = document.createElement("th");
     if (!column.key) {
       th.textContent = column.label;
+      headRow.append(th);
+      return;
+    }
+    if (column.type === "metrics") {
+      th.className = "archive-metrics-head";
+      const inner = document.createElement("div");
+      inner.className = "archive-metrics-head-inner";
+      METRIC_SORTS.forEach((metric) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = metric.label;
+        button.dataset.sort = metric.key;
+        button.setAttribute("title", "按" + metric.label + "排序");
+        button.setAttribute("aria-sort", sortKey === metric.key ? (sortDir === "asc" ? "ascending" : "descending") : "none");
+        button.addEventListener("click", () => setSort(metric.key));
+        inner.append(button);
+      });
+      th.append(inner);
       headRow.append(th);
       return;
     }
@@ -190,6 +219,14 @@ async function load() {
     meta.className = "archive-meta";
     meta.textContent = "创建 " + fmtTime(item.created_at);
     block.append(top, name, meta);
+    const noteText = String(item.note || "").trim();
+    if (noteText) {
+      const note = document.createElement("div");
+      note.className = "archive-meta";
+      note.textContent = noteText;
+      note.title = noteText;
+      block.append(note);
+    }
     run.append(block);
     row.append(run);
 
@@ -199,7 +236,7 @@ async function load() {
     const strategyName = document.createElement("div");
     strategyName.textContent = item.strategy?.name || "未登记模型";
     const factors = document.createElement("small");
-    const factorText = (item.factors || []).filter(Boolean).join("、");
+    const factorText = (item.factors || []).filter(Boolean).join("、").replace(/_/g, "_\u200b");
     factors.textContent = factorText || "未选因子";
     factors.title = factors.textContent;
     stack.append(strategyName, factors);
@@ -214,10 +251,25 @@ async function load() {
     toLine.textContent = item.test_window?.date_to || "—";
     windowCell.append(fromLine, toLine);
     row.append(windowCell);
-    for (const key of ["return", "annual_return", "sharpe", "max_drawdown", "win_rate"]) {
-      row.append(metricCell(item, key));
+    const metricsCell = document.createElement("td");
+    const metrics = document.createElement("div");
+    metrics.className = "archive-metrics";
+    for (const metric of METRIC_SORTS) {
+      if (metric.key === "benchmark") {
+        const line = document.createElement("div");
+        const name = document.createElement("span");
+        name.textContent = metric.label;
+        const value = document.createElement("strong");
+        value.className = "archive-bench";
+        value.textContent = item.benchmark || "—";
+        line.append(name, value);
+        metrics.append(line);
+        continue;
+      }
+      metrics.append(metricLine(item, metric.key, metric.label));
     }
-    row.append(textCell(item.benchmark || "—", "archive-bench"));
+    metricsCell.append(metrics);
+    row.append(metricsCell);
 
     const actionsCell = document.createElement("td");
     const actions = document.createElement("div");

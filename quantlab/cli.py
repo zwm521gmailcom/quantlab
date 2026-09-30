@@ -35,6 +35,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     _add_root_arguments(verify)
     materialize = subparsers.add_parser("materialize-pack-factors")
     _add_root_arguments(materialize)
+    materialize_moneyflow = subparsers.add_parser("materialize-moneyflow-factors")
+    _add_root_arguments(materialize_moneyflow)
+    register_pack = subparsers.add_parser("register-pack-factors")
+    _add_root_arguments(register_pack)
+    register_pack.add_argument("--field", action="append", dest="fields")
+    register_moneyflow = subparsers.add_parser("register-moneyflow-factors")
+    _add_root_arguments(register_moneyflow)
+    register_alpha = subparsers.add_parser("register-alpha191-factors")
+    _add_root_arguments(register_alpha)
+    append_alpha = subparsers.add_parser("append-alpha191-factors")
+    _add_root_arguments(append_alpha)
     args = parser.parse_args(argv)
     explicit_roots = {
         name: value
@@ -79,6 +90,67 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"wrote {settings.display_path(settings.data_root / result['path'])} "
             f"({result['rows']} rows, {len(result['fields'])} fields)"
+        )
+        return 0
+    if args.command == "materialize-moneyflow-factors":
+        from quantlab.services.moneyflow_factors import materialize_moneyflow_factors
+
+        result = materialize_moneyflow_factors(
+            settings.data_root / "canonical.parquet",
+            settings.raw_root,
+            progress=lambda field, index, total: print(f"{index}/{total} {field}", flush=True),
+        )
+        print(
+            f"wrote {settings.display_path(settings.data_root / result['path'])} "
+            f"({result['rows']} rows, {len(result['fields'])} fields)"
+        )
+        return 0
+    if args.command == "register-pack-factors":
+        from quantlab.repositories.factors import FactorRepository
+        from quantlab.services.canonical_factor_pack import register_canonical_pack_factors
+
+        database = Database(settings.database_path)
+        result = register_canonical_pack_factors(
+            FactorRepository(settings, database),
+            fields=args.fields,
+        )
+        print(
+            f"published {result['published_count']}, skipped {result['skipped_count']}, "
+            f"failed {result['failed_count']}"
+        )
+        return 0 if result["failed_count"] == 0 else 1
+    if args.command == "register-moneyflow-factors":
+        from quantlab.repositories.factors import FactorRepository
+        from quantlab.services.moneyflow_factors import register_moneyflow_factors
+
+        database = Database(settings.database_path)
+        result = register_moneyflow_factors(FactorRepository(settings, database))
+        print(
+            f"published {result['published_count']}, skipped {result['skipped_count']}, "
+            f"failed {result['failed_count']}"
+        )
+        return 0 if result["failed_count"] == 0 else 1
+    if args.command == "register-alpha191-factors":
+        from quantlab.repositories.factors import FactorRepository
+        from quantlab.services.canonical_factor_pack import register_alpha191_factors
+
+        database = Database(settings.database_path)
+        result = register_alpha191_factors(FactorRepository(settings, database))
+        print(
+            f"published {result['published_count']}, skipped {result['skipped_count']}, "
+            f"failed {result['failed_count']}"
+        )
+        return 0 if result["failed_count"] == 0 else 1
+    if args.command == "append-alpha191-factors":
+        from quantlab.services.canonical_pack_factors import append_alpha191_factors
+
+        result = append_alpha191_factors(
+            settings.data_root / "canonical.parquet",
+            progress=lambda field, index, total: print(f"{index}/{total} {field}", flush=True),
+        )
+        print(
+            f"wrote {settings.display_path(settings.data_root / result['path'])} "
+            f"({result['rows']} rows, added {len(result['added'])})"
         )
         return 0
     baseline = settings.runtime_root / "baselines/authoritative-data.json"

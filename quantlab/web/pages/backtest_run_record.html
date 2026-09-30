@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>QuantLab · 运行记录</title>
-  <link rel="stylesheet" href="/assets/app.css?v=20260911navadapt3">
+  <link rel="stylesheet" href="/assets/app.css?v=20260923timing">
 </head>
 <body>
 <div class="shell">
@@ -13,16 +13,20 @@
     <nav><a href="/backtests/runs">← 结果档案</a></nav>
     <h2 id="title">运行记录</h2>
     <p id="identity">加载中…</p>
+    <p id="run-note" class="run-note" hidden></p>
     <section class="panel">
       <h3>状态与指标</h3>
       <div id="summary" aria-live="polite">加载中…</div>
     </section>
-    <section class="panel">
-      <h3>模块耗时</h3>
-      <p class="muted" id="timing-total">总耗时：—</p>
-      <div id="step-timing"></div>
-      <h3>运算资源</h3>
-      <p class="muted" id="resource-summary">峰值内存 — · 折并行 — · 分层 —</p>
+    <section class="panel run-timing">
+      <div class="equity-head">
+        <h3>模块耗时</h3>
+        <p class="muted" id="timing-total">总耗时：—</p>
+      </div>
+      <div class="timing-strip">
+        <div id="step-timing" class="timing-row"></div>
+        <div id="resource-summary" class="timing-row" aria-label="运算资源"></div>
+      </div>
     </section>
     <section class="panel">
       <div class="equity-head">
@@ -97,7 +101,7 @@
   </main>
 </div>
 <script src="/assets/vendor/lightweight-charts.standalone.production.js"></script>
-<script src="/assets/backtest/run-record.js?v=20260917speed"></script>
-<script src="/assets/nav.js?v=20260911ver"></script>
+<script src="/assets/backtest/run-record.js?v=20260923blotter"></script>
+<script src="/assets/nav.js?v=20260930nojobs"></script>
 </body>
 </html>

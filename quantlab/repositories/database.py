@@ -182,6 +182,9 @@ class Database:
                 END;
                 """
             )
+        from quantlab.services.backtest_summary import backfill_backtest_summaries
+
+        backfill_backtest_summaries(self)
 
     def register_run(self, run_id: str, run_type: str) -> None:
         validate_run_id(run_id)

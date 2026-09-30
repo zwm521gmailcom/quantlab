@@ -22,6 +22,7 @@ SEGMENT_DIMENSIONS = (
     ("float_market_cap", "by_float_market_cap", CAP_BUCKET_LABELS),
     ("turn", "by_turn", TURN_BUCKET_LABELS),
 )
+SEGMENT_FIELDS = {field for field, _key, _labels in SEGMENT_DIMENSIONS}
 
 _WORKER_FRAME: pd.DataFrame | None = None
 _WORKER_CONFIG: dict[str, Any] | None = None
@@ -76,6 +77,45 @@ def assign_daily_quintiles(frame: pd.DataFrame, field: str) -> pd.Series:
         out[finite_idx[valid]] = codes[valid].astype(np.int8)
     series = pd.Series(out, index=frame.index, dtype="Int64")
     return series.mask(series < 1)
+
+
+def normalize_segment_limit(raw: Any) -> dict[str, Any] | None:
+    if raw in (None, "", {}, False):
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError("分层限制要填字段和档位")
+    field = str(raw.get("field") or "").strip()
+    if field not in SEGMENT_FIELDS:
+        raise ValueError("分层限制只允许流通市值或换手")
+    try:
+        bucket = int(raw.get("bucket"))
+    except (TypeError, ValueError) as error:
+        raise ValueError("分层档位要填 1 到 5") from error
+    if bucket < 1 or bucket > 5:
+        raise ValueError("分层档位要填 1 到 5")
+    return {"field": field, "bucket": bucket}
+
+
+def filter_rows_to_segment(frame: pd.DataFrame, rows: pd.DataFrame, config: dict[str, Any] | None) -> pd.DataFrame:
+    """Keep backtest rows whose same-day quintile matches the limit. Training rows stay untouched."""
+    spec = normalize_segment_limit((config or {}).get("segment_limit"))
+    if spec is None or rows is None or getattr(rows, "empty", True):
+        return rows
+    if frame is None or getattr(frame, "empty", True) or "date" not in frame.columns or "instrument" not in frame.columns:
+        return rows.iloc[0:0].copy()
+    buckets = assign_daily_quintiles(frame, spec["field"])
+    keys = pd.DataFrame(
+        {
+            "_date": frame["date"].map(_norm_date),
+            "_instrument": frame["instrument"].astype(str),
+            "_bucket": buckets.to_numpy(),
+        }
+    )
+    aligned = rows.copy()
+    aligned["_date"] = aligned["date"].map(_norm_date)
+    aligned["_instrument"] = aligned["instrument"].astype(str)
+    merged = aligned.merge(keys, on=["_date", "_instrument"], how="left")
+    return rows.loc[merged["_bucket"].eq(spec["bucket"]).to_numpy()].copy()
 
 
 def predictions_by_bucket(

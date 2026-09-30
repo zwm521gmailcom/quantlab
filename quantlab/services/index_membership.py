@@ -113,14 +113,16 @@ UNIVERSE_PRESETS: dict[str, tuple[str, ...]] = {
 
 
 def parse_universe_index_codes(value: object | None) -> tuple[str, ...]:
-    """Normalize config universe_index_codes; empty/None → default CSI800 (300∪500)."""
+    """Normalize universe_index_codes. None/blank → CSI800; [] → unconstrained 全 A."""
     if value is None:
         return DEFAULT_UNIVERSE_INDEX_CODES
     raw: list[str]
+    explicit_empty = False
     if isinstance(value, str):
         raw = [part.strip().upper().replace("-", ".") for part in value.replace(";", ",").split(",")]
     elif isinstance(value, (list, tuple)):
         raw = [str(item).strip().upper().replace("-", ".") for item in value]
+        explicit_empty = len(value) == 0
     else:
         raise ValueError("universe_index_codes 要填指数代码列表")
     codes: list[str] = []
@@ -130,7 +132,11 @@ def parse_universe_index_codes(value: object | None) -> tuple[str, ...]:
             continue
         seen.add(part)
         codes.append(part)
-    return tuple(codes) or DEFAULT_UNIVERSE_INDEX_CODES
+    if codes:
+        return tuple(codes)
+    if explicit_empty:
+        return ()
+    return DEFAULT_UNIVERSE_INDEX_CODES
 
 
 def membership_coverage_error(
@@ -140,6 +146,8 @@ def membership_coverage_error(
     date_from: str | None = None,
 ) -> str | None:
     codes = parse_universe_index_codes(index_codes)
+    if not codes:
+        return None
     missing = [code for code in codes if not index_weight_path(raw_root, code).is_file()]
     if missing:
         return f"缺少指数成分权重：{', '.join(missing)}。请先在数据中心下载 index_weight。"
@@ -226,6 +234,8 @@ def apply_pit_index_universe(
     if raw_root is None:
         return frame
     codes = parse_universe_index_codes(index_codes)
+    if not codes:
+        return frame
     return filter_index_universe_asof(
         frame,
         load_index_weight(Path(raw_root), codes),

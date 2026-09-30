@@ -42,8 +42,9 @@
           active: (pathname) => pathname === "/factors" || (pathname.startsWith("/factors/") && !pathname.startsWith("/factors/new")),
           children: [
             { href: "/factors/new/manual", label: "手动建立因子", active: (pathname) => pathname === "/factors/new" || pathname === "/factors/new/manual" },
-            { href: "/research/factor-mining", label: "自动挖掘因子", active: under("/research/factor-mining") },
-            { href: "/research/factor-jobs", label: "因子计算任务", active: under("/research/factor-jobs") },
+            { href: "/qlib", label: "Qlib 挖因子", active: exact("/qlib") },
+            { href: "/qlib/runs", label: "挖因子记录", active: exact("/qlib/runs") },
+            { href: "/qlib/picks", label: "筛选结果", active: exact("/qlib/picks") },
           ],
         },
         { href: "/models", label: "模型中心", icon: "◇", active: under("/models") },
@@ -54,6 +55,7 @@
           active: exact("/backtests/new"),
           children: [
             { href: "/backtests/plan", label: "回测计划", active: exact("/backtests/plan") },
+            { href: "/backtests/usable", label: "大致可用", active: exact("/backtests/usable") },
             { href: "/backtests/rules", label: "规则回测", active: exact("/backtests/rules") },
             { href: "/backtests/offline-rl", label: "离线策略学习", active: exact("/backtests/offline-rl") },
           ],

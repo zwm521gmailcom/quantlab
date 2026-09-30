@@ -24,6 +24,7 @@ from quantlab.repositories.factors import TARGET_ONLY_FIELDS, FactorRepository
 from quantlab.repositories.research_runs import ResearchRunRepository
 from quantlab.services.factor_manual import (
     ExpressionError,
+    PAIR_METHODS,
     WINDOWLESS_METHODS,
     _METHODS,
     _eval,
@@ -33,7 +34,7 @@ from quantlab.services.factor_manual import (
 from quantlab.services.index_membership import apply_pit_index_universe, filter_listed_universe
 from quantlab.services.run_identity import RunIdentity
 
-SUPPORTED_OPERATORS = frozenset({"identity", *_METHODS})
+SUPPORTED_OPERATORS = frozenset({"identity", *(_METHODS - PAIR_METHODS)})
 WINDOWLESS_OPERATORS = frozenset({"identity", *WINDOWLESS_METHODS})
 _FIELD_LABELS = {
     "hfq_open": "后复权开盘",

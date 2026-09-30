@@ -78,21 +78,70 @@ def _spec(
 
 CANONICAL_FACTOR_PACK: tuple[PackFactor, ...] = (
     _spec("momentum_1", "1 日涨跌幅", "hfq_close.pct_change(1)", "negative", "动量"),
+    _spec("reversal_5", "5 日反转", "-(hfq_close.pct_change(5))", "positive", "动量"),
     _spec("momentum_10", "10 日动量", "hfq_close.pct_change(10)", "positive", "动量"),
     _spec("momentum_20", "20 日动量", "hfq_close.pct_change(20)", "positive", "动量"),
     _spec("momentum_60", "60 日动量", "hfq_close.pct_change(60)", "positive", "动量"),
     _spec("momentum_120", "120 日动量", "hfq_close.pct_change(120)", "positive", "动量"),
+    _spec("close_bias_5", "5 日均线偏离", "hfq_close.rolling_bias(5)", "positive", "技术"),
     _spec("close_bias_20", "20 日均线偏离", "hfq_close.rolling_bias(20)", "positive", "技术"),
     _spec("close_bias_60", "60 日均线偏离", "hfq_close.rolling_bias(60)", "positive", "技术"),
+    _spec("close_bias_120", "120 日均线偏离", "hfq_close.rolling_bias(120)", "positive", "技术"),
+    _spec("close_bias_200", "200 日均线偏离", "hfq_close.rolling_bias(200)", "positive", "技术"),
+    _spec(
+        "ma_ratio_20_60",
+        "20/60 日均线比",
+        "hfq_close.rolling_mean(20) / hfq_close.rolling_mean(60) - 1",
+        "positive",
+        "技术",
+    ),
+    _spec(
+        "ma_ratio_60_120",
+        "60/120 日均线比",
+        "hfq_close.rolling_mean(60) / hfq_close.rolling_mean(120) - 1",
+        "positive",
+        "技术",
+    ),
+    _spec(
+        "ma_ratio_20_120",
+        "20/120 日均线比",
+        "hfq_close.rolling_mean(20) / hfq_close.rolling_mean(120) - 1",
+        "positive",
+        "技术",
+    ),
     _spec("close_zscore_20", "20 日价格标准化", "hfq_close.ts_zscore(20)", "positive", "技术"),
     _spec("close_zscore_60", "60 日价格标准化", "hfq_close.ts_zscore(60)", "positive", "技术"),
     _spec("close_ts_rank_20", "20 日价格分位", "hfq_close.ts_rank(20)", "positive", "技术"),
     _spec("close_ts_rank_60", "60 日价格分位", "hfq_close.ts_rank(60)", "positive", "技术"),
     _spec("close_ts_rank_120", "120 日价格分位", "hfq_close.ts_rank(120)", "positive", "技术"),
     _spec("close_ts_rank_252", "252 日价格分位", "hfq_close.ts_rank(252)", "positive", "技术"),
+    _spec(
+        "dist_high_60",
+        "距 60 日新高",
+        "hfq_close / hfq_high.rolling_max(60) - 1",
+        "positive",
+        "技术",
+    ),
+    _spec(
+        "dist_high_120",
+        "距 120 日新高",
+        "hfq_close / hfq_high.rolling_max(120) - 1",
+        "positive",
+        "技术",
+    ),
     _spec("amount_zscore_20", "20 日成交额标准化", "amount.ts_zscore(20)", "positive", "换手"),
+    _spec("amount_ratio_5", "5 日成交额比", "amount / amount.rolling_mean(5)", "positive", "换手"),
     _spec("vol_mean_20", "20 日均量", "vol.rolling_mean(20)", "positive", "换手"),
+    _spec("volatility_10", "10 日收益波动", "hfq_close.pct_change(1).rolling_std(10)", "positive", "波动"),
     _spec("volatility_20", "20 日收益波动", "hfq_close.pct_change(1).rolling_std(20)", "positive", "波动"),
+    _spec("volatility_60", "60 日收益波动", "hfq_close.pct_change(1).rolling_std(60)", "positive", "波动"),
+    _spec(
+        "vol_ratio_20_60",
+        "20/60 日波动比",
+        "hfq_close.pct_change(1).rolling_std(20) / hfq_close.pct_change(1).rolling_std(60) - 1",
+        "positive",
+        "波动",
+    ),
     _spec("amount_cs_rank", "成交额截面排名", "amount.cs_rank(0)", "positive", "换手"),
     _spec("turn_cs_rank", "换手率截面排名", "turn.cs_rank(0)", "positive", "换手"),
     _spec("pe_ttm_cs_rank", "市盈率截面排名", "pe_ttm.cs_rank(0)", "negative", "估值", VALUATION_COVERAGE_FLOOR),
@@ -130,11 +179,60 @@ CANONICAL_FACTOR_PACK: tuple[PackFactor, ...] = (
         "技术",
     ),
     _spec(
+        "momentum_5_cs_rank",
+        "5 日动量截面排名",
+        "hfq_close.pct_change(5).cs_rank(0)",
+        "positive",
+        "动量",
+    ),
+    _spec(
         "momentum_10_cs_rank",
         "10 日动量截面排名",
         "hfq_close.pct_change(10).cs_rank(0)",
         "positive",
         "动量",
+    ),
+    _spec(
+        "momentum_20_cs_rank",
+        "20 日动量截面排名",
+        "hfq_close.pct_change(20).cs_rank(0)",
+        "positive",
+        "动量",
+    ),
+    _spec(
+        "reversal_5_cs_rank",
+        "5 日反转截面排名",
+        "(-(hfq_close.pct_change(5))).cs_rank(0)",
+        "positive",
+        "动量",
+    ),
+    _spec(
+        "close_bias_5_cs_rank",
+        "5 日偏离截面排名",
+        "hfq_close.rolling_bias(5).cs_rank(0)",
+        "positive",
+        "技术",
+    ),
+    _spec(
+        "amount_ratio_5_cs_rank",
+        "5 日成交额比截面排名",
+        "(amount / amount.rolling_mean(5)).cs_rank(0)",
+        "positive",
+        "换手",
+    ),
+    _spec(
+        "volatility_5_cs_rank",
+        "5 日收益波动截面排名",
+        "hfq_close.pct_change(1).rolling_std(5).cs_rank(0)",
+        "positive",
+        "波动",
+    ),
+    _spec(
+        "volatility_10_cs_rank",
+        "10 日收益波动截面排名",
+        "hfq_close.pct_change(1).rolling_std(10).cs_rank(0)",
+        "positive",
+        "波动",
     ),
     _spec(
         "close_location",
@@ -147,6 +245,126 @@ CANONICAL_FACTOR_PACK: tuple[PackFactor, ...] = (
 )
 
 _PACK_BY_FIELD = {item.field: item for item in CANONICAL_FACTOR_PACK}
+TREND_TREE_V1_FIELDS: tuple[str, ...] = (
+    "close_bias_120",
+    "close_bias_200",
+    "ma_ratio_20_60",
+    "ma_ratio_60_120",
+    "ma_ratio_20_120",
+    "dist_high_60",
+    "dist_high_120",
+    "volatility_60",
+    "vol_ratio_20_60",
+)
+_REGISTER_AVAILABLE_FIELDS = {
+    "hfq_open",
+    "hfq_high",
+    "hfq_low",
+    "hfq_close",
+    "amount",
+    "vol",
+    "turn",
+    "pe_ttm",
+    "float_market_cap",
+    "total_market_cap",
+    "dividend_yield_ratio",
+    "instrument",
+    "date",
+    "trade_date",
+    "ts_code",
+}
+
+
+def alpha191_pack_specs() -> tuple[PackFactor, ...]:
+    from quantlab.services.alpha191 import computable_alpha191
+
+    return tuple(
+        _spec(
+            item.field,
+            item.name,
+            item.formula,
+            "positive",
+            f"Alpha191·{item.kind}",
+            coverage_floor=0.50,
+        )
+        for item in computable_alpha191()
+    )
+
+
+def register_canonical_pack_factors(
+    factors: FactorRepository,
+    *,
+    fields: list[str] | tuple[str, ...] | None = None,
+    specs: tuple[PackFactor, ...] | list[PackFactor] | None = None,
+    dataset_id: str = DEFAULT_DATASET_ID,
+    dataset_version_id: str = DEFAULT_DATASET_VERSION_ID,
+) -> dict[str, Any]:
+    catalog = _PACK_BY_FIELD if specs is None else {item.field: item for item in specs}
+    default_fields = TREND_TREE_V1_FIELDS if specs is None else tuple(catalog)
+    wanted = [str(name).strip() for name in (fields or default_fields)]
+    items: list[dict[str, Any]] = []
+    for field in wanted:
+        spec = catalog.get(field)
+        if spec is None:
+            items.append({"field": field, "entity_id": pack_entity_id(field), "status": "failed", "reason": "unknown pack field"})
+            continue
+        entity_id = pack_entity_id(spec.field)
+        existing = factors.get(entity_id, "v1")
+        if existing is not None and existing["status"] == "published":
+            items.append(
+                {
+                    "field": spec.field,
+                    "entity_id": entity_id,
+                    "status": "skipped",
+                    "reason": "already_published",
+                }
+            )
+            continue
+        parsed = parse_expression(spec.formula, _REGISTER_AVAILABLE_FIELDS)
+        definition = _definition(spec, dataset_id, dataset_version_id, parsed.input_fields)
+        definition["quality_status"] = "passed"
+        if existing is None:
+            saved = factors.import_definition(definition)
+        else:
+            saved = factors.update_draft(
+                entity_id,
+                "v1",
+                {"quality_status": "passed", "quality": {"pack": True}},
+            )
+        published = (
+            factors.publish_verified_pack(entity_id, "v1")
+            if saved["status"] != "published"
+            else saved
+        )
+        items.append(
+            {
+                "field": spec.field,
+                "entity_id": published["entity_id"],
+                "status": "published",
+            }
+        )
+    return {
+        "items": items,
+        "published_count": sum(1 for item in items if item.get("status") == "published"),
+        "skipped_count": sum(1 for item in items if item.get("status") == "skipped"),
+        "failed_count": sum(1 for item in items if item.get("status") == "failed"),
+    }
+
+
+def register_alpha191_factors(
+    factors: FactorRepository,
+    *,
+    dataset_id: str = DEFAULT_DATASET_ID,
+    dataset_version_id: str = DEFAULT_DATASET_VERSION_ID,
+) -> dict[str, Any]:
+    specs = alpha191_pack_specs()
+    return register_canonical_pack_factors(
+        factors,
+        fields=tuple(spec.field for spec in specs),
+        specs=specs,
+        dataset_id=dataset_id,
+        dataset_version_id=dataset_version_id,
+    )
 
 
 class CanonicalFactorPackService:

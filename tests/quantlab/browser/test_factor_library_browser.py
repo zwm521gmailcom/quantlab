@@ -25,8 +25,9 @@ def test_merged_factor_page_serves_unified_catalog_without_old_library_actions(b
     expect(toolbar.get_by_role("link", name="自动挖掘因子")).to_have_count(0)
     expect(toolbar.get_by_role("link", name="因子计算任务")).to_have_count(0)
     expect(page.locator("aside").get_by_role("link", name="手动建立因子")).to_be_visible()
-    expect(page.locator("aside").get_by_role("link", name="自动挖掘因子")).to_be_visible()
-    expect(page.locator("aside").get_by_role("link", name="因子计算任务")).to_be_visible()
+    expect(page.locator("aside").get_by_role("link", name="自动挖掘因子")).to_have_count(0)
+    expect(page.locator("aside").get_by_role("link", name="Qlib 挖因子")).to_be_visible()
+    expect(page.locator("aside").get_by_role("link", name="因子计算任务")).to_have_count(0)
     assert errors == []
 
 

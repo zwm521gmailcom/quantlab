@@ -11,14 +11,17 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from quantlab.config import posix_relative
-from quantlab.services.canonical_factor_pack import CANONICAL_FACTOR_PACK
+from quantlab.services.canonical_factor_pack import CANONICAL_FACTOR_PACK, alpha191_pack_specs
 from quantlab.services.factor_manual import _eval, finite_factor_values, parse_expression
+from quantlab.services.moneyflow_factors import MONEYFLOW_FIELDS, MONEYFLOW_SIDECAR_NAME
 
 
 PACK_SIDECAR_NAME = "canonical_pack_factors.parquet"
+QLIB_PICK_SIDECAR_NAME = "qlib_pick_factors.parquet"
 COMPOSITE_SIDECAR_NAME = "composite_pack_factors.parquet"
 PACK_FIELDS = tuple(item.field for item in CANONICAL_FACTOR_PACK)
 _PACK_FORMULAS = {item.field: item.formula for item in CANONICAL_FACTOR_PACK}
+_ATTACHABLE_FIELDS = set(_PACK_FORMULAS) | {item.field for item in alpha191_pack_specs()}
 COMPOSITE_FORMULAS = {
     "sleeve_mv_div": "total_market_cap.cs_rank(0) + dividend_yield_ratio.cs_rank(0)",
     "sleeve_price_mv_div": (
@@ -1003,7 +1006,7 @@ def _needed_fields(
 
 
 def _needed_pack_fields(frame: pd.DataFrame, refs: list[Any] | None) -> list[str]:
-    return _needed_fields(frame, refs, set(_PACK_FORMULAS))
+    return _needed_fields(frame, refs, _ATTACHABLE_FIELDS)
 
 
 def _merge_sidecar(
@@ -1041,19 +1044,42 @@ def attach_pack_factor_columns(
     sidecar = Path(sidecar_path)
     result = _merge_sidecar(
         frame,
-        _needed_fields(frame, refs, set(_PACK_FORMULAS)),
+        _needed_fields(frame, refs, _ATTACHABLE_FIELDS),
         sidecar,
         "可算因子还没有写入旁路文件。请先补全因子计算。",
     )
     composite_needed = _needed_fields(result, refs, set(COMPOSITE_FORMULAS))
-    if not composite_needed:
-        return result
-    return _merge_sidecar(
-        result,
-        composite_needed,
-        sidecar.parent / COMPOSITE_SIDECAR_NAME,
-        "截面合成因子还没有写入旁路文件。请先生成 composite_pack_factors.parquet。",
-    )
+    if composite_needed:
+        result = _merge_sidecar(
+            result,
+            composite_needed,
+            sidecar.parent / COMPOSITE_SIDECAR_NAME,
+            "截面合成因子还没有写入旁路文件。请先生成 composite_pack_factors.parquet。",
+        )
+    moneyflow_needed = _needed_fields(result, refs, set(MONEYFLOW_FIELDS))
+    if moneyflow_needed:
+        result = _merge_sidecar(
+            result,
+            moneyflow_needed,
+            sidecar.parent / MONEYFLOW_SIDECAR_NAME,
+            "资金流向因子还没有写入旁路文件。请先生成 moneyflow_pack_factors.parquet。",
+        )
+    qlib_sidecar = sidecar.parent / QLIB_PICK_SIDECAR_NAME
+    if qlib_sidecar.is_file():
+        names = set(pq.ParquetFile(qlib_sidecar).schema_arrow.names)
+        qlib_needed = _needed_fields(
+            result,
+            refs,
+            names - {"ts_code", "trade_date", "instrument", "date"},
+        )
+        if qlib_needed:
+            result = _merge_sidecar(
+                result,
+                qlib_needed,
+                qlib_sidecar,
+                "qlib 挖因子还没有写入旁路文件。",
+            )
+    return result
 
 
 def _cs_rank(values: pd.Series, dates: pd.Series) -> pd.Series:
@@ -1545,3 +1571,99 @@ def materialize_canonical_pack_factors(
         "rows": int(table.num_rows),
         "fields": list(PACK_FIELDS),
     }
+
+
+def append_missing_canonical_pack_factors(
+    canonical_path: Path | str,
+    output_path: Path | str | None = None,
+    fields: list[str] | tuple[str, ...] | None = None,
+    progress: Callable[[str, int, int], None] | None = None,
+    specs: tuple[Any, ...] | list[Any] | None = None,
+) -> dict[str, Any]:
+    canonical = Path(canonical_path).expanduser().resolve()
+    if not canonical.is_file():
+        raise ValueError("找不到 canonical.parquet")
+    output = Path(output_path) if output_path else default_sidecar_path(canonical)
+    if not output.is_file() and specs is None:
+        result = materialize_canonical_pack_factors(canonical, output, progress)
+        added = list(fields) if fields else list(PACK_FIELDS)
+        return {**result, "added": added}
+    if not output.is_file():
+        materialize_canonical_pack_factors(canonical, output, progress)
+    existing_names = set(pq.ParquetFile(output).schema_arrow.names)
+    catalog = list(CANONICAL_FACTOR_PACK if specs is None else specs)
+    by_field = {spec.field: spec for spec in catalog}
+    if fields is None:
+        wanted = [spec for spec in catalog if spec.field not in existing_names]
+    else:
+        wanted = []
+        for name in fields:
+            spec = by_field.get(str(name).strip())
+            if spec is None:
+                raise ValueError(f"unknown pack field: {name}")
+            if spec.field not in existing_names:
+                wanted.append(spec)
+    if not wanted:
+        return {
+            "path": _display_output_path(output, canonical.parent),
+            "rows": int(pq.ParquetFile(output).metadata.num_rows),
+            "fields": [name for name in pq.ParquetFile(output).schema_arrow.names],
+            "added": [],
+        }
+    names = set(pq.ParquetFile(canonical).schema_arrow.names)
+    inputs: list[str] = []
+    for spec in wanted:
+        parsed = parse_expression(spec.formula, names | {"instrument", "date", "trade_date", "ts_code"})
+        for field in parsed.input_fields:
+            if field in names and field not in inputs:
+                inputs.append(field)
+    columns = [name for name in ("ts_code", "trade_date", *inputs) if name in names]
+    frame = pq.read_table(canonical, columns=columns).to_pandas()
+    if "ts_code" not in frame.columns or "trade_date" not in frame.columns:
+        raise ValueError("canonical.parquet 缺少 ts_code/trade_date")
+    frame["instrument"] = frame["ts_code"].astype(str)
+    frame["date"] = _compact_date(frame["trade_date"])
+    frame = frame.sort_values(["instrument", "date"], kind="mergesort").reset_index(drop=True)
+    available = set(frame.columns)
+    extra: dict[str, Any] = {
+        "_code": frame["instrument"].to_numpy(),
+        "_date": frame["date"].to_numpy(),
+    }
+    total = len(wanted)
+    for index, spec in enumerate(wanted, start=1):
+        if progress is not None:
+            progress(spec.field, index, total)
+        parsed = parse_expression(spec.formula, available)
+        values = finite_factor_values(_eval(parsed.tree, frame))
+        extra[spec.field] = pd.to_numeric(values, errors="coerce").to_numpy(dtype="float64")
+    computed = pd.DataFrame(extra)
+    current = pq.read_table(output).to_pandas()
+    code_key = "ts_code" if "ts_code" in current.columns else "instrument"
+    date_key = "trade_date" if "trade_date" in current.columns else "date"
+    current["_code"] = current[code_key].astype(str)
+    current["_date"] = _compact_date(current[date_key])
+    merged = current.merge(computed, on=["_code", "_date"], how="left")
+    merged = merged.drop(columns=["_code", "_date"])
+    table = pa.table(merged)
+    tmp = output.with_name(output.name + ".next")
+    pq.write_table(table, tmp, compression="zstd")
+    tmp.replace(output)
+    return {
+        "path": _display_output_path(output, canonical.parent),
+        "rows": int(table.num_rows),
+        "fields": list(table.schema.names),
+        "added": [spec.field for spec in wanted],
+    }
+
+
+def append_alpha191_factors(
+    canonical_path: Path | str,
+    output_path: Path | str | None = None,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> dict[str, Any]:
+    return append_missing_canonical_pack_factors(
+        canonical_path,
+        output_path,
+        progress=progress,
+        specs=alpha191_pack_specs(),
+    )

@@ -22,6 +22,10 @@ const PLAN_COLUMNS = [
   {key: "max_drawdown", label: "最大回撤", type: "number", col: "drawdown"},
   {key: "run", label: "运行", type: "text", col: "run"},
 ];
+
+function itemNote(item) {
+  return String(item.config?.note || item.summary?.note || "").trim();
+}
 const PLAN_PAGE_KEY = "quantlab-plan-page-size";
 let plans = [];
 let current = null;
@@ -126,19 +130,163 @@ function setSort(key) {
   renderTable();
 }
 
-function metricCell(item, key, col) {
+function fillMetricCell(cell, item, key, col) {
   const metric = item.metrics?.[key];
-  const cell = document.createElement("td");
   const display = metric?.display || "—";
   cell.className = `archive-num plan-col-${col}`;
+  cell.classList.remove("is-empty", "is-neg", "is-pos");
   cell.textContent = display;
   if (display === "—" || metric?.value == null || metric?.value === "") {
     cell.classList.add("is-empty");
-    return cell;
+    return;
   }
   const number = Number(metric.value);
   if (!Number.isNaN(number) && number !== 0) cell.classList.add(number < 0 ? "is-neg" : "is-pos");
+}
+
+function metricCell(item, key, col) {
+  const cell = document.createElement("td");
+  fillMetricCell(cell, item, key, col);
   return cell;
+}
+
+function fillStatusCell(cell, item) {
+  cell.className = "plan-col-status";
+  cell.replaceChildren();
+  const mark = document.createElement("span");
+  mark.className = `archive-status status-${item.status}`;
+  mark.textContent = STATUS[item.status] || item.status;
+  cell.append(mark);
+  if (item.error_message) {
+    const err = document.createElement("div");
+    err.className = "archive-meta";
+    err.textContent = item.error_message;
+    cell.append(err);
+  }
+}
+
+function fillRunCell(cell, item) {
+  cell.className = "plan-col-run";
+  cell.replaceChildren();
+  if (item.run_id) {
+    const link = document.createElement("a");
+    link.href = `/backtests/runs/${encodeURIComponent(item.run_id)}`;
+    link.textContent = item.run_id;
+    cell.append(link);
+  } else {
+    cell.textContent = "尚未运行";
+  }
+}
+
+function fillRetryCell(cell, item) {
+  cell.className = "plan-col-retry";
+  cell.replaceChildren();
+  if (
+    ["failed", "skipped", "completed"].includes(item.status)
+    && current.status !== "running"
+    && !current.closed
+  ) {
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "plan-retry";
+    retry.textContent = "重算";
+    retry.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      startPlan([item.item_id]);
+    });
+    cell.append(retry);
+  } else {
+    cell.textContent = "—";
+  }
+}
+
+function pageView() {
+  const pageSize = QuantLabPager.readSize(PLAN_PAGE_KEY, QuantLabPager.DEFAULT_SIZES, 20);
+  const items = sortedItems(current?.items || []);
+  const pages = QuantLabPager.pagesFor(items.length, pageSize);
+  planPage = QuantLabPager.clampPage(planPage, pages);
+  return {
+    pageSize,
+    items,
+    pages,
+    pageItems: QuantLabPager.slice(items, planPage, pageSize),
+  };
+}
+
+function updatePlanChrome() {
+  if (!current) {
+    $("plan-state").textContent = "还没有回测计划。";
+    syncButtons();
+    return;
+  }
+  const planItems = current.items || [];
+  const running = planItems.filter((item) => item.status === "running").length;
+  const queued = planItems.filter((item) => item.status === "queued").length;
+  const pending = planItems.filter((item) => item.status === "pending").length;
+  const done = planItems.filter((item) => item.status === "completed").length;
+  const failed = planItems.filter((item) => item.status === "failed").length;
+  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${planItems.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}`;
+  setBanner(
+    current.closed
+      ? "这份计划已完结。不能再加入任务或开始，回测中心下拉框也不会再列出它。"
+      : current.status === "running"
+      ? "正在按勾选顺序串行运行。可以离开这个页面，运算仍会继续。"
+      : failed
+        ? `这份计划有 ${failed} 笔失败。可点该行的「重算」，不必全选重跑。`
+      : current.status === "completed"
+        ? "这份计划已跑完。可点该行的「重算」只重跑一笔，不必全选。"
+        : "勾选要跑的任务，点全选再点开始或删除任务。不会并行开多笔回测。",
+    false
+  );
+  syncButtons();
+  const headerCheck = $("plan-select-all");
+  if (headerCheck) {
+    const selectedCount = planItems.filter((item) => item.selected).length;
+    headerCheck.disabled = current.status === "running" || Boolean(current.closed) || !planItems.length;
+    headerCheck.checked = planItems.length > 0 && selectedCount === planItems.length;
+    headerCheck.indeterminate = selectedCount > 0 && selectedCount < planItems.length;
+  }
+}
+
+function updateSelectLabels() {
+  const select = $("plan-select");
+  if (!select) return;
+  plans.forEach((plan) => {
+    const option = [...select.options].find((item) => item.value === plan.plan_id);
+    if (option) option.textContent = planLabel(plan);
+  });
+  if (current) select.value = current.plan_id;
+}
+
+function patchTable() {
+  if (!current) return false;
+  const wrap = $("plan-table");
+  const table = wrap?.querySelector("table.plan-grid");
+  const tbody = table?.querySelector("tbody");
+  if (!tbody) return false;
+  const {pageItems} = pageView();
+  const rows = [...tbody.querySelectorAll("tr")];
+  if (rows.length !== pageItems.length) return false;
+  for (let index = 0; index < pageItems.length; index += 1) {
+    if (rows[index].dataset.itemId !== pageItems[index].item_id) return false;
+  }
+  const locked = current.status === "running" || Boolean(current.closed);
+  pageItems.forEach((item, index) => {
+    const row = rows[index];
+    const check = row.querySelector('input[type="checkbox"]');
+    if (check) {
+      check.checked = Boolean(item.selected);
+      check.disabled = locked;
+    }
+    fillRetryCell(row.querySelector(".plan-col-retry"), item);
+    fillStatusCell(row.querySelector(".plan-col-status"), item);
+    fillMetricCell(row.querySelector(".plan-col-return"), item, "return", "return");
+    fillMetricCell(row.querySelector(".plan-col-drawdown"), item, "max_drawdown", "drawdown");
+    fillRunCell(row.querySelector(".plan-col-run"), item);
+  });
+  updatePlanChrome();
+  return true;
 }
 
 function renderSelect() {
@@ -160,10 +308,11 @@ function renderSelect() {
   if (current) select.value = current.plan_id;
 }
 
-function renderTable() {
+function renderTable({soft = false} = {}) {
+  if (soft && patchTable()) return;
   const wrap = $("plan-table");
   const pagerHost = $("plan-pagination");
-    wrap.replaceChildren();
+  wrap.replaceChildren();
   if (!current) {
     $("plan-state").textContent = "还没有回测计划。";
     if (pagerHost) {
@@ -174,12 +323,7 @@ function renderTable() {
     return;
   }
   if (pagerHost) pagerHost.hidden = false;
-  const planItems = current.items || [];
-  const running = planItems.filter((item) => item.status === "running").length;
-  const queued = planItems.filter((item) => item.status === "queued").length;
-  const pending = planItems.filter((item) => item.status === "pending").length;
-  const done = planItems.filter((item) => item.status === "completed").length;
-  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${planItems.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}`;
+  updatePlanChrome();
   const table = document.createElement("table");
   table.className = "archive-grid plan-grid";
   const head = document.createElement("thead");
@@ -216,12 +360,10 @@ function renderTable() {
   head.append(headRow);
   table.append(head);
   const body = document.createElement("tbody");
-  const pageSize = QuantLabPager.readSize(PLAN_PAGE_KEY, QuantLabPager.DEFAULT_SIZES, 20);
-  const items = sortedItems(current.items || []);
-  const pages = QuantLabPager.pagesFor(items.length, pageSize);
-  planPage = QuantLabPager.clampPage(planPage, pages);
-  QuantLabPager.slice(items, planPage, pageSize).forEach((item) => {
+  const {pageSize, items, pages, pageItems} = pageView();
+  pageItems.forEach((item) => {
     const row = document.createElement("tr");
+    row.dataset.itemId = item.item_id;
     const check = document.createElement("td");
     const input = document.createElement("input");
     input.type = "checkbox";
@@ -244,9 +386,17 @@ function renderTable() {
     check.className = "plan-col-check";
     const name = document.createElement("td");
     name.className = "plan-col-name";
-    name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><div class="archive-meta"></div></div>`;
+    name.innerHTML = `<div class="archive-run"><strong class="archive-name"></strong><div class="archive-meta"></div><div class="plan-item-note"></div></div>`;
     name.querySelector(".archive-name").textContent = item.name;
     name.querySelector(".archive-meta").textContent = item.item_id;
+    const noteText = itemNote(item);
+    const noteEl = name.querySelector(".plan-item-note");
+    if (noteText) {
+      noteEl.textContent = noteText;
+      noteEl.title = noteText;
+    } else {
+      noteEl.remove();
+    }
     const factors = document.createElement("td");
     factors.className = "plan-col-factors";
     const factorList = document.createElement("div");
@@ -263,25 +413,7 @@ function renderTable() {
     }
     factors.append(factorList);
     const retryCell = document.createElement("td");
-    retryCell.className = "plan-col-retry";
-    if (
-      ["failed", "skipped", "completed"].includes(item.status)
-      && current.status !== "running"
-      && !current.closed
-    ) {
-      const retry = document.createElement("button");
-      retry.type = "button";
-      retry.className = "plan-retry";
-      retry.textContent = "重算";
-      retry.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        startPlan([item.item_id]);
-      });
-      retryCell.append(retry);
-    } else {
-      retryCell.textContent = "—";
-    }
+    fillRetryCell(retryCell, item);
     const windowCell = document.createElement("td");
     windowCell.className = "archive-window plan-col-window";
     windowCell.innerHTML = `<div></div><div class="archive-meta"></div>`;
@@ -293,27 +425,9 @@ function renderTable() {
     model.children[0].textContent = item.summary?.model_name || item.summary?.kind || "—";
     model.children[1].textContent = item.summary?.walk_forward === "rolling" ? "定长回看" : "一次训练";
     const status = document.createElement("td");
-    status.className = "plan-col-status";
-    const mark = document.createElement("span");
-    mark.className = `archive-status status-${item.status}`;
-    mark.textContent = STATUS[item.status] || item.status;
-    status.append(mark);
-    if (item.error_message) {
-      const err = document.createElement("div");
-      err.className = "archive-meta";
-      err.textContent = item.error_message;
-      status.append(err);
-    }
+    fillStatusCell(status, item);
     const run = document.createElement("td");
-    run.className = "plan-col-run";
-    if (item.run_id) {
-      const link = document.createElement("a");
-      link.href = `/backtests/runs/${encodeURIComponent(item.run_id)}`;
-      link.textContent = item.run_id;
-      run.append(link);
-    } else {
-      run.textContent = "尚未运行";
-    }
+    fillRunCell(run, item);
     row.append(
       check,
       name,
@@ -341,16 +455,16 @@ function renderTable() {
   });
   const headerCheck = $("plan-select-all");
   if (headerCheck) {
-    const items = current.items || [];
-    const selectedCount = items.filter((item) => item.selected).length;
-    headerCheck.disabled = current.status === "running" || Boolean(current.closed) || !items.length;
-    headerCheck.checked = items.length > 0 && selectedCount === items.length;
-    headerCheck.indeterminate = selectedCount > 0 && selectedCount < items.length;
+    const planItems = current.items || [];
+    const selectedCount = planItems.filter((item) => item.selected).length;
+    headerCheck.disabled = current.status === "running" || Boolean(current.closed) || !planItems.length;
+    headerCheck.checked = planItems.length > 0 && selectedCount === planItems.length;
+    headerCheck.indeterminate = selectedCount > 0 && selectedCount < planItems.length;
     headerCheck.addEventListener("change", async () => {
-      if (!current || !items.length) return;
+      if (!current || !planItems.length) return;
       const flag = headerCheck.checked;
       const selected = {};
-      items.forEach((item) => { selected[item.item_id] = flag; });
+      planItems.forEach((item) => { selected[item.item_id] = flag; });
       try {
         current = await request(`/api/backtest-plans/${encodeURIComponent(current.plan_id)}/items`, {
           method: "PATCH",
@@ -364,25 +478,12 @@ function renderTable() {
       }
     });
   }
-  const failed = planItems.filter((item) => item.status === "failed").length;
-  setBanner(
-    current.closed
-      ? "这份计划已完结。不能再加入任务或开始，回测中心下拉框也不会再列出它。"
-      : current.status === "running"
-      ? "正在按勾选顺序串行运行。可以离开这个页面，运算仍会继续。"
-      : failed
-        ? `这份计划有 ${failed} 笔失败。可点该行的「重算」，不必全选重跑。`
-      : current.status === "completed"
-        ? "这份计划已跑完。可点该行的「重算」只重跑一笔，不必全选。"
-        : "勾选要跑的任务，点全选再点开始或删除任务。不会并行开多笔回测。",
-    false
-  );
-  syncButtons();
 }
 
-function render() {
-  renderSelect();
-  renderTable();
+function render({soft = false} = {}) {
+  if (soft) updateSelectLabels();
+  else renderSelect();
+  renderTable({soft});
 }
 
 function stopPoll() {
@@ -398,7 +499,7 @@ function startPoll() {
     if (!current) return;
     try {
       await loadPlan(current.plan_id);
-      render();
+      render({soft: true});
       if (current.status !== "running") stopPoll();
     } catch (error) {
       setBanner(error.message, true);

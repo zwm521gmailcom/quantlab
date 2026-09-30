@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QuantLab · 大致可用</title>
+  <link rel="stylesheet" href="/assets/app.css?v=20260919usabledetail">
+</head>
+<body>
+<div class="shell">
+  <aside>
+    <h1>QuantLab</h1>
+    <nav aria-label="主导航">
+      <a href="/">研究总览</a>
+      <a href="/data">数据中心</a>
+      <a href="/kline">标准行情宽表</a>
+      <a href="/research/factors">因子研究</a>
+      <a href="/models">模型中心</a>
+      <a href="/backtests/new">回测中心</a>
+      <a href="/backtests/plan">回测计划</a>
+      <a href="/backtests/usable" aria-current="page">大致可用</a>
+      <a href="/backtests/runs">结果档案</a>
+      <a href="/settings">设置</a>
+    </nav>
+  </aside>
+  <main class="main plan-page">
+    <div class="top">
+      <div>
+        <div class="eyebrow">回测工作台</div>
+        <div class="title">大致可用</div>
+        <div class="sub">只放已经固定、且没有用过拟合方式挑出来的回测。收益和回撤都是 2020-01-01 到 2026-08-31。</div>
+      </div>
+      <div class="actions">
+        <a class="btn" href="/backtests/plan">回测计划</a>
+        <a class="btn" href="/backtests/runs">结果档案</a>
+      </div>
+    </div>
+    <section id="usable-versions" class="panel usable-versions">
+      <ul id="usable-rules" class="usable-rules"></ul>
+      <div class="archive-table">
+        <table class="archive-grid plan-grid">
+          <thead>
+            <tr>
+              <th>版本</th>
+              <th>因子</th>
+              <th>训练 / 回测</th>
+              <th>模型</th>
+              <th>为何可固定</th>
+              <th>2020–2026 收益</th>
+              <th>2020–2026 回撤</th>
+            </tr>
+          </thead>
+          <tbody id="usable-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="/assets/backtest/usable.js?v=20260919usabledetail"></script>
+<script src="/assets/nav.js?v=20260930nojobs"></script>
+</body>
+</html>

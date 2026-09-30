@@ -108,6 +108,16 @@
           <p class="form-note hidden" data-kinds="ols">普通线性回归：不加正则，回测时用全部所选因子直接拟合。</p>
           <p class="form-note hidden" data-kinds="huber">稳健回归：对极端收益不那么敏感，适合有不少异常股票的时候。</p>
           <p class="form-note hidden" data-kinds="factor_rank">单因子排名：不训练，回测时直接按所选因子值排序。</p>
+          <div class="data-toolbar hidden" data-kinds="qlib_lgb_regression qlib_lgb_multi">
+            <div class="param-field" data-param="learning_rate"><label for="model-qlib-learning-rate">学习率</label><input id="model-qlib-learning-rate" type="number" min="0.01" max="1" step="0.01" value="0.05"></div>
+            <div class="param-field" data-param="num_leaves"><label for="model-qlib-leaves">叶节点</label><input id="model-qlib-leaves" type="number" min="2" step="1" value="15"></div>
+            <div class="param-field" data-param="min_child_samples"><label for="model-qlib-min-samples">最小样本</label><input id="model-qlib-min-samples" type="number" min="1" step="1" value="20"></div>
+            <div class="param-field" data-param="number_of_trees"><label for="model-qlib-trees">最多轮数</label><input id="model-qlib-trees" type="number" min="1" step="1" value="80"></div>
+            <div class="param-field" data-param="early_stopping_rounds"><label for="model-qlib-early-stopping">早停轮数</label><input id="model-qlib-early-stopping" type="number" min="1" step="1" value="10"></div>
+            <div class="param-field" data-param="train_end"><label for="model-qlib-train-end">训练结束日</label><input id="model-qlib-train-end" type="date" value="2022-12-31"></div>
+            <div class="param-field" data-param="valid_end"><label for="model-qlib-valid-end">验证结束日</label><input id="model-qlib-valid-end" type="date" value="2024-12-31"></div>
+          </div>
+          <p class="form-note hidden" data-kinds="qlib_lgb_regression qlib_lgb_multi">Qlib 打分：保存打分办法。每个因子按当天截面标准化，用回归拟合当天收盘到次日收盘的涨跌。训练到训练结束日，验证结束日之前用来早停。单因子模型用一列，多因子模型用多列，回测时一起训练。回测里的买卖仍按回测页的持仓和费用。</p>
           <div class="factor-form-actions">
             <button id="model-save" class="primary" type="button">保存默认参数</button>
             <a class="button-link" id="model-to-backtest" href="/backtests/new">去回测中心</a>
@@ -127,6 +137,6 @@
     <script src="/assets/shared/fetch.js"></script>
     <script src="/assets/models/catalog.js"></script>
     <script src="/assets/bootstrap.js"></script>
-    <script src="/assets/nav.js?v=20260911ver"></script>
+    <script src="/assets/nav.js?v=20260930nojobs"></script>
   </body>
 </html>

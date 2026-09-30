@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>QuantLab · 挖因子记录</title>
+    <link rel="stylesheet" href="/assets/app.css?v=20260927qlib19">
+  </head>
+  <body>
+    <div class="shell">
+      <aside><h1>QuantLab</h1><nav aria-label="主导航"><a href="/factors">因子研究</a></nav></aside>
+      <main>
+        <nav class="page-back" aria-label="返回路径"><a href="/qlib">← Qlib 挖因子</a></nav>
+        <div class="eyebrow">Qlib</div>
+        <h2>挖因子记录</h2>
+        <p>每一行是一轮挖出的因子。验证和测试是 Spearman IC。策略是 LightGBM 打分后的 TopkDropout，成绩只覆盖测试段。点「结果档案」打开同一条运行的曲线和指标。</p>
+        <div id="qlib-runs-error" class="state error hidden"></div>
+        <section class="card qlib-runs-card">
+          <div class="qlib-runs-toolbar">
+            <label for="qlib-plan-filter">编号</label>
+            <select id="qlib-plan-filter" class="select"><option value="">全部</option></select>
+          </div>
+          <p id="qlib-runs-live" class="form-note" hidden></p>
+          <p id="qlib-runs-empty" class="form-note hidden">还没有计划。</p>
+          <div class="archive-table">
+            <table class="archive-grid qlib-runs-grid">
+              <thead>
+                <tr>
+                  <th class="archive-sortable"><button type="button" data-sort="plan">编号</button></th>
+                  <th class="source archive-sortable"><button type="button" data-sort="source">出处</button></th>
+                  <th class="num archive-sortable"><button type="button" data-sort="round">轮次</button></th>
+                  <th class="archive-sortable"><button type="button" data-sort="created_at">建立时间</button></th>
+                  <th class="archive-sortable"><button type="button" data-sort="name">因子</button></th>
+                  <th>因子说明</th>
+                  <th>公式</th>
+                  <th class="num archive-sortable"><button type="button" data-sort="valid_ic">验证</button></th>
+                  <th class="num archive-sortable"><button type="button" data-sort="test_ic">测试</button></th>
+                  <th class="num archive-sortable"><button type="button" data-sort="annual">测试年化</button></th>
+                  <th class="num archive-sortable"><button type="button" data-sort="drawdown">回撤</button></th>
+                  <th class="num archive-sortable"><button type="button" data-sort="ir">信息比率</button></th>
+                  <th>说明</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="qlib-runs-body"></tbody>
+            </table>
+          </div>
+          <div id="qlib-runs-pager" class="archive-pagination" hidden></div>
+        </section>
+        <div id="qlib-formula-dialog" class="file-config-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="qlib-formula-title">
+          <div class="file-config-panel qlib-formula-panel">
+            <div class="file-config-head">
+              <h3 id="qlib-formula-title">公式</h3>
+              <button id="qlib-formula-close" type="button" class="btn">关闭</button>
+            </div>
+            <p id="qlib-formula-name" class="form-note"></p>
+            <pre id="qlib-formula-body"></pre>
+            <p id="qlib-formula-reason"></p>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/assets/shared/fetch.js"></script>
+    <script src="/assets/table-pager.js?v=20260909pager"></script>
+    <script src="/assets/qlib/runs.js?v=20260927qlib20"></script>
+    <script src="/assets/bootstrap.js?v=20260911layout"></script>
+    <script src="/assets/nav.js?v=20260930nojobs"></script>
+  </body>
+</html>

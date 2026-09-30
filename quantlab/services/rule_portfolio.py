@@ -58,6 +58,7 @@ class _Position:
     signal_date: str
     buy_amount: float
     buy_fee: float
+    peak_price: float = 0.0
 
 
 def run_target_weight_portfolio(
@@ -99,20 +100,21 @@ def run_target_weight_portfolio(
         signal_day = exec_to_signal.get(day)
         if signal_day is not None:
             target = _positive_weights(signal_map.get(signal_day, {}), float(cfg["target_weight"]))
-            for instrument in list(positions):
-                if instrument in target:
-                    continue
-                row = rows.get(instrument)
-                if row is None or _is_suspended(row):
-                    continue
-                price = _col_price(row, "open", "open")
-                if price is None:
-                    continue
-                price *= 1.0 - float(cfg["slippage"] or 0.0)
-                cash = _close_position(
-                    cash, positions, trades, instrument, day, price, "rebalance", cfg, row
-                )
-                exited_today.add(instrument)
+            if bool(cfg.get("rebalance_sell", True)):
+                for instrument in list(positions):
+                    if instrument in target:
+                        continue
+                    row = rows.get(instrument)
+                    if row is None or _is_suspended(row):
+                        continue
+                    price = _col_price(row, "open", "open")
+                    if price is None:
+                        continue
+                    price *= 1.0 - float(cfg["slippage"] or 0.0)
+                    cash = _close_position(
+                        cash, positions, trades, instrument, day, price, "rebalance", cfg, row
+                    )
+                    exited_today.add(instrument)
 
             invested = 0.0
             for instrument, position in positions.items():
@@ -122,7 +124,14 @@ def run_target_weight_portfolio(
                     mark = position.buy_price
                 invested += position.quantity * mark
             nav = cash + invested
+            bought_today = 0
+            max_new = cfg.get("max_new_buys")
+            max_positions = cfg.get("max_positions")
             for instrument, weight in target.items():
+                if max_new is not None and bought_today >= int(max_new):
+                    break
+                if max_positions is not None and len(positions) >= int(max_positions):
+                    break
                 if instrument in positions or instrument in exited_today:
                     continue
                 row = rows.get(instrument)
@@ -153,7 +162,9 @@ def run_target_weight_portfolio(
                     signal_date=signal_day,
                     buy_amount=amount,
                     buy_fee=fee,
+                    peak_price=price,
                 )
+                bought_today += 1
                 trades.append(
                     {
                         "date": day,
@@ -184,6 +195,7 @@ def run_target_weight_portfolio(
             take_price = position.buy_price * (1.0 + float(cfg["take_profit"]))
             hit_stop = low is not None and low <= stop_price + 1e-12
             hit_take = high is not None and high >= take_price - 1e-12
+            trail_arm = cfg.get("trail_arm")
             if hit_stop:
                 fill = stop_price
                 if open_px is not None and open_px <= stop_price + 1e-12:
@@ -192,6 +204,20 @@ def run_target_weight_portfolio(
                     cash, positions, trades, instrument, day, fill, "stop_loss", cfg, row
                 )
                 exited_today.add(instrument)
+            elif trail_arm not in (None, ""):
+                prior_peak = position.peak_price if position.peak_price > 0 else position.buy_price
+                armed = prior_peak / position.buy_price - 1.0 >= float(trail_arm) - 1e-12
+                trail_price = prior_peak - float(cfg.get("trail_giveback") or 0.0) * position.buy_price
+                if armed and low is not None and low <= trail_price + 1e-12:
+                    fill = trail_price
+                    if open_px is not None and open_px <= trail_price + 1e-12:
+                        fill = open_px
+                    cash = _close_position(
+                        cash, positions, trades, instrument, day, fill, "trail_giveback", cfg, row
+                    )
+                    exited_today.add(instrument)
+                elif high is not None and high > position.peak_price:
+                    position.peak_price = high
             elif hit_take:
                 cash = _close_position(
                     cash, positions, trades, instrument, day, take_price, "take_profit", cfg, row

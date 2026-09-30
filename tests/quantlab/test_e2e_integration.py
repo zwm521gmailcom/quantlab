@@ -20,8 +20,7 @@ def test_quantlab_core_pages_and_api_contracts_are_connected(tmp_path: Path) -> 
         ("/factors", "因子数据"),
         ("/factors/factor_momentum_5/versions/v1", "因子数据"),
         ("/research/factors/manual", "手动建立因子"),
-        ("/research/factors/auto", "自动挖掘"),
-        ("/research/factor-jobs", "因子计算任务"),
+        ("/research/factors/auto", "Qlib 挖因子"),
         ("/models", "模型中心"),
         ("/backtests/new", "回测中心"),
         ("/backtests/runs", "结果档案"),
@@ -30,6 +29,10 @@ def test_quantlab_core_pages_and_api_contracts_are_connected(tmp_path: Path) -> 
         response = client.get(page)
         assert response.status_code == 200, (page, response.text)
         assert marker in response.text
+
+    jobs = client.get("/research/factor-jobs", follow_redirects=False)
+    assert jobs.status_code == 307
+    assert jobs.headers.get("location") == "/factors"
 
     gone = client.get("/strategies", follow_redirects=False)
     assert gone.status_code in {301, 302, 303, 307, 308}

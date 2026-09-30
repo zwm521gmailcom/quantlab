@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 因子数据</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260911navadapt3">
+    <link rel="stylesheet" href="/assets/app.css?v=20260927factorselect">
   </head>
   <body>
     <div class="shell">
@@ -55,6 +55,11 @@
               </label>
             </div>
             <p id="factor-note" class="state">因子定义与已计算任务统一管理；表格 IC 列展示所选计算任务结果，未运行时显示“未诊断”。现行因子均为 A 股；行情来源是对应资产分类的标准宽表（A 股现为 data/canonical.parquet）。</p>
+            <div class="factor-catalog-actions">
+              <button id="factor-select-filtered" type="button">全选</button>
+              <button id="factor-run-selected" class="primary" type="button" disabled>运行分析</button>
+              <span id="factor-run-status" class="state"></span>
+            </div>
             <div id="factor-table" class="factor-table" role="table" aria-label="正式因子目录"></div>
             <div id="factor-empty" class="state hidden">没有匹配的因子。</div>
             <div class="factor-pagination">
@@ -92,8 +97,8 @@
     <script src="/assets/shared/theme.js"></script>
     <script src="/assets/shared/pager.js"></script>
     <script src="/assets/shared/multiselect.js"></script>
-    <script src="/assets/factors/catalog.js?v=20260911factorac"></script>
+    <script src="/assets/factors/catalog.js?v=20260927factorselect"></script>
     <script src="/assets/factors/detail.js?v=20260911factorac"></script>
     <script src="/assets/bootstrap.js?v=20260911layout"></script>
-  <script src="/assets/nav.js?v=20260911ver"></script></body>
+  <script src="/assets/nav.js?v=20260930nojobs"></script></body>
 </html>

@@ -160,3 +160,63 @@ def test_run_portfolio_keeps_slot_engine_fills_on_small_fixture() -> None:
     assert trade["buy_price"] == 10.2
     assert trade["sell_price"] == 10.0
     assert [row["date"] for row in curve] == ["20200102", "20200103", "20200106", "20200107"]
+
+
+def test_target_weight_limit_down_open_sells_on_the_next_day() -> None:
+    dates = ["20200102", "20200103", "20200106", "20200107"]
+    rows = []
+    for day in dates:
+        limit_down = day == "20200106"
+        rows.append(
+            {
+                "date": day,
+                "instrument": "AAA.SZ",
+                "open": 9.0 if limit_down else 10.0,
+                "close": 10.0,
+                "up_limit": 11.0,
+                "down_limit": 9.0 if limit_down else 8.0,
+                "suspended": False,
+            }
+        )
+        rows.append(
+            {
+                "date": day,
+                "instrument": "BBB.SZ",
+                "open": 20.0,
+                "close": 20.0,
+                "up_limit": 22.0,
+                "down_limit": 18.0,
+                "suspended": False,
+            }
+        )
+    predictions = pd.DataFrame(
+        {
+            "date": ["20200102", "20200102", "20200103", "20200103", "20200106", "20200106"],
+            "instrument": ["AAA.SZ", "BBB.SZ", "AAA.SZ", "BBB.SZ", "AAA.SZ", "BBB.SZ"],
+            "score": [2.0, 1.0, 0.0, 2.0, 0.0, 2.0],
+        }
+    )
+    config = {
+        "test": {"date_from": "20200102", "date_to": "20200107"},
+        "rebalance_mode": "target_weight",
+        "rebalance_every": 1,
+        "holding_days": 1,
+        "top_n": 1,
+        "lot_size": 100,
+        "initial_capital": 100000,
+        "buy_price": "open",
+        "sell_price": "close",
+        "skip_close_down_limit": True,
+        "trade_filters": {"open": ["open < up_limit AND open > down_limit"]},
+        "buy_fee_rate": 0,
+        "sell_fee_rate": 0,
+        "buy_fee_minimum": 0,
+        "sell_fee_minimum": 0,
+        "stamp_tax_rate": 0,
+        "slippage": 0,
+    }
+    trades, _curve = portfolio.run_portfolio(pd.DataFrame(rows), predictions, config)
+    sold = [trade for trade in trades if trade.get("instrument") == "AAA.SZ" and trade.get("status") == "filled"]
+    assert len(sold) == 1
+    assert sold[0]["buy_date"] == "20200103"
+    assert sold[0]["sell_date"] == "20200107"

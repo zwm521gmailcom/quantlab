@@ -306,6 +306,9 @@ def backfill_missing_machine_ids(settings: Settings, database: Database) -> int:
                         run_id,
                     ),
                 )
+                from quantlab.services.backtest_summary import refresh_backtest_summary
+
+                refresh_backtest_summary(connection, run_id)
         file_changed = False
         metrics_path = folder / "metrics.json"
         if metrics_path.is_file():
@@ -462,6 +465,9 @@ def import_result_manifests(settings: Settings, database: Database) -> list[str]
                     "UPDATE backtest_runs SET status=?, error_message=? WHERE run_id=?",
                     (next_status, error_message, run_id),
                 )
+                from quantlab.services.backtest_summary import refresh_backtest_summary
+
+                refresh_backtest_summary(connection, run_id)
                 steps = manifest.get("steps") if isinstance(manifest.get("steps"), list) else []
                 for step in steps:
                     if not isinstance(step, dict):

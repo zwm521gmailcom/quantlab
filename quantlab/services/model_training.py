@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from contextlib import contextmanager
+from datetime import datetime
 from os import cpu_count
 from typing import Any
 
@@ -119,6 +121,38 @@ MODEL_KINDS = {
         "method": "deterministic_factor_rank_proxy",
         "summary": "不训练，直接按回测页所选因子值排名。",
         "hyperparameters": {},
+    },
+    "qlib_lgb_regression": {
+        "kind": "qlib_lgb_regression",
+        "name": "Qlib 回归打分",
+        "method": "qlib_lightgbm_regression",
+        "summary": "按 Qlib 挖因子的方式打分：当天截面标准化，回归拟合次日收盘相对当日收盘的涨跌。回测成交仍走实验室规则。",
+        "hyperparameters": {
+            "learning_rate": 0.05,
+            "num_leaves": 15,
+            "min_child_samples": 20,
+            "number_of_trees": 80,
+            "early_stopping_rounds": 10,
+            "train_end": "2022-12-31",
+            "valid_end": "2024-12-31",
+            "walk_forward": "once",
+        },
+    },
+    "qlib_lgb_multi": {
+        "kind": "qlib_lgb_multi",
+        "name": "多因子 Qlib 打分",
+        "method": "qlib_lightgbm_multi_regression",
+        "summary": "每个因子按当天截面标准化后作为回归树的一列，拟合当天收盘到次日收盘的涨跌。回测成交仍走实验室规则。多列打分尚未接到回测。",
+        "hyperparameters": {
+            "learning_rate": 0.05,
+            "num_leaves": 15,
+            "min_child_samples": 20,
+            "number_of_trees": 80,
+            "early_stopping_rounds": 10,
+            "train_end": "2022-12-31",
+            "valid_end": "2024-12-31",
+            "walk_forward": "once",
+        },
     },
 }
 KIND_DISPLAY_ALIASES = {
@@ -259,6 +293,28 @@ def with_train_protocol(
     return out
 
 
+def _require_iso_date(value: Any) -> str:
+    text = "" if value is None else str(value).strip()
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text) is None:
+        raise ValueError("日期要用 YYYY-MM-DD")
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("日期要用 YYYY-MM-DD") from None
+    return text
+
+
+def _qlib_int(value: Any, default: int, label: str) -> int:
+    raw = default if value is None or value == "" else value
+    try:
+        number = int(raw)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}要是整数。") from None
+    if isinstance(raw, float) and not raw.is_integer():
+        raise ValueError(f"{label}要是整数。")
+    return number
+
+
 def normalize_hyperparams(raw: Any, kind: str | None = None) -> dict[str, Any]:
     src = raw if isinstance(raw, dict) else {}
     resolved = resolve_kind(kind, src)
@@ -348,6 +404,36 @@ def normalize_hyperparams(raw: Any, kind: str | None = None) -> dict[str, Any]:
         return with_train_protocol({"alpha": alpha, "epsilon": epsilon}, src, defaults)
     if resolved == "ols":
         return with_train_protocol({}, src, {"walk_forward": WALK_FORWARD_ONCE})
+    if resolved in {"qlib_lgb_regression", "qlib_lgb_multi"}:
+        rate = float(defaults["learning_rate"] if src.get("learning_rate") is None else src["learning_rate"])
+        if rate <= 0 or rate > 1:
+            raise ValueError("学习率要在 0 到 1 之间。")
+        leaves = _qlib_int(src.get("num_leaves"), int(defaults["num_leaves"]), "叶节点")
+        if leaves < 2:
+            raise ValueError("叶节点至少要 2。")
+        samples = _qlib_int(src.get("min_child_samples"), int(defaults["min_child_samples"]), "最小样本")
+        if samples < 1:
+            raise ValueError("最小样本至少要 1。")
+        trees = _qlib_int(src.get("number_of_trees"), int(defaults["number_of_trees"]), "最多轮数")
+        if trees < 1:
+            raise ValueError("最多轮数至少要 1。")
+        rounds = _qlib_int(src.get("early_stopping_rounds"), int(defaults["early_stopping_rounds"]), "早停轮数")
+        if rounds < 1 or rounds > trees:
+            raise ValueError("早停轮数要在 1 到最多轮数之间。")
+        train_end = _require_iso_date(defaults["train_end"] if src.get("train_end") is None else src.get("train_end"))
+        valid_end = _require_iso_date(defaults["valid_end"] if src.get("valid_end") is None else src.get("valid_end"))
+        if valid_end <= train_end:
+            raise ValueError("验证结束日要晚于训练结束日")
+        return {
+            "learning_rate": rate,
+            "num_leaves": leaves,
+            "min_child_samples": samples,
+            "number_of_trees": trees,
+            "early_stopping_rounds": rounds,
+            "train_end": train_end,
+            "valid_end": valid_end,
+            "walk_forward": WALK_FORWARD_ONCE,
+        }
     return {}
 
 
@@ -700,11 +786,20 @@ def attach_label(frame, holding_days=None):
     return labeled
 
 
-def booster_thread_count(workers: int, cpu_fn: Callable[[], int | None] | None = None) -> int | None:
-    if int(workers) <= 1:
-        return None
+def booster_thread_count(
+    workers: int,
+    cpu_fn: Callable[[], int | None] | None = None,
+    *,
+    concurrent: int | None = None,
+) -> int | None:
+    from quantlab.services.settings import max_concurrent_backtests
+
     count = (cpu_fn or cpu_count)() or 1
-    return max(1, int(count) // max(1, int(workers)))
+    fold = max(1, int(workers))
+    slots = max(1, int(concurrent if concurrent is not None else max_concurrent_backtests()))
+    if fold <= 1 and slots <= 1:
+        return None
+    return max(1, int(count) // (fold * slots))
 
 
 @contextmanager
@@ -984,7 +1079,9 @@ class ModelTrainingService:
             "hyperparameters": params,
             "method": spec["method"],
             "kind": kind,
-            "label": {"definition": "t+1 open -> t+2 close"},
+            "label": {
+                "definition": "close -> next close" if kind in {"qlib_lgb_regression", "qlib_lgb_multi"} else "t+1 open -> t+2 close"
+            },
         }
         version = self.strategy_center.create_model_version(entity_id, config)
         published = self.strategy_center.publish_model_version(entity_id, version["version_id"])

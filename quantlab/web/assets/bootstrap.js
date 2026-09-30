@@ -1,6 +1,6 @@
 function fileConfigAllowedPath() {
   const path = window.location.pathname;
-  return path === "/data" || path === "/research/factors" || path === "/factors" || path === "/factors/new/manual" || path === "/research/factor-mining";
+  return path === "/data" || path === "/research/factors" || path === "/factors" || path === "/factors/new/manual";
 }
 
 function renderDirectoryPlan(container, plan) {
@@ -168,10 +168,6 @@ window.addEventListener("DOMContentLoaded", () => {
     loadFactors();
   } else if (window.location.pathname === "/factors/new" || window.location.pathname === "/factors/new/manual") {
     loadManualFactorPage();
-  } else if (window.location.pathname === "/research/factor-mining") {
-    loadFactorMiningPage();
-  } else if (window.location.pathname.startsWith("/research/factor-jobs")) {
-    loadFactorJobsPage();
   } else if (window.location.pathname.startsWith("/data/factors/") || (window.location.pathname.startsWith("/factors/") && !window.location.pathname.startsWith("/factors/new/"))) {
     const parts = window.location.pathname.split("/").filter(Boolean);
     const factorId = window.location.pathname.startsWith("/data/factors/") ? parts[2] : parts[1];

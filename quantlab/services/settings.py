@@ -76,13 +76,7 @@ def compute_hint() -> dict[str, Any]:
     }
 
 
-def max_concurrent_backtests(ram: int | None = None, cpu: int | None = None) -> int:
-    raw = str(environ.get("QUANTLAB_MAX_CONCURRENT_BACKTESTS") or "").strip()
-    if raw:
-        try:
-            return max(1, min(int(raw), 16))
-        except ValueError:
-            pass
+def hardware_concurrent_cap(ram: int | None = None, cpu: int | None = None) -> int:
     total = int(ram if ram is not None else total_ram_bytes() or 0)
     gb = total / (1024**3) if total else 0.0
     cores = max(1, int(cpu if cpu is not None else (cpu_count() or 1)))
@@ -90,8 +84,24 @@ def max_concurrent_backtests(ram: int | None = None, cpu: int | None = None) -> 
         by_ram = 1
     else:
         by_ram = max(1, int(max(0.0, gb - 8.0) // 19))
-    by_cpu = max(1, cores // 4)
-    return min(by_ram, by_cpu, 8)
+    if gb >= 120:
+        by_ram = max(by_ram, 12)
+        by_cpu = max(1, cores // 2 if cores >= 16 else cores // 4)
+    else:
+        by_cpu = max(1, cores // 4)
+    return min(by_ram, by_cpu, 16)
+
+
+def max_concurrent_backtests(ram: int | None = None, cpu: int | None = None) -> int:
+    hardware = hardware_concurrent_cap(ram, cpu)
+    raw = str(environ.get("QUANTLAB_MAX_CONCURRENT_BACKTESTS") or "").strip()
+    if raw:
+        try:
+            requested = max(1, min(int(raw), 16))
+        except ValueError:
+            return hardware
+        return min(requested, hardware)
+    return hardware
 
 
 def resolve_worker_count(env_name: str, setting_key: str, task_count: int, cpu_fn: Callable[[], int | None]) -> int:

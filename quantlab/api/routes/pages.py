@@ -82,6 +82,18 @@ def backtest_plan_page() -> FileResponse:
     )
 
 
+@router.get("/backtests/usable")
+def usable_versions_page() -> FileResponse:
+    return FileResponse(
+        _PAGES / "usable_versions.html",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
+
+
 @router.get("/backtests/rules")
 def backtest_rules_page() -> FileResponse:
     return FileResponse(_PAGES / "backtest_rules.html")
@@ -101,7 +113,10 @@ def offline_rl_page() -> FileResponse:
 
 @router.get("/backtests/runs")
 def backtest_archive_page() -> FileResponse:
-    return FileResponse(_PAGES / "result_archive.html")
+    return FileResponse(
+        _PAGES / "result_archive.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
 
 
 @router.get("/backtests/runs/{run_id}")
@@ -145,18 +160,42 @@ def factor_research_redirect(request: Request) -> RedirectResponse:
     if request.url.path.endswith("/manual"):
         return RedirectResponse(url="/factors/new/manual", status_code=307)
     if request.url.path.endswith("/auto"):
-        return RedirectResponse(url="/research/factor-mining", status_code=307)
+        return RedirectResponse(url="/qlib", status_code=307)
     return RedirectResponse(url="/factors", status_code=307)
 
 
+@router.get("/qlib")
+def qlib_page() -> FileResponse:
+    return FileResponse(
+        _PAGES / "qlib.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/qlib/runs")
+def qlib_runs_page() -> FileResponse:
+    return FileResponse(
+        _PAGES / "qlib_runs.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
+@router.get("/qlib/picks")
+def qlib_picks_page() -> FileResponse:
+    return FileResponse(
+        _PAGES / "qlib_picks.html",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+    )
+
+
 @router.get("/research/factor-mining")
-def factor_mining_page() -> FileResponse:
-    return FileResponse(_PAGES / "factor_mining.html")
+def factor_mining_page() -> RedirectResponse:
+    return RedirectResponse(url="/qlib", status_code=307)
 
 
 @router.get("/research/factor-jobs")
-def factor_jobs_page() -> FileResponse:
-    return FileResponse(_PAGES / "factor_jobs.html")
+def factor_jobs_page() -> RedirectResponse:
+    return RedirectResponse(url="/factors", status_code=307)
 
 
 @router.get("/research/runs/{run_id}")

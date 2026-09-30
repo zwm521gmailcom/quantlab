@@ -182,6 +182,8 @@ class FactorMiningService:
             "ts_rank": "过去 N 日分位",
             "ts_zscore": "相对历史标准化",
             "rolling_bias": "相对均线偏离",
+            "rolling_corr": "N 日相关",
+            "rolling_cov": "N 日协方差",
             "ewm_mean": "指数加权均值",
             "cs_rank": "当天截面排名",
         }

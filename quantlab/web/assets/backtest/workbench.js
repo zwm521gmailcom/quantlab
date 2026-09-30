@@ -54,11 +54,12 @@
       }
 
       function selectedUniverseCodes() {
-        const codes = uniqueUniverseCodes(selectedUniverseIds);
-        return codes.length ? codes : uniqueUniverseCodes(DEFAULT_UNIVERSE_IDS);
+        return uniqueUniverseCodes(selectedUniverseIds);
       }
 
       function universeIdsFromCodes(raw) {
+        if (raw == null) return DEFAULT_UNIVERSE_IDS.slice();
+        if (Array.isArray(raw) && raw.length === 0) return [];
         const wanted = [];
         const seen = new Set();
         (Array.isArray(raw) ? raw : String(raw || "").split(/[,;，]/)).forEach((item) => {
@@ -67,6 +68,7 @@
           seen.add(code);
           wanted.push(code);
         });
+        if (!wanted.length) return DEFAULT_UNIVERSE_IDS.slice();
         const remaining = new Set(wanted);
         const ids = [];
         UNIVERSE_OPTIONS.forEach((option) => {
@@ -94,8 +96,7 @@
           remove.textContent = "×";
           remove.addEventListener("click", () => {
             selectedUniverseIds = selectedUniverseIds.filter((item) => item !== id);
-            if (!selectedUniverseIds.length) selectedUniverseIds = DEFAULT_UNIVERSE_IDS.slice();
-            else selectedUniverseIds = universeIdsFromCodes(selectedUniverseCodes());
+            if (selectedUniverseIds.length) selectedUniverseIds = universeIdsFromCodes(selectedUniverseCodes());
             renderUniverseChips();
           });
           chip.append(remove);
@@ -113,7 +114,12 @@
             opt.disabled = !option || option.codes.every((code) => have.has(code));
           });
         }
-        if (preview) preview.textContent = `当前代码：${selectedUniverseCodes().join(", ")}`;
+        if (preview) {
+          const codes = selectedUniverseCodes();
+          preview.textContent = codes.length
+            ? `当前代码：${codes.join(", ")}`
+            : "无成分约束（交易所范围内全 A）";
+        }
       }
 
       function addUniverseSelection(id) {
@@ -571,6 +577,36 @@
           random_seed,
         };
         if (kind === "factor_rank" || kind === "ols") return {random_seed};
+        if (kind === "qlib_lgb_regression" || kind === "qlib_lgb_multi") {
+          const defaults = {
+            learning_rate: 0.05,
+            num_leaves: 15,
+            min_child_samples: 20,
+            number_of_trees: 80,
+            early_stopping_rounds: 10,
+            train_end: "2022-12-31",
+            valid_end: "2024-12-31",
+            walk_forward: "once",
+          };
+          const selected = q("model")?.selectedOptions?.[0];
+          let stored = {};
+          try {
+            stored = JSON.parse(selected?.dataset?.params || "{}");
+          } catch {
+            stored = {};
+          }
+          if (!stored || typeof stored !== "object") stored = {};
+          return {
+            learning_rate: stored.learning_rate ?? defaults.learning_rate,
+            num_leaves: stored.num_leaves ?? defaults.num_leaves,
+            min_child_samples: stored.min_child_samples ?? defaults.min_child_samples,
+            number_of_trees: stored.number_of_trees ?? defaults.number_of_trees,
+            early_stopping_rounds: stored.early_stopping_rounds ?? defaults.early_stopping_rounds,
+            train_end: stored.train_end || defaults.train_end,
+            valid_end: stored.valid_end || defaults.valid_end,
+            walk_forward: "once",
+          };
+        }
         return {
           number_of_trees: Number(q("bt-trees")?.value || 5),
           max_bins: Number(q("bt-bins")?.value || 511),
@@ -616,6 +652,7 @@
         return {
           submission_token: submissionToken,
           name: q("name").value,
+          note: (q("note")?.value || "").trim(),
           dataset_id: datasetId,
           dataset_version_id: datasetVersion,
           train_dataset_id: datasetId,
@@ -633,6 +670,8 @@
           top_n: Number(q("topN").value),
           weighting: q("weighting").value,
           rebalance_every: Number(q("rebalance").value),
+          rebalance_mode: q("rebalanceMode")?.value || "slot",
+          holding_days: Number(q("holdingDays")?.value || 2),
           signal_time: "close",
           buy_price: q("buy").value,
           sell_price: q("sell").value,
@@ -652,7 +691,7 @@
           benchmark: q("benchmark").value,
           universe_index_codes: selectedUniverseCodes(),
           missing_policy: {valuation: "drop", technical: "drop"},
-          walk_forward: selectedKind() === "factor_rank" ? "once" : (q("bt-walk-forward")?.value || "once"),
+          walk_forward: selectedKind() === "factor_rank" || selectedKind() === "qlib_lgb_regression" || selectedKind() === "qlib_lgb_multi" ? "once" : (q("bt-walk-forward")?.value || "once"),
           train_period_months: Number(q("bt-train-period")?.value || 12),
           test_period_months: Number(q("bt-test-period")?.value || 3),
           hyperparameters: backtestHyperparams(),
@@ -1022,6 +1061,7 @@
 
       function applyConfig(configPayload) {
         q("name").value = configPayload.name || "未命名回测";
+        if (q("note")) q("note").value = configPayload.note || "";
         selectedFactors = [];
         (configPayload.factor_versions || []).forEach((factor) => {
           const factorId = factor.factor_id || `factor_${factor.field || ""}`;
@@ -1042,6 +1082,11 @@
         q("topN").value = configPayload.top_n ?? q("topN").value;
         q("weighting").value = configPayload.weighting || q("weighting").value;
         q("rebalance").value = configPayload.rebalance_every ?? q("rebalance").value;
+        if (q("holdingDays")) q("holdingDays").value = configPayload.holding_days ?? q("holdingDays").value;
+        if (q("rebalanceMode")) {
+          const mode = configPayload.rebalance_mode || "slot";
+          if ([...q("rebalanceMode").options].some((option) => option.value === mode)) q("rebalanceMode").value = mode;
+        }
         if (q("benchmark")) {
           const bench = configPayload.benchmark || q("benchmark").value;
           if ([...q("benchmark").options].some((option) => option.value === bench)) q("benchmark").value = bench;
@@ -1052,7 +1097,7 @@
         q("buyMin").value = configPayload.buy_fee_minimum ?? q("buyMin").value;
         q("sellMin").value = configPayload.sell_fee_minimum ?? q("sellMin").value;
         if (q("slippage")) q("slippage").value = configPayload.slippage ?? q("slippage").value;
-        if (configPayload.stamp_tax_rate != null && Number(configPayload.stamp_tax_rate) > 0) {
+        if (configPayload.stamp_tax_rate != null) {
           q("stampTax").value = configPayload.stamp_tax_rate;
         } else {
           q("stampTax").value = 0.001;

@@ -11,9 +11,15 @@ router = APIRouter(tags=["factor-data"])
 def factor_catalog(request: Request) -> list[dict[str, object]]:
     try:
         items = request.app.state.factor_data_service.catalog()
+        latest_by_id = request.app.state.factor_calculation_service.catalog_latest()
         for item in items:
-            latest = request.app.state.factor_calculation_service.latest(factor_id=str(item["factor_id"]))
-            item["latest_calculation"] = latest
+            entity = str(item.get("factor_entity_id") or "")
+            factor_id = str(item.get("factor_id") or "")
+            item["latest_calculation"] = (
+                latest_by_id.get(entity)
+                or latest_by_id.get(factor_id)
+                or latest_by_id.get(f"factor_{factor_id}")
+            )
         return items
     except ValueError as error:
         _raise_factor_error(error)

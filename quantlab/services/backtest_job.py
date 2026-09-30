@@ -23,7 +23,7 @@ from quantlab.domain.status import BacktestRunStatus
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.run_lifecycle import transition_backtest_run_status
 from quantlab.services.backtest_workbench import BacktestWorkbenchService, _as_bool, normalize_open_ma_gates
-from quantlab.services.bucket_equity import attach_segment_curves, frame_nbytes
+from quantlab.services.bucket_equity import attach_segment_curves, filter_rows_to_segment, frame_nbytes
 from quantlab.services.compute_budget import (
     ResourceSampler,
     active_resource_prior,
@@ -46,6 +46,7 @@ from quantlab.services.model_training import (
     attach_label,
     booster_thread_limit,
     enrich_feature_columns,
+    booster_thread_count,
     fit_estimator,
     normalize_hyperparams,
     normalize_market_frame,
@@ -54,6 +55,7 @@ from quantlab.services.model_training import (
     resolve_kind,
 )
 from quantlab.services.portfolio import run_portfolio
+from quantlab.services.qlib_strategy import multi_regression_predictions, next_close_return, regression_predictions
 from quantlab.services.ranking_metrics import attach_ranking_metrics, capture_predictions, peek_captured
 from quantlab.services.settings import resolve_worker_count, total_ram_bytes
 from quantlab.services.trade_filters import FIELD_ALIASES, needs_sma200, open_expressions, parse_expr
@@ -602,13 +604,49 @@ def factor_rank_direction(config):
     return "positive"
 
 
-def factor_rank_predictions(test, field, direction="positive"):
-    predictions = test[["date", "instrument", field]].rename(columns={field: "score"}).dropna()
-    if factor_rank_direction({"factor_versions": [{"direction": direction}]}) == "negative":
-        predictions = predictions.copy()
-        predictions["score"] = -pd.to_numeric(predictions["score"], errors="coerce")
-        predictions = predictions.dropna(subset=["score"])
-    return predictions
+def _signed_factor_direction(raw) -> str:
+    return factor_rank_direction({"factor_versions": [{"direction": raw}]})
+
+
+def _factor_rank_refs(field, direction="positive", factor_versions=None) -> list[tuple[str, str]]:
+    refs: list[tuple[str, str]] = []
+    if isinstance(factor_versions, list):
+        for item in factor_versions:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("field") or str(item.get("factor_id") or "").removeprefix("factor_") or "").strip()
+            if not name:
+                continue
+            refs.append((name, _signed_factor_direction(item.get("direction"))))
+    if not refs:
+        refs.append((field, _signed_factor_direction(direction)))
+    return refs
+
+
+def factor_rank_predictions(test, field, direction="positive", factor_versions=None):
+    refs = _factor_rank_refs(field, direction=direction, factor_versions=factor_versions)
+    if len(refs) == 1:
+        name, signed = refs[0]
+        predictions = test[["date", "instrument", name]].rename(columns={name: "score"}).dropna()
+        if signed == "negative":
+            predictions = predictions.copy()
+            predictions["score"] = -pd.to_numeric(predictions["score"], errors="coerce")
+            predictions = predictions.dropna(subset=["score"])
+        return predictions
+    dates = test["date"].astype(str)
+    pieces = []
+    for name, signed in refs:
+        if name not in test.columns:
+            raise ValueError(f"研究行情里没有因子字段 {name}。")
+        numeric = pd.to_numeric(test[name], errors="coerce")
+        ranked = numeric.groupby(dates, sort=False).rank(pct=True)
+        if signed == "negative":
+            ranked = 1.0 - ranked
+        pieces.append(ranked)
+    score = sum(pieces) / len(pieces)
+    out = test[["date", "instrument"]].copy()
+    out["score"] = score.to_numpy()
+    return out.dropna(subset=["score"])
 
 
 def _filter_core(frame, section, notes=None):
@@ -715,6 +753,9 @@ def _execute_core(self, run_id):
                 "UPDATE backtest_runs SET status=? WHERE run_id=? AND status IN ('queued', 'failed')",
                 (next_status, run_id),
             )
+            from quantlab.services.backtest_summary import refresh_backtest_summary
+
+            refresh_backtest_summary(connection, run_id)
         self._step(run_id, 1, "running")
         if not path.is_file():
             raise ValueError("找不到研究行情文件。")
@@ -739,11 +780,13 @@ def _execute_core(self, run_id):
             attach_sma(frame)
         filter_notes = []
         train = self._filter(frame, config["train"], filter_notes)
-        feature_fields = [
+        raw_fields = [
             str(item.get("field") or str(item.get("factor_id", "")).removeprefix("factor_"))
             for item in (config.get("factor_versions") or [])
             if item.get("field") or item.get("factor_id")
         ]
+        requested_fields = list(dict.fromkeys(name.strip() for name in raw_fields if name.strip()))
+        feature_fields = list(raw_fields)
         if field not in feature_fields:
             feature_fields.insert(0, field)
         feature_fields = [name for name in dict.fromkeys(feature_fields) if name in train.columns]
@@ -767,9 +810,53 @@ def _execute_core(self, run_id):
             model["filter_notes"] = list(dict.fromkeys(filter_notes))
         booster = None
         predictions = None
-        test = self._filter(frame, config["test"], filter_notes)
+        test = filter_rows_to_segment(frame, self._filter(frame, config["test"], filter_notes), config)
         rolling = walk_forward_mode(config) == "rolling" and kind != "factor_rank"
-        if kind == "factor_rank":
+        if kind == "qlib_lgb_regression":
+            if len(feature_fields) != 1:
+                raise ValueError("Qlib 回归打分这一次只训练一个因子。")
+            span_from, span_to = research_frame_date_span(config)
+            scoring_section = {
+                "date_from": span_from,
+                "date_to": span_to,
+                "filter": dict((config.get("test") or {}).get("filter") or {}),
+            }
+            ordered = frame.sort_values(["instrument", "date"])
+            future = next_close_return(ordered)
+            filtered = self._filter(ordered, scoring_section, filter_notes)
+            predictions = regression_predictions(
+                filtered,
+                feature_fields[0],
+                future.loc[filtered.index],
+                params,
+                num_threads=booster_thread_count(1),
+                seed=123,
+            )
+            model["method"] = "qlib_lightgbm_regression"
+            model["label"] = {"definition": "close -> next close", "portfolio_holding_days": holding_days}
+        elif kind == "qlib_lgb_multi":
+            if len(requested_fields) < 2:
+                raise ValueError("多因子 Qlib 打分至少要两个因子。")
+            span_from, span_to = research_frame_date_span(config)
+            scoring_section = {
+                "date_from": span_from,
+                "date_to": span_to,
+                "filter": dict((config.get("test") or {}).get("filter") or {}),
+            }
+            ordered = frame.sort_values(["instrument", "date"])
+            future = next_close_return(ordered)
+            filtered = self._filter(ordered, scoring_section, filter_notes)
+            predictions = multi_regression_predictions(
+                filtered,
+                requested_fields,
+                future.loc[filtered.index],
+                params,
+                num_threads=booster_thread_count(1),
+                seed=123,
+            )
+            model["method"] = "qlib_lightgbm_multi_regression"
+            model["label"] = {"definition": "close -> next close", "portfolio_holding_days": holding_days}
+        elif kind == "factor_rank":
             model["method"] = "deterministic_factor_rank_proxy"
             model["factor_direction"] = factor_rank_direction(config)
         elif rolling:
@@ -847,8 +934,17 @@ def _execute_core(self, run_id):
         self._step(run_id, 3, "running")
         if kind == "factor_rank":
             direction = factor_rank_direction(config)
-            predictions = factor_rank_predictions(test, field, direction)
+            predictions = factor_rank_predictions(
+                test,
+                field,
+                direction,
+                factor_versions=config.get("factor_versions"),
+            )
             model["factor_direction"] = direction
+            refs = _factor_rank_refs(field, direction=direction, factor_versions=config.get("factor_versions"))
+            if len(refs) > 1:
+                model["factor_blend"] = "equal_cs_rank"
+                model["factor_legs"] = [{"field": name, "direction": signed} for name, signed in refs]
         elif predictions is None:
             if booster is None or not all(name in test.columns for name in feature_fields):
                 raise ValueError("模型没有训练出来。")
@@ -935,6 +1031,9 @@ def _execute_core(self, run_id):
                 "UPDATE run_registry SET finished_at=? WHERE run_id=?",
                 (_now(), run_id),
             )
+            from quantlab.services.backtest_summary import refresh_backtest_summary
+
+            refresh_backtest_summary(connection, run_id)
     except Exception as error:
         failed_ordinal = next(
             (i for i in range(1, len(STEPS) + 1) if self._step_status(run_id, i) in {"pending", "running"}),
@@ -955,6 +1054,9 @@ def _execute_core(self, run_id):
                 "UPDATE run_registry SET finished_at=? WHERE run_id=?",
                 (_now(), run_id),
             )
+            from quantlab.services.backtest_summary import refresh_backtest_summary
+
+            refresh_backtest_summary(connection, run_id)
     return self.get(run_id)
 
 
@@ -1012,6 +1114,9 @@ class BacktestJobService:
                 (run_id,),
             )
             connection.execute("UPDATE run_registry SET finished_at=NULL WHERE run_id=?", (run_id,))
+            from quantlab.services.backtest_summary import refresh_backtest_summary
+
+            refresh_backtest_summary(connection, run_id)
 
     def get(self, run_id):
         run = self.workbench.get(run_id)
@@ -1753,7 +1858,10 @@ def prepare_research_frame(frame, config, raw_root, sidecar_path):
     narrowed = apply_pit_index_universe(frame, raw_root, codes)
     refs = (config or {}).get("factor_versions") or []
     with_factors = attach_pack_factor_columns(narrowed, refs, sidecar_path)
-    return _attach_config_sma(with_factors, config)
+    from quantlab.services.period_bar_gate import attach_period_bar_gate
+
+    gated = attach_period_bar_gate(with_factors, raw_root, (config or {}).get("period_bar_gate"))
+    return _attach_config_sma(gated, config)
 
 
 BacktestJobService._filter = staticmethod(_filter)

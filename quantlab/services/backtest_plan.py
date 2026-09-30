@@ -20,6 +20,7 @@ from quantlab.services.backtest_control import (
     stop_run,
 )
 from quantlab.services.backtest_job import BacktestJobService
+from quantlab.services.model_training import kind_display_name
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
 from quantlab.services.result_sync import delete_plan_snapshot, write_plan_snapshot
 from quantlab.services.settings import max_concurrent_backtests
@@ -136,6 +137,7 @@ def _summary(config: dict[str, Any], names: dict[str, str] | None = None) -> dic
         "model_name": _model_display_name(config, names),
         "walk_forward": config.get("walk_forward") or "once",
         "top_n": config.get("top_n"),
+        "note": str(config.get("note") or "").strip(),
         "model": model,
     }
 

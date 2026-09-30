@@ -212,10 +212,14 @@ def backtest_archive_list(
     page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=200),
     status: str | None = None, strategy: str | None = None, q: str | None = None,
     date_from: str | None = None, date_to: str | None = None,
+    gate: str | None = None, factor: str | None = None,
     sort: str = "created_at", order: Literal["asc", "desc"] = "desc",
 ) -> dict[str, object]:
     try:
-        return request.app.state.result_archive_service.list(page=page, page_size=page_size, status=status, strategy=strategy, query=q, date_from=date_from, date_to=date_to, sort=sort, order=order)
+        return request.app.state.result_archive_service.list(
+            page=page, page_size=page_size, status=status, strategy=strategy, query=q,
+            date_from=date_from, date_to=date_to, gate=gate, factor=factor, sort=sort, order=order,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=_error_payload("BACKTEST_ARCHIVE_INVALID", str(error))) from error
 
@@ -225,10 +229,14 @@ def backtest_archive_export(
     request: Request,
     status: str | None = None, strategy: str | None = None, q: str | None = None,
     date_from: str | None = None, date_to: str | None = None,
+    gate: str | None = None, factor: str | None = None,
     sort: str = "created_at", order: Literal["asc", "desc"] = "desc",
 ) -> Response:
     try:
-        content = request.app.state.result_archive_service.csv_text(status=status, strategy=strategy, query=q, date_from=date_from, date_to=date_to, sort=sort, order=order)
+        content = request.app.state.result_archive_service.csv_text(
+            status=status, strategy=strategy, query=q, date_from=date_from, date_to=date_to,
+            gate=gate, factor=factor, sort=sort, order=order,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=_error_payload("BACKTEST_ARCHIVE_INVALID", str(error))) from error
     return Response(content=content, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=backtest-results.csv"})

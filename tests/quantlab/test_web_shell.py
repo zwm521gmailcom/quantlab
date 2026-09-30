@@ -158,22 +158,6 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert "th.plan-sortable" in css
 
 
-def test_factor_jobs_list_renders_basic_fields_as_a_table() -> None:
-    js = _first_party_js()
-    html = _page("factor_jobs.html")
-    css = Path("quantlab/web/assets/app.css").read_text()
-    assert 'id="factor-jobs-list"' in html
-    assert 'id="factor-jobs-list-pagination"' in html
-    assert 'id="factor-jobs-items-pagination"' in html
-    assert "table-pager.js" in html
-    assert 'class="factor-job-table"' in html
-    assert 'table.className = "factor-job-grid"' in js
-    assert '["任务", "状态", "市场", "区间", "字段", "变换", "窗口", "可勾选", "未达标", "已入库", "创建"]' in js
-    assert ".factor-job-table { max-width: 100%; }" in css
-    assert ".factor-job-grid" in css
-    assert "factor-job-card" not in js
-
-
 def test_research_and_settings_pages_share_the_complete_primary_navigation() -> None:
     nav = Path("quantlab/web/assets/nav.js").read_text()
     for href, label in (
@@ -182,8 +166,7 @@ def test_research_and_settings_pages_share_the_complete_primary_navigation() -> 
         ("/kline", "标准行情宽表"),
         ("/factors", "因子研究"),
         ("/factors/new/manual", "手动建立因子"),
-        ("/research/factor-mining", "自动挖掘因子"),
-        ("/research/factor-jobs", "因子计算任务"),
+        ("/qlib", "Qlib 挖因子"),
         ("/models", "模型中心"),
         ("/backtests/new", "回测中心"),
         ("/backtests/plan", "回测计划"),
@@ -194,7 +177,7 @@ def test_research_and_settings_pages_share_the_complete_primary_navigation() -> 
         assert href in nav
         assert label in nav
     assert "策略中心" not in nav
-    for name in ("factor_manual.html", "factor_mining.html", "settings.html", "result_archive.html"):
+    for name in ("factor_manual.html", "settings.html", "result_archive.html"):
         html = _page(name)
         assert 'class="shell"' in html
         assert '<script src="/assets/nav.js' in html
@@ -239,8 +222,9 @@ def test_grouped_sidebar_asset_declares_data_and_factor_children() -> None:
     assert 'href: "/factors",\n          label: "因子研究"' in nav
     assert 'label: "因子数据"' not in nav
     assert '{ href: "/factors/new/manual", label: "手动建立因子", active:' in nav
-    assert '{ href: "/research/factor-mining", label: "自动挖掘因子", active: under("/research/factor-mining") }' in nav
-    assert '{ href: "/research/factor-jobs", label: "因子计算任务", active: under("/research/factor-jobs") }' in nav
+    assert "自动挖掘因子" not in nav
+    assert '{ href: "/qlib", label: "Qlib 挖因子", active: exact("/qlib") }' in nav
+    assert "因子计算任务" not in nav
     assert ".nav-children" in css
     assert ".nav-subitem" in css
     assert ".nav-parent-active" in css
@@ -405,26 +389,19 @@ def test_file_config_dialog_shows_asset_directory_plan() -> None:
 def test_factor_workflow_pages_share_back_path_and_step_state() -> None:
     app = _first_party_js()
     manual = _page("factor_manual.html")
-    mining = _page("factor_mining.html")
-    for html in (manual, mining):
-        assert 'class="page-back"' in html
-        assert 'href="/factors"' in html
-        assert 'class="workflow-steps"' in html
+    assert 'class="page-back"' in manual
+    assert 'href="/factors"' in manual
+    assert 'class="workflow-steps"' in manual
     assert 'id="manual-factor-steps"' in manual
     assert 'id="canonical-factor-pack"' in manual
     assert "计算验证并入库" in manual
     assert 'id="canonical-factor-pack-list"' in manual
     assert "function loadCanonicalFactorPack" in app
-    assert 'id="factor-mining-steps"' in mining
     assert "function setWorkflowStep" in app
     for heading in ("基本信息", "公式与数据", "计算口径", "点时约束"):
         assert heading in manual
-    for heading in ("数据范围", "时间切分", "公式怎么拼", "筛选与规模"):
-        assert heading in mining
-    assert 'id="mining-field-groups" class="mining-field-groups"' in mining
-    assert "因子库里的因子按交易日 + 股票代码对齐到宽表" in mining
+    assert "loadFactorMiningPage" not in app
     assert "宽表暂无此列，不可用" not in app
-    assert 'appendMiningPicker(box, "因子库"' in app
     css = Path("quantlab/web/assets/app.css").read_text()
     assert '.factor-form-fields input:not([type="checkbox"]):not([type="radio"])' in css
     assert "html.dark .multi-select-toggle" in css

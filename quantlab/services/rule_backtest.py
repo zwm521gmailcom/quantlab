@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -121,6 +122,9 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
             "UPDATE backtest_runs SET status=? WHERE run_id=? AND status IN ('queued', 'failed')",
             (next_status, run_id),
         )
+        from quantlab.services.backtest_summary import refresh_backtest_summary
+
+        refresh_backtest_summary(connection, run_id)
 
     try:
         _run, path, _registered = job_service._path_and_row(run_id)
@@ -147,7 +151,7 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
         params = _signal_params(config)
         params["universe_index_codes"] = list(parse_universe_index_codes(config.get("universe_index_codes")))
         weights = load_index_weight(raw_root, params["universe_index_codes"])
-        signals = generate_signals(history, weights, params)
+        signals = _strategy_signals(str(config.get("rule_strategy_id") or "wiki_trend_follow"), history, weights, params)
         window_signals = _window(signals, date_from, date_to) if signals is not None else signals
         job_service._step(run_id, 4, "completed")
 
@@ -203,11 +207,22 @@ def _membership_error(
 
 
 def _signal_params(config: dict[str, Any]) -> dict[str, Any]:
-    params = {**WIKI_DEFAULTS, **(config.get("params") or {})}
-    for key in WIKI_DEFAULTS:
+    strategy_id = str(config.get("rule_strategy_id") or "wiki_trend_follow").strip() or "wiki_trend_follow"
+    entry = RULE_STRATEGIES.get(strategy_id) or {}
+    defaults = entry.get("defaults") or WIKI_DEFAULTS
+    params = {**defaults, **(config.get("params") or {})}
+    for key in defaults:
         if key in config:
             params[key] = config[key]
     return params
+
+
+def _strategy_signals(strategy_id: str, history: pd.DataFrame, weights: pd.DataFrame, params: dict[str, Any]):
+    entry = RULE_STRATEGIES.get(strategy_id)
+    if entry is None or strategy_id == "wiki_trend_follow":
+        return generate_signals(history, weights, params)
+    module = importlib.import_module(entry["module"])
+    return module.generate_signals(history, params)
 
 
 def _read_frame(
@@ -358,6 +373,9 @@ def _write_success(job_service: Any, run_id: str, trades: list[dict], equity: li
             (next_status, json.dumps(safe_metrics, ensure_ascii=False), run_id),
         )
         connection.execute("UPDATE run_registry SET finished_at=? WHERE run_id=?", (_now(), run_id))
+        from quantlab.services.backtest_summary import refresh_backtest_summary
+
+        refresh_backtest_summary(connection, run_id)
 
 
 def _write_failure(job_service: Any, run_id: str, message: str) -> None:
@@ -382,3 +400,6 @@ def _write_failure(job_service: Any, run_id: str, message: str) -> None:
             (next_status, message, run_id),
         )
         connection.execute("UPDATE run_registry SET finished_at=? WHERE run_id=?", (_now(), run_id))
+        from quantlab.services.backtest_summary import refresh_backtest_summary
+
+        refresh_backtest_summary(connection, run_id)

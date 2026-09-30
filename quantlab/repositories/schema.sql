@@ -298,6 +298,51 @@ CREATE TABLE IF NOT EXISTS backtest_steps (
     PRIMARY KEY (run_id, ordinal),
     FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE RESTRICT
 );
+CREATE TABLE IF NOT EXISTS backtest_summaries (
+    run_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL DEFAULT '',
+    machine_id TEXT NOT NULL DEFAULT '',
+    strategy_entity_id TEXT NOT NULL DEFAULT '',
+    strategy_name TEXT NOT NULL DEFAULT '',
+    factor_names TEXT NOT NULL DEFAULT '',
+    date_from TEXT NOT NULL DEFAULT '',
+    date_to TEXT NOT NULL DEFAULT '',
+    top_n INTEGER,
+    weighting TEXT NOT NULL DEFAULT '',
+    holding_days INTEGER,
+    rebalance_every INTEGER,
+    rebalance_mode TEXT NOT NULL DEFAULT '',
+    slippage REAL,
+    gate_key TEXT NOT NULL DEFAULT '',
+    factor_key TEXT NOT NULL DEFAULT '',
+    benchmark TEXT NOT NULL DEFAULT '',
+    total_return REAL,
+    annual_return REAL,
+    sharpe REAL,
+    sortino REAL,
+    calmar REAL,
+    max_drawdown REAL,
+    max_loss_streak INTEGER,
+    win_rate REAL,
+    benchmark_return REAL,
+    excess_return REAL,
+    turnover REAL,
+    capital_usage REAL,
+    rank_ic REAL,
+    ndcg_at_10 REAL,
+    created_at TEXT NOT NULL DEFAULT '',
+    finished_at TEXT,
+    FOREIGN KEY (run_id) REFERENCES backtest_runs(run_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS backtest_summaries_status_idx ON backtest_summaries(status, created_at DESC, run_id DESC);
+CREATE INDEX IF NOT EXISTS backtest_summaries_gate_idx ON backtest_summaries(gate_key);
+CREATE INDEX IF NOT EXISTS backtest_summaries_factor_idx ON backtest_summaries(factor_key);
+CREATE INDEX IF NOT EXISTS backtest_summaries_window_idx ON backtest_summaries(date_from, date_to);
+CREATE INDEX IF NOT EXISTS backtest_summaries_return_idx ON backtest_summaries(total_return);
+CREATE INDEX IF NOT EXISTS backtest_summaries_drawdown_idx ON backtest_summaries(max_drawdown);
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
     run_id TEXT NOT NULL,

@@ -17,7 +17,7 @@ from pyarrow.lib import ArrowInvalid
 from quantlab.config import Settings
 from quantlab.repositories.database import Database
 from quantlab.services.machine_identity import load_machine_identity
-from quantlab.services.model_training import model_center_name
+from quantlab.services.model_training import model_center_name, normalize_hyperparams
 from quantlab.services.run_identity import RunIdentity
 from quantlab.services.trade_filters import normalize_trade_filters, split_open_filters
 
@@ -159,6 +159,7 @@ class BacktestWorkbenchService:
         scalar_missing = [k for k in ("name", "dataset_id", "dataset_version_id") if not str(c.get(k, "")).strip()]
         if scalar_missing:
             raise ValueError("missing config: " + ", ".join(scalar_missing))
+        c["note"] = str(c.get("note") or "").strip()
         allowed_scopes = {"中国A股（SH/SZ）", "沪市（SH）", "深市（SZ）"}
         scope = str(c.get("stock_scope") or "中国A股（SH/SZ）").strip()
         if scope not in allowed_scopes:
@@ -191,7 +192,34 @@ class BacktestWorkbenchService:
         if isinstance(c.get("validation"), dict):
             c["validation"]["stock_scope"] = scope
         kind = str(c.get("kind") or (c.get("model") or {}).get("kind") or "").strip()
-        if kind == "factor_rank":
+        if kind == "qlib_lgb_regression":
+            c["walk_forward"] = "once"
+            c["hyperparameters"] = normalize_hyperparams(c.get("hyperparameters"), kind=kind)
+            if len(c.get("factor_versions") or []) != 1:
+                raise ValueError("Qlib 回归打分这一次只训练一个因子。")
+            params = c["hyperparameters"]
+            if _ymd(c["train"]["date_from"]) > _ymd(params["train_end"]):
+                raise ValueError("训练开始日不能晚于训练结束日。")
+            if _ymd(c["test"]["date_from"]) <= _ymd(params["valid_end"]):
+                raise ValueError("测试开始日要晚于验证结束日。")
+        elif kind == "qlib_lgb_multi":
+            c["walk_forward"] = "once"
+            c["hyperparameters"] = normalize_hyperparams(c.get("hyperparameters"), kind=kind)
+            names = []
+            for item in c.get("factor_versions") or []:
+                if not isinstance(item, dict):
+                    continue
+                raw_name = str(item.get("field") or str(item.get("factor_id") or "").removeprefix("factor_")).strip()
+                if raw_name:
+                    names.append(raw_name)
+            if len(dict.fromkeys(names)) < 2:
+                raise ValueError("多因子 Qlib 打分至少要两个因子。")
+            params = c["hyperparameters"]
+            if _ymd(c["train"]["date_from"]) > _ymd(params["train_end"]):
+                raise ValueError("训练开始日不能晚于训练结束日。")
+            if _ymd(c["test"]["date_from"]) <= _ymd(params["valid_end"]):
+                raise ValueError("测试开始日要晚于验证结束日。")
+        elif kind == "factor_rank":
             c["walk_forward"] = "once"
         else:
             from quantlab.services.backtest_job import (
@@ -242,6 +270,10 @@ class BacktestWorkbenchService:
             raise ValueError("持仓天数要填正整数") from None
         if c["holding_days"] < 1:
             raise ValueError("持仓天数要填正整数")
+        mode = str(c.get("rebalance_mode") or "slot").strip().lower()
+        if mode not in {"slot", "target_weight"}:
+            raise ValueError("调仓方式要选槽位到期或目标权重")
+        c["rebalance_mode"] = mode
         buy_price = str(c.get("buy_price") or "open")
         sell_price = str(c.get("sell_price") or "close")
         if buy_price not in {"open", "hfq_open"}:
@@ -340,8 +372,15 @@ class BacktestWorkbenchService:
         _, fill_exprs = split_open_filters(c["trade_filters"]["open"])
         c["skip_open_limit"] = bool(fill_exprs)
         c["buy_fee_minimum"], c["sell_fee_minimum"] = float(c["buy_fee_minimum"]), float(c["sell_fee_minimum"])
+        from quantlab.services.bucket_equity import normalize_segment_limit
+
+        limit = normalize_segment_limit(c.get("segment_limit"))
+        if limit is None:
+            c.pop("segment_limit", None)
+        else:
+            c["segment_limit"] = limit
         c["content_hash"] = hashlib.sha256(
-            _json({k: v for k, v in c.items() if k not in {"content_hash", "submission_token"}}).encode()
+            _json({k: v for k, v in c.items() if k not in {"content_hash", "submission_token", "note"}}).encode()
         ).hexdigest()
         return c
 
@@ -380,6 +419,9 @@ class BacktestWorkbenchService:
                         token,
                     ),
                 )
+                from quantlab.services.backtest_summary import refresh_backtest_summary
+
+                refresh_backtest_summary(db, run_id)
         return self.get(existing_id or run_id) or {}
 
     def save_draft(

@@ -129,6 +129,15 @@ function applyKindDefaults(spec) {
   }
   if (kind === "elastic_net") setInputValue("model-l1-ratio", params.l1_ratio);
   if (kind === "huber") setInputValue("model-epsilon", params.epsilon);
+  if (kind === "qlib_lgb_regression" || kind === "qlib_lgb_multi") {
+    setInputValue("model-qlib-learning-rate", params.learning_rate ?? 0.05);
+    setInputValue("model-qlib-leaves", params.num_leaves ?? 15);
+    setInputValue("model-qlib-min-samples", params.min_child_samples ?? 20);
+    setInputValue("model-qlib-trees", params.number_of_trees ?? 80);
+    setInputValue("model-qlib-early-stopping", params.early_stopping_rounds ?? 10);
+    setInputValue("model-qlib-train-end", params.train_end || "2022-12-31");
+    setInputValue("model-qlib-valid-end", params.valid_end || "2024-12-31");
+  }
 }
 
 function modelHyperparamsFromForm(kind) {
@@ -184,6 +193,18 @@ function modelHyperparamsFromForm(kind) {
       alpha: Number(document.getElementById("model-alpha")?.value || 0.0001),
       epsilon: Number(document.getElementById("model-epsilon")?.value || 1.35),
       ...protocol,
+    };
+  }
+  if (current === "qlib_lgb_regression" || current === "qlib_lgb_multi") {
+    return {
+      learning_rate: Number(document.getElementById("model-qlib-learning-rate")?.value || 0.05),
+      num_leaves: Number(document.getElementById("model-qlib-leaves")?.value || 15),
+      min_child_samples: Number(document.getElementById("model-qlib-min-samples")?.value || 20),
+      number_of_trees: Number(document.getElementById("model-qlib-trees")?.value || 80),
+      early_stopping_rounds: Number(document.getElementById("model-qlib-early-stopping")?.value || 10),
+      train_end: document.getElementById("model-qlib-train-end")?.value || "2022-12-31",
+      valid_end: document.getElementById("model-qlib-valid-end")?.value || "2024-12-31",
+      walk_forward: "once",
     };
   }
   return protocol;
@@ -364,6 +385,18 @@ function kindParamRows(kind, params) {
   }
   if (kind === "ols") return protocol;
   if (kind === "factor_rank") return [["无可改参数", "不训练", "none_rank"]];
+  if (kind === "qlib_lgb_regression" || kind === "qlib_lgb_multi") {
+    return [
+      ["学习率", params.learning_rate, "learning_rate"],
+      ["叶节点", params.num_leaves, "num_leaves"],
+      ["最小样本", params.min_child_samples, "min_child_samples"],
+      ["最多轮数", params.number_of_trees, "number_of_trees"],
+      ["早停轮数", params.early_stopping_rounds, "early_stopping_rounds"],
+      ["训练结束日", params.train_end, "train_end"],
+      ["验证结束日", params.valid_end, "valid_end"],
+      ["训练方式", "一次训练", "walk_forward"],
+    ];
+  }
   return protocol;
 }
 

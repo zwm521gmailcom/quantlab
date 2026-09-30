@@ -38,9 +38,9 @@ function populateFactorCategoryFilter(items) {
     dropdown.append(label);
   });
   root.dataset.filled = "1";
-  bindMultiSelect(root);
   dropdown.addEventListener("change", () => {
     factorCatalogPage = 1;
+    saveFactorCatalogState();
     renderFactorCatalog(factorCatalogAll);
   });
 }
@@ -57,8 +57,155 @@ function factorHeaderCell(label, explanationLines) {
 
 let factorCatalogAll = [];
 let factorCatalogPage = 1;
+let factorSelected = new Set();
+let factorScrollRestore = null;
 const FACTOR_PAGE_SIZES = [50, 100, 200, 500];
 const FACTOR_PAGE_SIZE_KEY = "quantlab-factor-page-size";
+const FACTOR_CATALOG_STATE_KEY = "quantlab-factor-catalog-state";
+
+function factorCategoryBoxes() {
+  return [...document.querySelectorAll("#factor-category-filter input[name='factor-category']")];
+}
+
+function factorCatalogFiltered(items = factorCatalogAll) {
+  const query = (document.getElementById("factor-name-search")?.value || "").trim().toLowerCase();
+  const assetClass = document.getElementById("factor-asset-class")?.value || "";
+  const categoryBoxes = factorCategoryBoxes();
+  const selectedCategories = new Set(categoryBoxes.filter((box) => box.checked).map((box) => box.value));
+  return items.filter((item) => {
+    if (assetClass && String(item.asset_class || "cn_a") !== assetClass) return false;
+    if (categoryBoxes.length && !selectedCategories.has(String(item.category || "未分类").trim() || "未分类")) return false;
+    if (!query) return true;
+    return String(item.name || "").toLowerCase().includes(query) || String(item.factor_id || "").toLowerCase().includes(query);
+  });
+}
+
+function saveFactorCatalogState() {
+  const state = {
+    search: document.getElementById("factor-name-search")?.value || "",
+    assetClass: document.getElementById("factor-asset-class")?.value || "",
+    factor: document.getElementById("factor-filter")?.value || "",
+    categories: factorCategoryBoxes().map((box) => ({value: box.value, checked: box.checked})),
+    dateFrom: document.getElementById("factor-date-from")?.value || "",
+    dateTo: document.getElementById("factor-date-to")?.value || "",
+    page: factorCatalogPage,
+    pageSize: factorCatalogPageSize(),
+    selected: [...factorSelected],
+    scrollY: window.scrollY,
+  };
+  try { sessionStorage.setItem(FACTOR_CATALOG_STATE_KEY, JSON.stringify(state)); } catch (_error) {}
+}
+
+function applyFactorCatalogState() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(FACTOR_CATALOG_STATE_KEY) || "null"); } catch (_error) {}
+  if (!saved || typeof saved !== "object") return;
+  const search = document.getElementById("factor-name-search");
+  const assetClass = document.getElementById("factor-asset-class");
+  const factor = document.getElementById("factor-filter");
+  const dateFrom = document.getElementById("factor-date-from");
+  const dateTo = document.getElementById("factor-date-to");
+  if (search && typeof saved.search === "string") search.value = saved.search;
+  if (assetClass && typeof saved.assetClass === "string") assetClass.value = saved.assetClass;
+  if (factor && typeof saved.factor === "string") factor.value = saved.factor;
+  if (dateFrom && typeof saved.dateFrom === "string") dateFrom.value = saved.dateFrom;
+  if (dateTo && typeof saved.dateTo === "string") dateTo.value = saved.dateTo;
+  if (Array.isArray(saved.categories)) {
+    const checked = new Map(saved.categories.map((item) => [String(item.value), Boolean(item.checked)]));
+    factorCategoryBoxes().forEach((box) => {
+      if (checked.has(box.value)) box.checked = checked.get(box.value);
+    });
+  }
+  if (Array.isArray(saved.selected)) factorSelected = new Set(saved.selected.map(String));
+  if (Number.isInteger(saved.page) && saved.page > 0) factorCatalogPage = saved.page;
+  const pageSize = Number(saved.pageSize);
+  if (FACTOR_PAGE_SIZES.includes(pageSize)) {
+    try { localStorage.setItem(FACTOR_PAGE_SIZE_KEY, String(pageSize)); } catch (_error) {}
+    factorPageSizeSelects().forEach((select) => { select.value = String(pageSize); });
+  }
+  if (Number.isFinite(Number(saved.scrollY))) factorScrollRestore = Number(saved.scrollY);
+}
+
+function syncFactorSelectControls(filtered) {
+  const allOn = filtered.length > 0 && filtered.every((item) => factorSelected.has(item.factor_id));
+  const someOn = filtered.some((item) => factorSelected.has(item.factor_id));
+  const header = document.getElementById("factor-select-all");
+  if (header) {
+    header.checked = allOn;
+    header.indeterminate = someOn && !allOn;
+  }
+  const toggle = document.getElementById("factor-select-filtered");
+  if (toggle && toggle.dataset.running !== "1") toggle.textContent = allOn ? "取消全选" : "全选";
+  const run = document.getElementById("factor-run-selected");
+  if (run && run.dataset.running !== "1") {
+    const count = factorCatalogAll.filter((item) => factorSelected.has(item.factor_id)).length;
+    run.disabled = count === 0;
+    run.textContent = count ? `运行分析（${count}）` : "运行分析";
+  }
+}
+
+function toggleFilteredFactorSelection() {
+  const filtered = factorCatalogFiltered();
+  const allOn = filtered.length > 0 && filtered.every((item) => factorSelected.has(item.factor_id));
+  filtered.forEach((item) => {
+    if (allOn) factorSelected.delete(item.factor_id);
+    else factorSelected.add(item.factor_id);
+  });
+  saveFactorCatalogState();
+  renderFactorCatalog(factorCatalogAll);
+}
+
+async function runSelectedFactorAnalysis() {
+  const button = document.getElementById("factor-run-selected");
+  const status = document.getElementById("factor-run-status");
+  const error = document.getElementById("factor-error");
+  const targets = factorCatalogAll.filter((item) => factorSelected.has(item.factor_id));
+  if (!button || !targets.length || button.dataset.running === "1") return;
+  const dateFrom = document.getElementById("factor-date-from")?.value.trim() || "";
+  const dateTo = document.getElementById("factor-date-to")?.value.trim() || "";
+  button.dataset.running = "1";
+  button.disabled = true;
+  const selectButton = document.getElementById("factor-select-filtered");
+  if (selectButton) selectButton.dataset.running = "1";
+  if (error) error.classList.add("hidden");
+  let failed = 0;
+  for (let index = 0; index < targets.length; index += 1) {
+    const item = targets[index];
+    if (status) status.textContent = `正在计算 ${index + 1}/${targets.length}：${item.name}`;
+    const body = {
+      factor_id: item.factor_id,
+      version_id: item.factor_version_id || item.version_id || "v1",
+    };
+    if (dateFrom) body.date_from = dateFrom;
+    if (dateTo) body.date_to = dateTo;
+    try {
+      const response = await fetch("/api/factor-calculations", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) failed += 1;
+    } catch (_error) {
+      failed += 1;
+    }
+  }
+  button.dataset.running = "";
+  if (selectButton) selectButton.dataset.running = "";
+  if (status) {
+    status.textContent = failed
+      ? `完成 ${targets.length - failed} 条，失败 ${failed} 条。`
+      : `已完成 ${targets.length} 条分析。`;
+  }
+  try {
+    renderFactorCatalog(await fetchFactorCatalog());
+  } catch (errorValue) {
+    if (error) {
+      error.textContent = `分析后刷新目录失败：${errorValue.message}`;
+      error.classList.remove("hidden");
+    }
+    syncFactorSelectControls(factorCatalogFiltered());
+  }
+}
 
 function factorPageSizeSelects() {
   return [...document.querySelectorAll("[data-factor-page-size], #factor-page-size")];
@@ -111,6 +258,7 @@ function ensureFactorPageSizeControl() {
       try { localStorage.setItem(FACTOR_PAGE_SIZE_KEY, select.value); } catch (_error) {}
       factorCatalogPage = 1;
       factorPageSizeSelects().forEach((other) => { other.value = select.value; });
+      saveFactorCatalogState();
       renderFactorCatalog(factorCatalogAll);
     });
     select.dataset.bound = "1";
@@ -123,16 +271,7 @@ function renderFactorCatalog(items) {
   ensureFactorPageSizeControl();
   const table = document.getElementById("factor-table");
   const empty = document.getElementById("factor-empty");
-  const query = (document.getElementById("factor-name-search")?.value || "").trim().toLowerCase();
-  const assetClass = document.getElementById("factor-asset-class")?.value || "";
-  const categoryBoxes = [...document.querySelectorAll("#factor-category-filter input[name='factor-category']")];
-  const selectedCategories = new Set(categoryBoxes.filter((box) => box.checked).map((box) => box.value));
-  const filtered = items.filter((item) => {
-    if (assetClass && String(item.asset_class || "cn_a") !== assetClass) return false;
-    if (categoryBoxes.length && !selectedCategories.has(String(item.category || "未分类").trim() || "未分类")) return false;
-    if (!query) return true;
-    return String(item.name || "").toLowerCase().includes(query) || String(item.factor_id || "").toLowerCase().includes(query);
-  });
+  const filtered = factorCatalogFiltered(items);
   const totalFiltered = filtered.length;
   const pageSize = factorCatalogPageSize();
   const pages = Math.max(1, Math.ceil(totalFiltered / pageSize));
@@ -146,8 +285,21 @@ function renderFactorCatalog(items) {
   if (label) label.textContent = `第 ${factorCatalogPage} / ${pages} 页 · 共 ${totalFiltered} 个`;
   table.replaceChildren();
   empty.classList.toggle("hidden", totalFiltered !== 0);
+  syncFactorSelectControls(filtered);
+  if (factorScrollRestore != null) {
+    const scrollY = factorScrollRestore;
+    factorScrollRestore = null;
+    requestAnimationFrame(() => window.scrollTo(0, scrollY));
+  }
   if (!totalFiltered) return;
   const header = appendFactorText(table, "div", "factor-row factor-header", "");
+  const selectAllCell = appendFactorText(header, "span", "factor-select-cell", "");
+  const selectAll = document.createElement("input");
+  selectAll.type = "checkbox";
+  selectAll.id = "factor-select-all";
+  selectAll.setAttribute("aria-label", "全选当前筛选结果");
+  selectAll.addEventListener("change", toggleFilteredFactorSelection);
+  selectAllCell.append(selectAll);
   appendFactorText(header, "span", null, "因子代码");
   appendFactorText(header, "span", null, "因子名称");
   appendFactorText(header, "span", null, "资产分类");
@@ -159,12 +311,26 @@ function renderFactorCatalog(items) {
   header.append(factorHeaderCell("IC 稳定性", ["每日 IC 的标准差。", "标准差越小，因子预测能力越稳定。"]));
   header.append(factorHeaderCell("最近计算", ["最近一次真实计算的流水号、年份与有效交易日数。"]));
   appendFactorText(header, "span", null, "状态");
+  syncFactorSelectControls(filtered);
   items.forEach((item) => {
     const row = appendFactorText(table, "div", "factor-row", "");
+    const selectCell = appendFactorText(row, "span", "factor-select-cell", "");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = factorSelected.has(item.factor_id);
+    checkbox.setAttribute("aria-label", `选择 ${item.name}`);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) factorSelected.add(item.factor_id);
+      else factorSelected.delete(item.factor_id);
+      saveFactorCatalogState();
+      syncFactorSelectControls(factorCatalogFiltered());
+    });
+    selectCell.append(checkbox);
     appendFactorText(row, "span", "factor-code", item.factor_id);
     const factorCell = appendFactorText(row, "span", "factor-name-cell", "");
     const name = appendFactorText(factorCell, "a", "factor-name", item.name);
     name.href = `/factors/${encodeURIComponent(item.factor_id)}`;
+    name.addEventListener("click", () => saveFactorCatalogState());
     factorCell.append(infoDot("因子说明", [`${item.factor_id} ${item.name}`, item.formula, ...(item.formula_explanation || [])].filter(Boolean)));
     appendFactorText(row, "span", "factor-asset-class", item.asset_class_label || "A股");
     appendFactorText(row, "span", "factor-category", item.category || "未分类");
@@ -210,11 +376,19 @@ async function loadFactors() {
     const items = await fetchFactorCatalog();
     populateFactorFilter(items);
     populateFactorCategoryFilter(items);
+    applyFactorCatalogState();
+    const categoryFilter = document.getElementById("factor-category-filter");
+    if (categoryFilter) bindMultiSelect(categoryFilter);
     renderFactorCatalog(items);
-    document.getElementById("factor-name-search")?.addEventListener("input", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
-    document.getElementById("factor-asset-class")?.addEventListener("change", () => { factorCatalogPage = 1; renderFactorCatalog(factorCatalogAll); });
-    document.getElementById("factor-page-prev")?.addEventListener("click", () => { factorCatalogPage = Math.max(1, factorCatalogPage - 1); renderFactorCatalog(factorCatalogAll); });
-    document.getElementById("factor-page-next")?.addEventListener("click", () => { factorCatalogPage += 1; renderFactorCatalog(factorCatalogAll); });
+    document.getElementById("factor-name-search")?.addEventListener("input", () => { factorCatalogPage = 1; saveFactorCatalogState(); renderFactorCatalog(factorCatalogAll); });
+    document.getElementById("factor-asset-class")?.addEventListener("change", () => { factorCatalogPage = 1; saveFactorCatalogState(); renderFactorCatalog(factorCatalogAll); });
+    document.getElementById("factor-filter")?.addEventListener("change", () => saveFactorCatalogState());
+    document.getElementById("factor-date-from")?.addEventListener("change", () => saveFactorCatalogState());
+    document.getElementById("factor-date-to")?.addEventListener("change", () => saveFactorCatalogState());
+    document.getElementById("factor-select-filtered")?.addEventListener("click", toggleFilteredFactorSelection);
+    document.getElementById("factor-run-selected")?.addEventListener("click", () => { runSelectedFactorAnalysis(); });
+    document.getElementById("factor-page-prev")?.addEventListener("click", () => { factorCatalogPage = Math.max(1, factorCatalogPage - 1); saveFactorCatalogState(); renderFactorCatalog(factorCatalogAll); });
+    document.getElementById("factor-page-next")?.addEventListener("click", () => { factorCatalogPage += 1; saveFactorCatalogState(); renderFactorCatalog(factorCatalogAll); });
   } catch (errorValue) {
     error.textContent = `因子目录加载失败：${errorValue.message}`;
     error.classList.remove("hidden");

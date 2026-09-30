@@ -13,5 +13,5 @@ def test_legacy_factor_research_routes_redirect_to_factor_workflows(browser_serv
     expect(page.get_by_role("heading", name="手动建立因子")).to_be_visible()
 
     page.goto(f"{browser_server}/research/factors/auto")
-    expect(page).to_have_url(f"{browser_server}/research/factor-mining")
-    expect(page.get_by_role("heading", name="自动挖掘因子")).to_be_visible()
+    expect(page).to_have_url(f"{browser_server}/qlib")
+    expect(page.get_by_role("heading", name="Qlib 挖因子")).to_be_visible()

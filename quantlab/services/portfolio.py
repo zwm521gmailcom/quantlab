@@ -258,6 +258,51 @@ def _fill_orders(
     return {instrument: 1.0 / slots for instrument in picked}
 
 
+def _rank_targets(candidates: pd.DataFrame, top_n: int) -> list[str]:
+    if candidates is None or getattr(candidates, "empty", True):
+        return []
+    ranked = candidates.sort_values(["score", "instrument"], ascending=[False, True])
+    names: list[str] = []
+    seen: set[str] = set()
+    for instrument in ranked["instrument"].astype(str):
+        if instrument in seen:
+            continue
+        seen.add(instrument)
+        names.append(instrument)
+        if len(names) >= max(int(top_n), 1):
+            break
+    return names
+
+
+def _target_entry_weights(
+    candidates: pd.DataFrame,
+    targets: list[str],
+    held: set[str],
+    top_n: int,
+    weighting: str,
+) -> dict[str, float]:
+    newcomers = [name for name in targets if name not in held]
+    if not newcomers:
+        return {}
+    slots = max(int(top_n), 1)
+    if weighting == "score" and candidates is not None and not getattr(candidates, "empty", True):
+        scores: dict[str, float] = {}
+        ranked = candidates.sort_values(["score", "instrument"], ascending=[False, True])
+        for instrument, score in zip(
+            ranked["instrument"].astype(str),
+            pd.to_numeric(ranked["score"], errors="coerce"),
+            strict=False,
+        ):
+            if instrument in scores or instrument not in newcomers:
+                continue
+            scores[instrument] = max(float(score or 0), 0.0)
+        total = sum(scores.values())
+        budget = len(newcomers) / slots
+        if total > 0:
+            return {name: budget * scores.get(name, 0.0) / total for name in newcomers}
+    return {name: 1.0 / slots for name in newcomers}
+
+
 def _fit_buy(
     cash: float,
     price: float,
@@ -342,6 +387,69 @@ def _close_lots(
     return trades
 
 
+def equity_curve_from_filled(
+    trades: list[dict[str, Any]],
+    dates: list[str],
+    prices: dict[tuple[str, str], float],
+    initial_capital: float,
+) -> list[dict[str, Any]]:
+    """Equity from filled round-trips only. Unfilled orders do not move cash or the curve."""
+    buys: dict[str, list[dict[str, Any]]] = {}
+    sells: dict[str, list[dict[str, Any]]] = {}
+    for trade in trades:
+        if str(trade.get("status") or "") != "filled":
+            continue
+        buys.setdefault(str(trade.get("buy_date") or ""), []).append(trade)
+        sells.setdefault(str(trade.get("sell_date") or ""), []).append(trade)
+    cash = float(initial_capital)
+    positions: dict[str, int] = {}
+    last_price: dict[str, float] = {}
+    curve: list[dict[str, Any]] = []
+    for day in dates:
+        day = str(day)
+        for trade in buys.get(day, []):
+            cash -= float(trade.get("buy_amount") or 0) + float(trade.get("buy_fee") or 0)
+            name = str(trade.get("instrument") or "")
+            positions[name] = int(positions.get(name, 0)) + int(trade.get("quantity") or 0)
+        for trade in sells.get(day, []):
+            cash += float(trade.get("sell_amount") or 0) - float(trade.get("sell_fee") or 0) - float(trade.get("stamp_tax") or 0)
+            name = str(trade.get("instrument") or "")
+            positions[name] = int(positions.get(name, 0)) - int(trade.get("quantity") or 0)
+            if positions.get(name, 0) <= 0:
+                positions.pop(name, None)
+        invested = 0.0
+        for name, quantity in positions.items():
+            if quantity <= 0:
+                continue
+            price = prices.get((name, day))
+            if price is None:
+                price = last_price.get(name)
+            else:
+                last_price[name] = float(price)
+            if price is None:
+                continue
+            invested += quantity * float(price)
+        curve.append({"date": day, "equity": cash + invested, "cash": cash, "invested": invested})
+    return curve
+
+
+def _close_prices(frame: pd.DataFrame, column: str) -> dict[tuple[str, str], float]:
+    prices: dict[tuple[str, str], float] = {}
+    if frame is None or getattr(frame, "empty", True) or column not in frame.columns:
+        return prices
+    dates = frame["date"].astype(str).str.replace("-", "", regex=False).str[:8]
+    names = frame["instrument"].astype(str) if "instrument" in frame.columns else frame["ts_code"].astype(str)
+    values = pd.to_numeric(frame[column], errors="coerce")
+    for name, day, price in zip(names, dates, values, strict=False):
+        if price is None or (isinstance(price, float) and (math.isnan(price) or math.isinf(price))):
+            continue
+        number = float(price)
+        if math.isnan(number) or math.isinf(number):
+            continue
+        prices[(str(name), str(day))] = number
+    return prices
+
+
 def run_portfolio(
     frame: pd.DataFrame,
     predictions: pd.DataFrame,
@@ -356,6 +464,8 @@ def run_portfolio(
         return [], []
     rebalance_every = max(int(config.get("rebalance_every") or 1), 1)
     holding_days = max(int(config.get("holding_days") or 2), 1)
+    rebalance_mode = str(config.get("rebalance_mode") or "slot").strip().lower()
+    target_weight_mode = rebalance_mode == "target_weight"
     signal_dates = set(test_dates[::rebalance_every])
     top_n = max(int(config.get("top_n") or 1), 1)
     lot_size = max(int(config.get("lot_size") or 100), 1)
@@ -400,6 +510,7 @@ def run_portfolio(
     lots: list[dict[str, Any]] = []
     pending = None
     pending_signal = None
+    pending_exits: set[str] | None = None
     trades: list[dict[str, Any]] = []
     curve: list[dict[str, Any]] = []
     scored = predictions.copy()
@@ -428,21 +539,28 @@ def run_portfolio(
         sell_date: str,
         row,
         reason_date: str,
-    ) -> None:
+        *,
+        fill_column: str | None = None,
+        check_close_limit: bool = True,
+        check_fill_down_limit: bool = False,
+    ) -> bool:
         nonlocal cash
         if quantity <= 0:
-            return
+            return False
         if bool(row.get("suspended", False)):
             record_unfilled(reason_date, instrument, reason_date, sell_date)
-            return
+            return False
         close_px = _finite_price(row, "close")
-        fill_px = _finite_price(row, sell_col)
-        if close_px is None or fill_px is None:
+        fill_px = _finite_price(row, fill_column or sell_col)
+        if fill_px is None or (check_close_limit and close_px is None):
             record_unfilled(reason_date, instrument, reason_date, sell_date)
-            return
-        if skip_close_down_limit and _at_limit(close_px, _finite_price(row, "down_limit"), "down"):
+            return False
+        down_limit = _finite_price(row, "down_limit")
+        close_blocked = check_close_limit and skip_close_down_limit and _at_limit(close_px, down_limit, "down")
+        fill_blocked = check_fill_down_limit and skip_close_down_limit and _at_limit(fill_px, down_limit, "down")
+        if close_blocked or fill_blocked:
             record_unfilled(reason_date, instrument, reason_date, sell_date)
-            return
+            return False
         sell_price = fill_px * (1 - slippage)
         sell_amount = quantity * sell_price
         sell_fee = max(sell_amount * sell_fee_rate, sell_fee_min) if sell_amount else 0.0
@@ -454,6 +572,7 @@ def run_portfolio(
         trades.extend(
             _close_lots(lots, instrument, quantity, sell_date, sell_price, sell_fee, stamp_tax)
         )
+        return True
 
     def apply_pending(day: str, rows) -> None:
         nonlocal cash, pending, pending_signal
@@ -506,11 +625,54 @@ def run_portfolio(
         pending = None
         pending_signal = None
 
+    def apply_pending_exits(day: str, rows) -> set[str]:
+        nonlocal pending_exits
+        blocked: set[str] = set()
+        if not pending_exits:
+            pending_exits = None
+            return blocked
+        reason_date = pending_signal or day
+        for instrument in list(pending_exits):
+            quantity = int(positions.get(instrument, 0))
+            if quantity <= 0:
+                continue
+            row = rows.get(instrument)
+            if row is None:
+                record_unfilled(reason_date, instrument, day, day)
+                continue
+            sold = sell_instrument(
+                instrument,
+                quantity,
+                day,
+                row,
+                reason_date=reason_date,
+                fill_column=buy_col,
+                check_close_limit=False,
+                check_fill_down_limit=True,
+            )
+            if (
+                not sold
+                and skip_close_down_limit
+                and int(positions.get(instrument, 0)) > 0
+                and _at_limit(_finite_price(row, buy_col), _finite_price(row, "down_limit"), "down")
+            ):
+                blocked.add(instrument)
+        pending_exits = None
+        return blocked
+
+    carry_exits: set[str] = set()
     for day in loop_dates:
         rows = _day_rows(frame, day)
+        if target_weight_mode and carry_exits:
+            pending_exits = set(pending_exits or ()) | {
+                name for name in carry_exits if int(positions.get(name, 0)) > 0
+            }
+        blocked_down: set[str] = set()
+        if pending_exits is not None:
+            blocked_down = apply_pending_exits(day, rows)
         if pending is not None:
             apply_pending(day, rows)
-        if day != last_test:
+        if day != last_test and not target_weight_mode:
             due: dict[str, int] = {}
             for lot in lots:
                 sell_on = _offset_date(market, str(lot["buy_date"]), holding_days)
@@ -528,7 +690,9 @@ def run_portfolio(
         if day in signal_dates and day != last_test:
             if allowed_opens is not None and day not in allowed_opens:
                 pending = {}
+                pending_exits = set()
                 pending_signal = day
+                carry_exits = blocked_down
             else:
                 day_preds = scored if scored.empty else scored.loc[scored["date"] == day]
                 if membership_allow is not None:
@@ -547,9 +711,21 @@ def run_portfolio(
                             continue
                         allowed.add(str(instrument))
                     day_preds = day_preds.loc[day_preds["instrument"].astype(str).isin(allowed)]
-                empty = max(top_n - _held_count(positions), 0)
-                pending = _fill_orders(day_preds, set(positions), empty, top_n, weighting)
-                pending_signal = day
+                if target_weight_mode:
+                    targets = _rank_targets(day_preds, top_n)
+                    held = {name for name, quantity in positions.items() if quantity > 0}
+                    pending_exits = held - set(targets)
+                    carry_exits = blocked_down - set(targets)
+                    pending = _target_entry_weights(day_preds, targets, held, top_n, weighting)
+                    pending_signal = day
+                else:
+                    empty = max(top_n - _held_count(positions), 0)
+                    pending = _fill_orders(day_preds, set(positions), empty, top_n, weighting)
+                    pending_signal = day
+                    pending_exits = None
+                    carry_exits = set()
+        elif day != last_test:
+            carry_exits = blocked_down
         if day == last_test:
             for instrument in list(positions):
                 row = rows.get(instrument)
@@ -564,7 +740,15 @@ def run_portfolio(
                 )
             pending = None
             pending_signal = None
+            pending_exits = None
             equity, invested = _mark(cash, positions, rows, sell_col)
         if date_from <= day <= last_test:
             curve.append({"date": day, "equity": equity, "cash": cash, "invested": invested})
-    return trades, curve
+    dates = [str(row["date"]) for row in curve]
+    price_column = sell_col if sell_col in frame.columns else "close"
+    return trades, equity_curve_from_filled(
+        trades,
+        dates,
+        _close_prices(frame, price_column),
+        float(config.get("initial_capital") or 0),
+    )

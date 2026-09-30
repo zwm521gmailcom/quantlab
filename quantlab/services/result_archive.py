@@ -14,6 +14,7 @@ from quantlab.domain.identifiers import validate_run_id
 from quantlab.repositories.artifacts import ArtifactRepository
 from quantlab.repositories.database import Database
 from quantlab.services.backtest_job import fill_benchmark_metrics
+from quantlab.services.backtest_summary import ensure_backtest_summaries
 from quantlab.services.backtest_workbench import workbench_form_config
 from quantlab.services.model_training import kind_display_name
 from quantlab.services.result_sync import purge_backtest_run, write_deleted_marker
@@ -28,17 +29,33 @@ _ERROR_ZH = {
     "行情行数和登记时不一致。": "行情行数和登记时不一致。请点「重新回测」。",
 }
 _SORT_FIELDS = {
-    "created_at": "registry.created_at",
-    "name": "br.config_json",
-    "status": "br.status",
+    "created_at": "created_at",
+    "name": "name",
+    "status": "status",
     "strategy": "strategy_name",
-    "date_from": "test.date_from",
-    "return": "br.metrics_json",
-    "annual_return": "br.metrics_json",
-    "sharpe": "br.metrics_json",
-    "max_drawdown": "br.metrics_json",
-    "win_rate": "br.metrics_json",
+    "date_from": "date_from",
+    "return": "total_return",
+    "annual_return": "annual_return",
+    "sharpe": "sharpe",
+    "max_drawdown": "max_drawdown",
+    "win_rate": "win_rate",
     "benchmark": "benchmark",
+}
+_METRIC_COLUMNS = {
+    "return": "total_return",
+    "annual_return": "annual_return",
+    "sharpe": "sharpe",
+    "sortino": "sortino",
+    "calmar": "calmar",
+    "max_drawdown": "max_drawdown",
+    "max_loss_streak": "max_loss_streak",
+    "win_rate": "win_rate",
+    "benchmark_return": "benchmark_return",
+    "excess_return": "excess_return",
+    "turnover": "turnover",
+    "capital_usage": "capital_usage",
+    "rank_ic": "rank_ic",
+    "ndcg_at_10": "ndcg_at_10",
 }
 _METRIC_SORT_FIELDS = {"return", "annual_return", "sharpe", "max_drawdown", "win_rate"}
 _METRICS = (
@@ -458,6 +475,7 @@ class ResultArchiveService:
                   m.name AS model_name,
                   factor_agg.factor_names AS factor_names,
                   json_extract(br.config_json, '$.name') AS config_name,
+                  json_extract(br.config_json, '$.note') AS config_note,
                   json_extract(br.config_json, '$.kind') AS config_kind,
                   json_extract(br.config_json, '$.benchmark') AS benchmark,
                   json_extract(br.config_json, '$.machine_id') AS config_machine_id,
@@ -500,6 +518,7 @@ class ResultArchiveService:
         return {
             "run_id": row["run_id"],
             "name": str(row["config_name"] or "未命名回测"),
+            "note": str(row["config_note"] or "").strip(),
             "status": row["status"],
             "status_name": _STATUS_NAMES.get(row["status"], row["status"]),
             "created_at": row["created_at"],
@@ -524,6 +543,38 @@ class ResultArchiveService:
             "machine_id": str(row["metrics_machine_id"] or row["config_machine_id"] or ""),
         }
 
+    def _project_summary(self, row: Any) -> dict[str, Any]:
+        factors = [part.strip() for part in str(row["factor_names"] or "").split(",") if part.strip()]
+        if not factors:
+            factors = [part.strip() for part in str(row["factor_key"] or "").split(",") if part.strip()]
+        return {
+            "run_id": row["run_id"],
+            "name": str(row["name"] or "未命名回测"),
+            "note": str(row["note"] or "").strip(),
+            "status": row["status"],
+            "status_name": _STATUS_NAMES.get(row["status"], row["status"]),
+            "created_at": row["created_at"],
+            "finished_at": row["finished_at"],
+            "strategy": {"entity_id": row["strategy_entity_id"], "name": str(row["strategy_name"] or "未登记模型")},
+            "factors": factors,
+            "test_window": {"date_from": row["date_from"], "date_to": row["date_to"]},
+            "metrics": {
+                key: _metric(
+                    row[_METRIC_COLUMNS[key]],
+                    percentage=key in _PERCENT_METRICS,
+                    integer=key in _INTEGER_METRICS,
+                )
+                for key, _ in _METRICS
+            },
+            "benchmark": row["benchmark"] or "未生成",
+            "detail_url": f"/backtests/runs/{row['run_id']}",
+            "copy_url": f"/api/backtests/runs/{row['run_id']}/copy-config",
+            "execute_url": f"/api/backtests/{row['run_id']}/execute",
+            "delete_url": f"/api/backtests/runs/{row['run_id']}",
+            "retryable": row["status"] == "failed",
+            "machine_id": str(row["machine_id"] or ""),
+        }
+
     def list(
         self,
         *,
@@ -534,6 +585,8 @@ class ResultArchiveService:
         query: str | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
+        gate: str | None = None,
+        factor: str | None = None,
         sort: str = "created_at",
         order: str = "desc",
     ) -> dict[str, Any]:
@@ -541,24 +594,61 @@ class ResultArchiveService:
             raise ValueError("page_size must be between 1 and 200")
         if sort not in _SORT_FIELDS or order not in {"asc", "desc"}:
             raise ValueError("invalid sort or order")
-        items = []
+        ensure_backtest_summaries(self.database)
+        where = ["1=1"]
+        params: list[Any] = []
+        if status:
+            if status not in _STATUS_NAMES:
+                raise ValueError("invalid backtest status")
+            where.append("status=?")
+            params.append(status)
+        if strategy:
+            needle = f"%{strategy}%"
+            where.append("(strategy_entity_id=? OR strategy_name LIKE ? OR kind LIKE ?)")
+            params.extend([strategy, needle, needle])
         query_text = query.lower().strip() if query else ""
-        for row in self._list_rows(status=status, strategy=strategy):
-            item = self._project_list(row)
-            window = item["test_window"]
-            haystack = " ".join([item["run_id"], item["name"], item["strategy"]["name"], *item["factors"]]).lower()
-            if query_text and query_text not in haystack:
-                continue
-            if date_from and (window["date_to"] or "") < date_from:
-                continue
-            if date_to and (window["date_from"] or "") > date_to:
-                continue
-            items.append(item)
-        items.sort(key=lambda item: _archive_sort_key(item, sort, order))
-        total = len(items)
-        start = (page - 1) * page_size
+        if query_text:
+            like = f"%{query_text}%"
+            where.append(
+                "(LOWER(run_id) LIKE ? OR LOWER(name) LIKE ? OR LOWER(note) LIKE ? "
+                "OR LOWER(strategy_name) LIKE ? OR LOWER(factor_key) LIKE ? OR LOWER(factor_names) LIKE ?)"
+            )
+            params.extend([like, like, like, like, like, like])
+        if gate:
+            where.append("gate_key LIKE ?")
+            params.append(f"%{gate}%")
+        if factor:
+            like = f"%{factor}%"
+            where.append("(factor_key LIKE ? OR factor_names LIKE ?)")
+            params.extend([like, like])
+        if date_from:
+            where.append("date_to >= ?")
+            params.append(date_from)
+        if date_to:
+            where.append("date_from <= ?")
+            params.append(date_to)
+        predicate = " AND ".join(where)
+        sort_col = _SORT_FIELDS[sort]
+        direction = "DESC" if order == "desc" else "ASC"
+        if sort == "created_at":
+            order_sql = f"created_at {direction}, run_id {direction}"
+        else:
+            order_sql = (
+                f"CASE WHEN {sort_col} IS NULL OR {sort_col}='' THEN 1 ELSE 0 END, "
+                f"{sort_col} {direction}, created_at DESC, run_id DESC"
+            )
+        with self.database.connect() as connection:
+            total = connection.execute(
+                f"SELECT COUNT(*) FROM backtest_summaries WHERE {predicate}",
+                params,
+            ).fetchone()[0]
+            rows = connection.execute(
+                f"SELECT * FROM backtest_summaries WHERE {predicate} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+                [*params, page_size, (page - 1) * page_size],
+            ).fetchall()
+        items = [self._project_summary(row) for row in rows]
         return {
-            "items": items[start : start + page_size],
+            "items": items,
             "page": page,
             "page_size": page_size,
             "total": total,
@@ -606,12 +696,12 @@ class ResultArchiveService:
         for page in range(2, int(listing["pages"]) + 1):
             all_items.extend(self.list(page=page, page_size=200, **filters)["items"])
         output = io.StringIO()
-        fields = ["ID", "回测名称", "状态", "创建时间", "完成时间", "模型", "因子", "测试区间", "累计收益", "年化收益", "夏普", "最大回撤", "胜率", "基准收益", "超额收益", "日均换手", "日均资金占用", "Rank IC", "NDCG@10", "基准"]
+        fields = ["ID", "回测名称", "备注", "状态", "创建时间", "完成时间", "模型", "因子", "测试区间", "累计收益", "年化收益", "夏普", "最大回撤", "胜率", "基准收益", "超额收益", "日均换手", "日均资金占用", "Rank IC", "NDCG@10", "基准"]
         writer = csv.writer(output)
         writer.writerow(fields)
         for item in all_items:
             writer.writerow([
-                item["run_id"], item["name"], item["status_name"], item["created_at"], item["finished_at"] or "未生成",
+                item["run_id"], item["name"], item.get("note") or "", item["status_name"], item["created_at"], item["finished_at"] or "未生成",
                 item["strategy"]["name"], "、".join(item["factors"]), f"{item['test_window']['date_from']}~{item['test_window']['date_to']}",
                 *[item["metrics"][key]["display"] for key, _ in _METRICS], item["benchmark"],
             ])

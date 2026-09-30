@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -381,7 +382,9 @@ class DatasetCatalog:
         "index_basic": 94,
         "index_daily": 95,
         "index_weight": 96,
+        "moneyflow": 170,
         "stk_limit": 183,
+        "stk_week_month_adj": 365,
         "stock_basic": 25,
         "suspend_d": 214,
         "trade_cal": 26,
@@ -394,7 +397,9 @@ class DatasetCatalog:
         "index_basic": "指数基本信息",
         "index_daily": "指数日线行情",
         "index_weight": "指数成分和权重",
+        "moneyflow": "个股资金流向",
         "stk_limit": "涨跌停价格",
+        "stk_week_month_adj": "股票周/月线行情(复权)",
         "stock_basic": "股票基础信息",
         "suspend_d": "每日停复牌信息",
         "trade_cal": "交易日历",
@@ -425,8 +430,9 @@ class DatasetCatalog:
         stem_dates: list[str] = []
         for file in files:
             stem = file.stem
-            if len(stem) == 8 and stem.isdigit():
-                stem_dates.append(stem)
+            matched = re.fullmatch(r"(?:[A-Za-z]+_)?(\d{8})", stem)
+            if matched:
+                stem_dates.append(matched.group(1))
         if stem_dates:
             return min(stem_dates), max(stem_dates)
         minimums: list[str] = []

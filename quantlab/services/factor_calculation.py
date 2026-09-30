@@ -841,6 +841,40 @@ class FactorCalculationService:
             items = self._refresh_histograms(items)
         return {"items": items, "count": len(items)}
 
+    def catalog_latest(self) -> dict[str, dict[str, Any]]:
+        """One row per factor for the catalog table. Omits daily series and histograms."""
+        sql = """
+            SELECT r.calculation_id, r.factor_entity_id, r.status, r.coverage, r.ic_mean,
+                   r.ic_positive_ratio, r.ic_std, r.date_from, r.date_to, r.effective_days
+            FROM factor_calculation_runs AS r
+            JOIN (
+                SELECT factor_entity_id, MAX(calculation_id) AS calculation_id
+                FROM factor_calculation_runs
+                GROUP BY factor_entity_id
+            ) AS picked ON picked.calculation_id = r.calculation_id
+        """
+        found: dict[str, dict[str, Any]] = {}
+        with self.database.connect() as connection:
+            rows = connection.execute(sql).fetchall()
+        for row in rows:
+            entity = str(row["factor_entity_id"])
+            item = {
+                "calculation_id": row["calculation_id"],
+                "serial_no": f"#{row['calculation_id']}",
+                "status": row["status"],
+                "coverage": row["coverage"],
+                "ic_mean": row["ic_mean"],
+                "ic_positive_ratio": row["ic_positive_ratio"],
+                "ic_std": row["ic_std"],
+                "date_from": row["date_from"],
+                "date_to": row["date_to"],
+                "effective_days": row["effective_days"],
+            }
+            found[entity] = item
+            if entity.startswith("factor_"):
+                found.setdefault(entity.removeprefix("factor_"), item)
+        return found
+
     def latest(self, *, factor_id: str) -> dict[str, Any] | None:
         ids = self._entity_candidates(factor_id)
         with self.database.connect() as connection:

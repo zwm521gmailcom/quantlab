@@ -40,10 +40,13 @@ _METHODS = {
     "ts_rank",
     "ts_zscore",
     "rolling_bias",
+    "rolling_corr",
+    "rolling_cov",
     "ewm_mean",
     "cs_rank",
 }
 WINDOWLESS_METHODS = frozenset({"cs_rank"})
+PAIR_METHODS = frozenset({"rolling_corr", "rolling_cov"})
 
 
 class ExpressionError(ValueError):
@@ -106,6 +109,67 @@ def grouped_rolling(source: pd.Series, keys: Any, window: int, how: str) -> pd.S
     return pd.Series(out, index=source.index)
 
 
+def grouped_rolling_pair(
+    left: pd.Series,
+    right: pd.Series,
+    keys: Any,
+    window: int,
+    how: str,
+) -> pd.Series:
+    xs = pd.to_numeric(left, errors="coerce").to_numpy(dtype=float, copy=False)
+    ys = pd.to_numeric(right, errors="coerce").to_numpy(dtype=float, copy=False)
+    out = np.full(len(xs), np.nan)
+    if window < 2 or len(xs) == 0 or len(xs) != len(ys):
+        return pd.Series(out, index=left.index)
+    grouped = pd.Series(np.arange(len(xs)), index=left.index).groupby(keys, sort=False)
+    denom = window - 1
+    for positions in grouped.indices.values():
+        pos = np.asarray(positions, dtype=np.intp)
+        size = int(pos.size)
+        if size < window:
+            continue
+        contiguous = pos[-1] == pos[0] + size - 1
+        x_arr = xs[pos[0] : pos[-1] + 1] if contiguous else xs[pos]
+        y_arr = ys[pos[0] : pos[-1] + 1] if contiguous else ys[pos]
+        x_view = sliding_window_view(x_arr, window)
+        y_view = sliding_window_view(y_arr, window)
+        x_centered = x_view - np.mean(x_view, axis=-1, keepdims=True)
+        y_centered = y_view - np.mean(y_view, axis=-1, keepdims=True)
+        cov = np.sum(x_centered * y_centered, axis=-1) / denom
+        if how == "cov":
+            reduced = cov
+        elif how == "corr":
+            sx = np.sqrt(np.sum(x_centered * x_centered, axis=-1) / denom)
+            sy = np.sqrt(np.sum(y_centered * y_centered, axis=-1) / denom)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                reduced = cov / (sx * sy)
+            reduced = np.where((sx == 0) | (sy == 0), np.nan, reduced)
+        else:
+            raise ValueError(f"unsupported rolling pair reduction: {how}")
+        out[pos[window - 1 :]] = reduced
+    return pd.Series(out, index=left.index)
+
+
+def _window_constant(node: ast.AST, *, minimum: int) -> int:
+    if (
+        isinstance(node, ast.UnaryOp)
+        and isinstance(node.op, ast.USub)
+        and isinstance(node.operand, ast.Constant)
+    ):
+        raise ExpressionError("window must be non-negative")
+    if (
+        not isinstance(node, ast.Constant)
+        or not isinstance(node.value, int)
+        or isinstance(node.value, bool)
+    ):
+        raise ExpressionError("window must be an integer constant")
+    if node.value < minimum:
+        if minimum > 0 and node.value >= 0:
+            raise ExpressionError(f"window must be at least {minimum}")
+        raise ExpressionError("window must be non-negative")
+    return int(node.value)
+
+
 def parse_expression(formula: str, available_fields: set[str]) -> ParsedExpression:
     if not isinstance(formula, str) or not formula.strip():
         raise ExpressionError("formula is required")
@@ -150,29 +214,24 @@ def parse_expression(formula: str, available_fields: set[str]) -> ParsedExpressi
                     raise ExpressionError("comparison operator is not allowed")
                 visit(comparator)
         elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            if node.func.attr not in _METHODS:
+            name = node.func.attr
+            if name not in _METHODS:
                 raise ExpressionError("function is not allowed")
-            if len(node.args) != 1 or node.keywords:
-                raise ExpressionError(
-                    f"{node.func.attr} accepts one positional argument"
-                )
-            argument = node.args[0]
-            if (
-                isinstance(argument, ast.UnaryOp)
-                and isinstance(argument.op, ast.USub)
-                and isinstance(argument.operand, ast.Constant)
-            ):
-                raise ExpressionError("window must be non-negative")
-            if (
-                not isinstance(argument, ast.Constant)
-                or not isinstance(argument.value, int)
-                or isinstance(argument.value, bool)
-            ):
-                raise ExpressionError("window must be an integer constant")
-            if argument.value < 0:
-                raise ExpressionError("window must be non-negative")
-            max_window = max(max_window, argument.value)
-            visit(node.func.value)
+            if node.keywords:
+                raise ExpressionError(f"{name} accepts positional arguments only")
+            if name in PAIR_METHODS:
+                if len(node.args) != 2:
+                    raise ExpressionError(f"{name} accepts a series and an integer window")
+                window = _window_constant(node.args[1], minimum=2)
+                max_window = max(max_window, window)
+                visit(node.func.value)
+                visit(node.args[0])
+            else:
+                if len(node.args) != 1:
+                    raise ExpressionError(f"{name} accepts one positional argument")
+                window = _window_constant(node.args[0], minimum=0)
+                max_window = max(max_window, window)
+                visit(node.func.value)
         else:
             raise ExpressionError(f"syntax node {type(node).__name__} is not allowed")
 
@@ -233,8 +292,15 @@ def _eval(tree: ast.AST, frame: pd.DataFrame) -> pd.Series | float | bool:
         return result
     if isinstance(tree, ast.Call):
         source = _eval(tree.func.value, frame)
-        window = int(tree.args[0].value)
         name = tree.func.attr
+        if name in PAIR_METHODS:
+            other = _eval(tree.args[0], frame)
+            if not isinstance(other, pd.Series):
+                other = pd.Series(float(other), index=frame.index, dtype="float64")
+            window = int(tree.args[1].value)
+            how = "corr" if name == "rolling_corr" else "cov"
+            return grouped_rolling_pair(source, other, frame["instrument"], window, how)
+        window = int(tree.args[0].value)
         if name == "cs_rank":
             date = frame["date"] if "date" in frame.columns else frame.get("trade_date")
             if date is None:

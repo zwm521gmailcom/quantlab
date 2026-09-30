@@ -33,6 +33,7 @@ from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.backtest_plan import BacktestPlanService
 from quantlab.services.result_archive import ResultArchiveService
 from quantlab.services.result_sync import sync_result_catalog
+from quantlab.services.qlib_factor_loop import QlibFactorLoopService
 from quantlab.services.settings import SettingsService
 from quantlab.services.lan_peers import PeerRegistry
 from quantlab.services.tushare_download import TushareDownloadService
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     backtest_plan = BacktestPlanService(resolved_settings, resolved_database, backtest_workbench, backtest_job)
     result_archive = ResultArchiveService(resolved_settings, resolved_database)
     settings_service = SettingsService(resolved_settings)
+    qlib_factor_loop = QlibFactorLoopService(resolved_settings)
     tushare_download = TushareDownloadService(resolved_settings)
     research_runs = ResearchRunRepository(resolved_settings, resolved_database)
     offline_rl = OfflineRlExperimentService(resolved_settings, resolved_database)
@@ -88,6 +90,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.state.result_archive_service = result_archive
     app.state.research_run_repository = research_runs
     app.state.settings_service = settings_service
+    app.state.qlib_factor_loop_service = qlib_factor_loop
     app.state.tushare_download_service = tushare_download
     app.state.dataset_catalog = catalog
     app.state.artifact_repository = artifacts

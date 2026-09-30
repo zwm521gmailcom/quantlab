@@ -228,6 +228,9 @@ def mark_stopped(database: Database, run_id: str, message: str = STOPPED_MESSAGE
             "UPDATE run_registry SET finished_at=COALESCE(finished_at, ?) WHERE run_id=?",
             (timestamp, run_id),
         )
+        from quantlab.services.backtest_summary import refresh_backtest_summary
+
+        refresh_backtest_summary(connection, run_id)
 
 
 def stop_run(job: BacktestJobService, run_id: str) -> dict[str, Any]:
