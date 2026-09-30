@@ -12,7 +12,7 @@
 
 ## 当前状态
 
-总体状态：`implementation_in_progress`
+总体状态：历史实现记录。自动挖掘因子和因子计算任务已停用，挖因子以 Qlib 页面为准。本目录不描述现行页面。
 
 00–15 计划文件已建立；只有通过 Luna 规格复核和主代理审批后，状态才改为 `approved`。实现完成前均不标记为 `completed`。
 
@@ -29,7 +29,7 @@
 | 06 | `06-factor-library.md` | 已完成 | 因子库页面、目录 API、质量门和生命周期契约；155 项全量测试通过 |
 | 07 | `07-factor-detail.md` | 已完成 | 不可变因子版本详情、真实诊断、Artifact、版本复制与 revision 安全的回测草稿；144 项全量测试通过 |
 | 08 | `08-factor-manual.md` | 已审批 | 手动建立因子 |
-| 09 | `09-factor-auto-mine.md` | 已审批 | 自动挖掘因子 |
+| 09 | `09-factor-auto-mine.md` | 已停用 | 自动挖掘因子，页面已转到 Qlib |
 | 10 | `10-strategy-center.md` | 已完成 | 模型、训练运行、策略与策略版本；172 项全量测试通过 |
 | 11 | `11-backtest-workbench.md` | 已审批 | 回测配置、门禁与运行 |
 | 12 | `12-result-archive.md` | 已审批 | 回测结果清单与复制配置 |
@@ -64,7 +64,7 @@
 - 标准成交和因子字段使用 `hfq_open`、`hfq_high`、`hfq_low`、`hfq_close`；`momentum_5` 使用 `hfq_close[t] / hfq_close[t-5 observations] - 1`。
 - 大型 Parquet 不复制到网站；运行时目录、版本摘要和诊断摘要由 SQLite/API 动态提供，源码目录不生成运行数据。
 - 因子、策略、模型、数据集和回测均使用不可变版本或运行快照；不覆盖历史记录。
-- 自动挖掘只能产生候选和 ResearchRun，不能自动发布因子；回测复制配置只能载入草稿，不能自动运行。
+- 回测复制配置只能载入草稿，不能自动运行。挖因子使用 Qlib 页面，不再使用自动挖掘。
 - 所有任务保存配置、状态、错误、日志和已生成 Artifact；失败任务不静默重试。
 
 ## 代理职责与审批顺序

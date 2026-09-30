@@ -4,7 +4,7 @@
 
 A local research workbench for factors, models, and backtests. Each instance declares an asset version (A-share by default). You operate it in the browser. FastAPI listens on LAN `0.0.0.0:8765` by default (loopback `127.0.0.1` still works). The UI port and LAN sync port are configurable. Metadata lives in SQLite; market data and factors stay in local Parquet files.
 
-Current version **`0.4.1`** (Alpha). The number lives in `quantlab/__init__.py`. Bump it on each user-facing feature so every machine shows the same sidebar version after `git pull` and restart. Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy).
+Current version **`0.4.1`** (Alpha). The number lives in `quantlab/__init__.py`. Bump it on each user-facing feature so every machine shows the same sidebar version after `git pull` and restart.
 
 UI screenshots live in [`docs/screenshots/`](docs/screenshots/). This file does not embed them.
 
@@ -181,7 +181,7 @@ quantlab_runtime/
 
 ## Docs
 
-Page and data contracts live in `docs/specs/` and `docs/plans/`. Extra local-start notes: [`docs/quantlab/start-local.md`](docs/quantlab/start-local.md).
+The current description is this file and [`docs/quantlab/start-local.md`](docs/quantlab/start-local.md). Dated notes under `docs/plans/` and `docs/specs/` record how a change was built; they are not the current page list. Screenshots belong only in [`docs/screenshots/`](docs/screenshots/).
 
 ## License
 

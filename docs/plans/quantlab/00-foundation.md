@@ -4,7 +4,7 @@
 
 **Goal:** 建立 QuantLab 本地 Web 服务、统一实体与状态、SQLite 元数据、只读数据注册表、Artifact 登记、共享页面壳和自动化测试基础。
 
-**Architecture:** 新建独立的 `quantlab` Python 包，不修改 vn.py 核心。FastAPI 只提供本地 API 和静态页面；SQLite 保存元数据；外部 Parquet 通过注册路径只读访问；运行时目录与摘要由 SQLite/API 提供，不写入源码目录。
+**Architecture:** 独立的 `quantlab` Python 包。FastAPI 只提供本地 API 和静态页面；SQLite 保存元数据；外部 Parquet 通过注册路径只读访问；运行时目录与摘要由 SQLite/API 提供，不写入源码目录。
 
 **Tech Stack:** Python 3.12、FastAPI、Uvicorn、Pydantic、SQLite、PyArrow、Polars、pytest、Ruff、原生 HTML/CSS/JavaScript。
 
@@ -42,7 +42,7 @@
 
 - [ ] **Step 3: 添加依赖、打包配置与最小实现**
 
-  在 `pyproject.toml` 增加 `quantlab` 可选依赖：FastAPI、Uvicorn、Pydantic、Playwright、pytest-playwright，并把 Hatch wheel packages 改为 `['vnpy', 'quantlab']`、sdist 纳入 `quantlab*`。`Settings` 接受相对项目根的路径，并通过 `Path.resolve()`（包括符号链接解析）验证读取路径属于两个只读数据根，写入路径属于 `quantlab_runtime` 的受控子目录。对外展示、入库和错误信息只使用相对路径。
+  在 `pyproject.toml` 增加依赖：FastAPI、Uvicorn、Pydantic、Playwright、pytest-playwright，Hatch wheel 只打包 `quantlab`。`Settings` 接受相对项目根的路径，并通过 `Path.resolve()`（包括符号链接解析）验证读取路径属于两个只读数据根，写入路径属于 `quantlab_runtime` 的受控子目录。对外展示、入库和错误信息只使用相对路径。
 
 - [ ] **Step 4: 验证通过**
 

@@ -4,7 +4,7 @@
 
 本机因子、模型与回测研究平台。每个实例标明资产版本（默认 A 股）。浏览器操作；FastAPI 默认监听局域网 `0.0.0.0:8765`（本机仍可用 `127.0.0.1`）。页面端口和局域网同步端口可自行设定。元数据在 SQLite，行情与因子在本地 Parquet。
 
-当前版本 **`0.4.1`**（Alpha）。版本号在 `quantlab/__init__.py`。功能更新后改这个数字，各机 `git pull` 并重启，侧栏应显示同一版本。运行时不依赖 [vnpy](https://github.com/vnpy/vnpy)。
+当前版本 **`0.4.1`**（Alpha）。版本号在 `quantlab/__init__.py`。功能更新后改这个数字，各机 `git pull` 并重启，侧栏应显示同一版本。
 
 界面截图放在 [`docs/screenshots/`](docs/screenshots/)，不嵌在本文件里。
 
@@ -181,7 +181,7 @@ quantlab_runtime/
 
 ## 文档
 
-更细的页面与数据契约见 `docs/specs/` 与 `docs/plans/`。本机启动补充说明见 [`docs/quantlab/start-local.md`](docs/quantlab/start-local.md)。
+现行说明就是本文件和 [`docs/quantlab/start-local.md`](docs/quantlab/start-local.md)。`docs/plans/`、`docs/specs/` 里的日期文档是当时的实现记录，不代表现在的页面。界面截图只放 [`docs/screenshots/`](docs/screenshots/)。
 
 ## 许可证
 
