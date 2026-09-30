@@ -6,7 +6,7 @@ A local research workbench for factors, models, and backtests. Each instance dec
 
 Current version **`0.4.1`** (Alpha). The number lives in `quantlab/__init__.py`. Bump it on each user-facing feature so every machine shows the same sidebar version after `git pull` and restart. Runtime does not depend on [vnpy](https://github.com/vnpy/vnpy).
 
-Public briefing (screenshots and contact, no source): [quantlab-intro](https://github.com/zwm521gmailcom/quantlab-intro).
+UI screenshots live in [`docs/screenshots/`](docs/screenshots/). This file does not embed them.
 
 ## What it is
 
@@ -21,23 +21,27 @@ After start, open http://127.0.0.1:8765/ on this machine, or `http://<LAN-IP>:87
 | Page | Path | Role |
 |---|---|---|
 | Overview | `/` | Datasets, factors, recent runs, quality alerts |
-| Data center | `/data` | Registered raw / source tables, coverage, quality |
+| Data center | `/data` | Registered raw / source tables, coverage, quality; one Backfill button per Tushare API, filling only that API’s own tail |
 | Canonical bars | `/kline` | Read-only raw / hfq bar queries |
 | Factor research | `/factors` | Factor catalog, diagnostics, detail |
 | Manual factor | `/factors/new/manual` | Write a formula and register it |
-| Factor mining | `/research/factor-mining` | Search candidate expressions on the wide table |
-| Factor jobs | `/research/factor-jobs` | Calculation jobs and progress |
+| Qlib factor mining | `/qlib` | Local GPT-OSS 120B proposes one formula per round and scores it on the validation window; Start stays disabled while a loop is running, and Stop ends the job and shuts down the local model |
+| Mining log | `/qlib/runs` | Formula, validation score, and test holdings for each round |
+| Screened picks | `/qlib/picks` | Mined factors whose test segment beats the benchmark with positive IR |
 | Model center | `/models` | Register model kinds used by backtests; no training here |
-| Backtest workbench | `/backtests/new` | Freeze data, factors, universe, model, and matching rules, then run |
+| Backtest workbench | `/backtests/new` | Freeze data, factors, universe, model, and matching rules, then run; multi-factor Qlib scores are available |
 | Backtest plan | `/backtests/plan` | A checklist of jobs; concurrent runs follow RAM and CPU |
+| Usable versions | `/backtests/usable` | Versions already screened and ready to reuse |
 | Rule backtest | `/backtests/rules` | Built-in rule templates, no model training |
 | Offline policy learning | `/backtests/offline-rl` | Discrete fitted Q from archived calendar-year backtests; opening the page does not run |
 | Result archive | `/backtests/runs` | History, metrics, artifacts; sortable columns; copy-as-draft does not auto-run |
 | Settings | `/settings` | Paths, asset and ports, Tushare token and points, LAN sync, compute resources, draft defaults |
 
-Model kinds include LightGBM / XGBoost ranking trees, random forest, Ridge, Lasso, and other regressors, plus single-factor `factor_rank`. Tree and regressor parameters are set on the workbench; **training starts when a backtest starts**. `factor_rank` ranks the chosen factor cross-sectionally and does not train; it reads only the selected constituents and the test window (plus MA warmup). The UI labels those steps “prepare data / factor rank”.
+Model kinds include LightGBM / XGBoost ranking trees, random forest, Ridge, Lasso, and other regressors, Qlib LightGBM regression, plus single-factor `factor_rank`. Tree and regressor parameters are set on the workbench; **training starts when a backtest starts**. `factor_rank` ranks the chosen factor cross-sectionally and does not train; it reads only the selected constituents and the test window (plus MA warmup). The UI labels those steps “prepare data / factor rank”. Multi-factor Qlib scores are trained inside the backtest; dates before the training end are not scored.
 
-The stock universe is independent of the train/test date windows: exchange scope plus a multi-select of index memberships, shared by both splits, with duplicate codes removed. Membership is point-in-time from downloaded `index_weight` files (as-of, no next-period leak); multiple indexes are unioned. Default is CSI800 (CSI 300 ∪ CSI 500). The selected codes are stored in the run snapshot. An index without weight files cannot be used. The benchmark-MA open gate only blocks new entries. Batch scans may set `segment_curves: false` in the plan config to skip cap/turnover bucket equities; the main curve still runs.
+The stock universe is independent of the train/test date windows: exchange scope plus a multi-select of index memberships, shared by both splits, with duplicate codes removed. Membership is point-in-time from downloaded `index_weight` files (as-of, no next-period leak); multiple indexes are unioned. Default is CSI800 (CSI 300 ∪ CSI 500). The selected codes are stored in the run snapshot. An index without weight files cannot be used. Training and test both drop ST names and one-word limit boards. A limit-up or limit-down open is not bought. A limit-down open is not sold; the position is carried to the next session until it can be sold. The benchmark-MA open gate only blocks new entries. Batch scans may set `segment_curves: false` in the plan config to skip cap/turnover bucket equities; the main curve still runs.
+
+The old automatic factor-mining and factor-job pages are retired. They redirect to Qlib mining and factor research. A data-center backfill does not extend history before existing files and does not rebuild the canonical table. Before 16:00 Shanghai time it does not write the current session into daily files. Only one backfill runs at a time.
 
 ## Requirements
 
@@ -159,6 +163,7 @@ quantlab/
 tests/quantlab/   unit tests and Playwright page tests
 docs/specs/       design specs
 docs/plans/       implementation plans
+docs/screenshots/ UI screenshots (not embedded in this file)
 ```
 
 Runtime tree (not in git):
