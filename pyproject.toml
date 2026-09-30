@@ -1,3 +1,4 @@
+# 项目名称、Python 依赖和 quantlab 启动命令。
 [project]
 name = "quantlab"
 dynamic = ["version"]
