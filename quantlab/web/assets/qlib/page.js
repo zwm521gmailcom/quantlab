@@ -48,11 +48,21 @@
     stopButton.disabled = plan.status !== "running";
   }
 
+  function factorCount(plan) {
+    return (plan.rounds || []).filter((round) => round && round.name && round.formula && !round.error).length;
+  }
+
   function unfinishedPlans(plans) {
-    return (plans || []).filter((plan) => {
-      if (plan.status === "running" || plan.status === "configured") return false;
-      return (plan.rounds || []).length < Number(plan.max_loops);
-    });
+    return (plans || [])
+      .filter((plan) => factorCount(plan) < Number(plan.max_loops))
+      .sort((left, right) => String(right.created_at || "").localeCompare(String(left.created_at || "")));
+  }
+
+  function resumeLabel(plan) {
+    const done = factorCount(plan);
+    const when = String(plan.created_at || "").replace("T", " ").slice(0, 16);
+    const state = plan.status === "running" ? "进行中" : (plan.stop_reason || "已停止");
+    return `${when || "无时间"} · ${plan.plan_id} · ${done}/${plan.max_loops} 个因子 · ${state}`;
   }
 
   function renderResume(plans) {
@@ -68,15 +78,17 @@
     items.forEach((plan) => {
       const option = document.createElement("option");
       option.value = plan.plan_id;
-      const done = (plan.rounds || []).length;
-      const reason = plan.stop_reason ? ` · ${plan.stop_reason}` : "";
-      option.textContent = `${plan.plan_id} · ${done}/${plan.max_loops} 轮${reason}`;
+      option.dataset.status = plan.status || "";
+      option.textContent = resumeLabel(plan);
+      option.title = option.textContent;
       resumeSelect.append(option);
     });
     if (selected && [...resumeSelect.options].some((option) => option.value === selected)) {
       resumeSelect.value = selected;
     }
-    continueButton.disabled = mining || !conversionReady || !resumeSelect.value;
+    const chosen = resumeSelect.selectedOptions[0];
+    const chosenRunning = Boolean(chosen && chosen.dataset.status === "running");
+    continueButton.disabled = mining || chosenRunning || !conversionReady || !resumeSelect.value;
   }
 
   function renderStatus(status) {
@@ -90,7 +102,8 @@
     } else if (conversion.status === "failed") {
       conversionBox.textContent = `转换失败：${conversion.error || ""}`;
     } else {
-      conversionBox.textContent = `已转换 ${conversion.symbols || 0} 只股票，${conversion.date_min || ""} 至 ${conversion.date_max || ""}，股票池 ${conversion.universe || "all"}。目录 ${conversion.qlib_dir || ""}`;
+      const extra = (conversion.fields || []).includes("turnover_rate") ? "，已含每日指标和资金流向" : "";
+      conversionBox.textContent = `已转换 ${conversion.symbols || 0} 只股票，${conversion.date_min || ""} 至 ${conversion.date_max || ""}，股票池 ${conversion.universe || "all"}${extra}。目录 ${conversion.qlib_dir || ""}`;
     }
     convertButton.disabled = conversion.status === "running";
     conversionReady = conversion.status === "completed";
@@ -109,10 +122,10 @@
     mining = running;
     startButton.disabled = !conversionReady || running;
     if (runningPlan) {
-      const done = (runningPlan.rounds || []).length;
-      miningBox.textContent = `正在挖掘 ${runningPlan.plan_id}，已完成 ${done}/${runningPlan.max_loops} 轮。开始循环已停用。`;
+      const done = factorCount(runningPlan);
+      miningBox.textContent = `正在挖掘 ${runningPlan.plan_id}，已挖出 ${done}/${runningPlan.max_loops} 个因子。开始循环已停用，点停止或挖满这个数量才会停。`;
     } else {
-      miningBox.textContent = "当前没有正在运行的挖掘。没跑满轮数的任务可以在下面选择后继续。";
+      miningBox.textContent = "当前没有正在运行的挖掘。还没挖满数量的任务可以在下面选择后继续。";
     }
     renderResume(status.plans);
     if ((conversion.status === "running" || running) && !timer) {

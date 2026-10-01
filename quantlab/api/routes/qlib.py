@@ -61,3 +61,11 @@ def qlib_stop(request: Request, plan_id: str) -> dict[str, object]:
         return request.app.state.qlib_factor_loop_service.stop(plan_id)
     except ValueError as error:
         raise _invalid(error, "QLIB_PLAN_INVALID") from error
+
+
+@router.post("/api/qlib/plans/{plan_id}/purge-errors")
+def qlib_purge_errors(request: Request, plan_id: str) -> dict[str, object]:
+    try:
+        return request.app.state.qlib_factor_loop_service.purge_errors(plan_id)
+    except ValueError as error:
+        raise _invalid(error, "QLIB_PLAN_INVALID") from error

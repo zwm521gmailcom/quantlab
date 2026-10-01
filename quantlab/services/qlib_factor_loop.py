@@ -18,10 +18,10 @@ import numpy as np
 import pandas as pd
 
 from quantlab.config import Settings
-from quantlab.services.qlib_export import convert_frame, load_source_frame, to_iso_date, to_qlib_symbol
+from quantlab.services.qlib_export import EXTRA_FIELDS, convert_frame, load_source_frame, to_iso_date, to_qlib_symbol
 from quantlab.services.qlib_strategy import run_factor_strategy
 
-MAX_LOOPS = 500
+MAX_LOOPS = 1000
 AGENT_TIMEOUT = 360
 AGENT_ATTEMPTS = 3
 MAX_FORMULA_LENGTH = 400
@@ -30,11 +30,12 @@ DEFAULT_PATIENCE = 2
 LOCAL_MODEL = "gpt-oss-120b"
 DEFAULT_MODEL = LOCAL_MODEL
 LOCAL_PROMPT_RECENT = 24
+LOCAL_CATALOG_LINES = 48
 ALLOWED_MODELS = (LOCAL_MODEL,)
 LLAMA_CHAT_URL = os.environ.get("QUANTLAB_LLAMA_URL", "http://127.0.0.1:8080/v1/chat/completions")
 LLAMA_API_KEY = os.environ.get("QUANTLAB_LLAMA_API_KEY", "local")
 LLAMA_READY_SECONDS = int(os.environ.get("QUANTLAB_LLAMA_READY_SECONDS", "180"))
-_FIELDS = {"open", "high", "low", "close", "volume"}
+_FIELDS = {"open", "high", "low", "close", "volume", *EXTRA_FIELDS}
 _FUNCS = {"Ref", "Mean", "Std"}
 
 
@@ -43,6 +44,11 @@ def _llama_origin() -> str:
     if marker in LLAMA_CHAT_URL:
         return LLAMA_CHAT_URL.split(marker, 1)[0]
     return LLAMA_CHAT_URL.rstrip("/")
+
+
+def _local_model_down(message: str) -> bool:
+    text = message.lower()
+    return "本机模型失败" in message or "connection refused" in text or "errno 111" in text
 
 
 def local_gpt_ready() -> bool:
@@ -61,8 +67,10 @@ def local_gpt_ready() -> bool:
     return any(str(item.get("id") or "") == LOCAL_MODEL for item in models if isinstance(item, dict))
 
 
-def ensure_local_gpt(timeout: float | None = None) -> None:
+def ensure_local_gpt(timeout: float | None = None, cancel: threading.Event | None = None) -> None:
     """Start the user llama-server unit when GPT-OSS 120B is not answering."""
+    if cancel is not None and cancel.is_set():
+        raise RuntimeError("已停止")
     if local_gpt_ready():
         return
     wait = LLAMA_READY_SECONDS if timeout is None else timeout
@@ -94,6 +102,8 @@ def ensure_local_gpt(timeout: float | None = None) -> None:
             raise RuntimeError(f"本机 GPT-OSS 120B 没有拉起：{detail[:300]}")
     deadline = time.monotonic() + wait
     while time.monotonic() < deadline:
+        if cancel is not None and cancel.is_set():
+            raise RuntimeError("已停止")
         if local_gpt_ready():
             return
         time.sleep(2)
@@ -356,7 +366,24 @@ def _name_key(name: str) -> str:
     return str(name).strip().casefold()
 
 
+def _formula_fields_text() -> str:
+    return "、".join(["open", "high", "low", "close", "volume", *EXTRA_FIELDS])
+
+
+def _successful_rows(history: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Formulas the model may see. Failed rounds stay out so a resumed run matches a new one."""
+    rows: list[dict[str, object]] = []
+    for item in history:
+        if not isinstance(item, dict) or item.get("error"):
+            continue
+        if not str(item.get("formula") or "").strip():
+            continue
+        rows.append(item)
+    return rows
+
+
 def _prompt(history: list[dict[str, object]], rejected: list[dict[str, str]] | None = None) -> str:
+    history = _successful_rows(history)
     if not history:
         shown = "还没有上一轮。"
     else:
@@ -374,7 +401,7 @@ def _prompt(history: list[dict[str, object]], rejected: list[dict[str, str]] | N
     return (
         "你是量化因子研究员。只回复一个 JSON 对象，不要解释，不要用 markdown。\n"
         "字段：name（英文短名）、formula、reason（一句中文）。\n"
-        "formula 只能使用 open、high、low、close、volume、加减乘除、括号，"
+        f"formula 只能使用 {_formula_fields_text()}、加减乘除、括号，"
         "以及 Ref(序列, 整数)、Mean(序列, 整数)、Std(序列, 整数)。\n"
         "窗口是 1 到 120 的整数。名字和公式都不能和已经出现过的相同。\n"
         "下面只有验证段的 Spearman IC。样本末段的分数不会写在这里。\n"
@@ -492,6 +519,17 @@ def screen_factor_picks(plans: list[dict[str, object]]) -> dict[str, object]:
     return {"candidate_count": len(candidates), "picks": picks}
 
 
+def _mined_factor_count(rounds: list[object]) -> int:
+    """Factors that were actually saved. Failed calls and rejected formulas do not count."""
+    count = 0
+    for row in rounds:
+        if not isinstance(row, dict) or row.get("error"):
+            continue
+        if str(row.get("name") or "").strip() and str(row.get("formula") or "").strip():
+            count += 1
+    return count
+
+
 def _catalog_lines(history: list[dict[str, object]]) -> list[str]:
     """One line per formula already mined. Whitespace differences stay one line."""
     lines: list[str] = []
@@ -508,12 +546,12 @@ def _catalog_lines(history: list[dict[str, object]]) -> list[str]:
 
 
 def _prompt_for_model(history: list[dict[str, object]], rejected: list[dict[str, str]] | None, model: str) -> str:
-    """Local prompts list every saved formula. The long list stays a stable prefix so the model can reuse it."""
+    """Local prompts show the recent formulas. The full set is still rejected in code."""
     if model != LOCAL_MODEL:
         return _prompt(history, rejected)
-    catalog = _catalog_lines(history)
-    recent = [item for item in history if str(item.get("formula") or "").strip() and not item.get("error")]
-    recent = recent[-LOCAL_PROMPT_RECENT:]
+    succeeded = _successful_rows(history)
+    catalog = _catalog_lines(succeeded)[-LOCAL_CATALOG_LINES:]
+    recent = succeeded[-LOCAL_PROMPT_RECENT:]
     recent_lines = [
         f"- {item.get('name')}: {item.get('formula')}；验证 IC {item.get('valid_ic')}"
         for item in recent
@@ -527,7 +565,7 @@ def _prompt_for_model(history: list[dict[str, object]], rejected: list[dict[str,
     return (
         "你是量化因子研究员。只回复一个 JSON 对象，不要解释，不要用 markdown。\n"
         "字段：name（英文短名）、formula、reason（一句中文）。\n"
-        "formula 只能使用 open、high、low、close、volume、加减乘除、括号，"
+        f"formula 只能使用 {_formula_fields_text()}、加减乘除、括号，"
         "以及 Ref(序列, 整数)、Mean(序列, 整数)、Std(序列, 整数)。\n"
         "窗口是 1 到 120 的整数。\n"
         "下面每行都是已经挖过的公式。新的 name 和 formula 不能与其中任何一条相同，去掉空格后相同也算重复。\n"
@@ -545,6 +583,9 @@ class QlibFactorLoopService:
         self.agent = agent or RoutingAgent()
         self._lock = threading.Lock()
         self._convert_lock = threading.Lock()
+        self._runners: dict[str, threading.Thread] = {}
+        self._generation: dict[str, int] = {}
+        self._cancels: dict[str, threading.Event] = {}
 
     @property
     def qlib_root(self) -> Path:
@@ -559,6 +600,8 @@ class QlibFactorLoopService:
         return self.settings.runtime_root / "qlib" / "plans"
 
     def status(self) -> dict[str, object]:
+        with self._lock:
+            self._reap_orphans()
         source = self.settings.data_root / "canonical.parquet"
         manifest_path = self.qlib_root / "manifest.json"
         manifest: dict[str, object] = {}
@@ -593,7 +636,7 @@ class QlibFactorLoopService:
         try:
             frame = load_source_frame(self.settings.data_root / "canonical.parquet")
             membership = self._load_membership()
-            summary = convert_frame(frame, self.qlib_dir, membership=membership)
+            summary = convert_frame(frame, self.qlib_dir, membership=membership, raw_root=self.settings.raw_root)
             summary["status"] = "completed"
             self._write_manifest(summary)
         except Exception as error:  # noqa: BLE001 — surface the job error on the page
@@ -607,7 +650,7 @@ class QlibFactorLoopService:
         train_end = str(body.get("train_end") or "2022-12-31")
         valid_end = str(body.get("valid_end") or "2024-12-31")
         if max_loops < 1 or max_loops > MAX_LOOPS:
-            raise ValueError(f"循环次数要在 1 到 {MAX_LOOPS} 之间")
+            raise ValueError(f"挖因子数量要在 1 到 {MAX_LOOPS} 之间")
         if patience < 1 or patience > max_loops:
             raise ValueError("提前停止的轮数要在 1 和循环次数之间")
         if model not in ALLOWED_MODELS:
@@ -635,35 +678,76 @@ class QlibFactorLoopService:
 
     def start(self, plan_id: str) -> dict[str, object]:
         with self._lock:
+            self._reap_orphans()
             for path in self._plan_paths():
                 other = self._read_plan(path)
-                if other.get("status") == "running" and other.get("plan_id") != plan_id:
+                other_id = str(other.get("plan_id") or "")
+                if other.get("status") == "running" and other_id != plan_id and self._live(other_id):
                     raise ValueError("已有循环在跑")
-            plan = self._load(plan_id)
-            if plan["status"] == "running":
+            if self._live(plan_id):
                 raise ValueError("循环已在跑")
+            plan = self._load(plan_id)
             if str(plan.get("model") or "") not in ALLOWED_MODELS:
                 raise ValueError("只能使用本机模型 GPT-OSS 120B")
-            manifest = self.status()["conversion"]
-            if not isinstance(manifest, dict) or manifest.get("status") != "completed":
+            manifest_path = self.qlib_root / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {}
+            if manifest.get("status") != "completed":
                 raise ValueError("先转换数据，再开始循环")
+            if _mined_factor_count(plan.get("rounds") or []) >= int(plan["max_loops"]):
+                raise ValueError("这个任务已经挖满")
+            generation = self._generation.get(plan_id, 0) + 1
+            self._generation[plan_id] = generation
+            cancel = threading.Event()
+            self._cancels[plan_id] = cancel
             plan["status"] = "running"
             plan["stop_requested"] = False
             plan["stop_reason"] = ""
-            self._write_plan(plan)
-        thread = threading.Thread(target=self._run_safe, args=(plan_id,), daemon=True)
-        thread.start()
+            self._write_plan(plan, force=True)
+            thread = threading.Thread(target=self._run_safe, args=(plan_id, generation, cancel), daemon=True)
+            self._runners[plan_id] = thread
+            thread.start()
         return self._public(self._load(plan_id))
 
     def stop(self, plan_id: str) -> dict[str, object]:
-        plan = self._load(plan_id)
-        if plan.get("status") != "running":
-            raise ValueError("这个循环没有在跑")
-        plan["stop_requested"] = True
-        self._write_plan(plan)
-        if str(plan.get("model") or "") == LOCAL_MODEL:
+        with self._lock:
+            plan = self._load(plan_id)
+            if plan.get("status") in {"stopped", "completed"}:
+                self._reap_orphans()
+                return self._public(self._load(plan_id))
+            if plan.get("status") != "running":
+                raise ValueError("这个循环没有在跑")
+            cancel = self._cancels.get(plan_id)
+            if cancel is not None:
+                cancel.set()
+            plan["stop_requested"] = True
+            plan["status"] = "stopped"
+            plan["stop_reason"] = "已停止"
+            self._write_plan(plan, force=True)
+            model = str(plan.get("model") or "")
+            self._reap_orphans()
+        if model == LOCAL_MODEL:
             stop_local_gpt()
         return self._public(self._load(plan_id))
+
+    def purge_errors(self, plan_id: str) -> dict[str, object]:
+        """Drop rounds that failed. Successful factors and the plan status stay."""
+        with self._lock:
+            if self._live(plan_id):
+                raise ValueError("循环还在跑，先停止再删除错误记录")
+            plan = self._load(plan_id)
+            if plan.get("status") == "running":
+                raise ValueError("循环还在跑，先停止再删除错误记录")
+            rounds = plan.get("rounds") or []
+            if not isinstance(rounds, list):
+                rounds = []
+            kept = [row for row in rounds if isinstance(row, dict) and not row.get("error")]
+            removed = len(rounds) - len(kept)
+            plan["rounds"] = kept
+            self._write_plan(plan, force=True)
+        public = self._public(self._load(plan_id))
+        public["removed"] = removed
+        public["kept"] = len(kept)
+        return public
 
     def get(self, plan_id: str) -> dict[str, object]:
         return self._public(self._load(plan_id))
@@ -858,23 +942,26 @@ class QlibFactorLoopService:
                 )
         return formulas, names, prior
 
-    def execute(self, plan_id: str, agent: CursorCliAgent | LlamaServerAgent | RoutingAgent | None = None) -> dict[str, object]:
+    def execute(
+        self,
+        plan_id: str,
+        agent: CursorCliAgent | LlamaServerAgent | RoutingAgent | None = None,
+        *,
+        generation: int | None = None,
+        cancel: threading.Event | None = None,
+    ) -> dict[str, object]:
         """Run the capped loop on the calling thread. Used by the background start and tests."""
         runner = agent or self.agent
         plan = self._load(plan_id)
-        if str(plan.get("model") or "") == LOCAL_MODEL and isinstance(runner, (RoutingAgent, LlamaServerAgent)):
-            ensure_local_gpt()
         panel = self._score_panel()
         close = panel["close"]
         future = close.groupby(level="instrument", sort=False).shift(-1) / close - 1
         dates = pd.Series(panel.index.get_level_values("date"), index=panel.index)
         instruments = pd.Series(panel.index.get_level_values("instrument"), index=panel.index)
-        best: float | None = None
-        stagnant = 0
         seen_formulas, seen_names, prior_history = self._known_factors(plan_id)
-        duplicate_batches = 0
-        while len(plan["rounds"]) < int(plan["max_loops"]):
-            stopped = self._finish_if_stopped(plan_id)
+        target = int(plan["max_loops"])
+        while _mined_factor_count(plan["rounds"]) < target:
+            stopped = self._aborted(plan_id, generation, cancel)
             if stopped is not None:
                 return stopped
             history = prior_history + [
@@ -902,10 +989,22 @@ class QlibFactorLoopService:
                     plan["agent_calls"] = int(plan["agent_calls"]) + 1
                     last_error = str(error)
                     reply = None
+                    if not self._owns(plan_id, generation):
+                        return {"plan_id": plan_id, "status": "superseded"}
                     self._write_plan(plan)
-                    stopped = self._finish_if_stopped(plan_id)
+                    stopped = self._aborted(plan_id, generation, cancel)
                     if stopped is not None:
                         return stopped
+                    if _local_model_down(last_error) and str(plan.get("model") or "") == LOCAL_MODEL:
+                        self._remember_model_gap(plan, last_error, generation)
+                        try:
+                            ensure_local_gpt(cancel=cancel)
+                        except Exception as restart_error:  # noqa: BLE001 — keep mining after the model is back
+                            self._remember_model_gap(plan, str(restart_error), generation)
+                        stopped = self._aborted(plan_id, generation, cancel)
+                        if stopped is not None:
+                            return stopped
+                        time.sleep(5)
                     continue
                 plan["agent_calls"] = int(plan["agent_calls"]) + 1
                 round_row: dict[str, object] = {
@@ -954,22 +1053,29 @@ class QlibFactorLoopService:
                     formula_error = round_row
                     break
             if saved:
-                duplicate_batches = 0
+                pass
             elif formula_error is not None:
                 plan["rounds"].append(formula_error)
             elif rejections and reply is not None:
-                duplicate_batches += 1
-                if duplicate_batches >= 5:
-                    plan["status"] = "completed"
-                    plan["stop_reason"] = "连续提出重复的因子或公式"
-                    self._write_plan(plan)
-                    return self._public(plan)
+                if not self._owns(plan_id, generation):
+                    return {"plan_id": plan_id, "status": "superseded"}
                 self._write_plan(plan)
                 continue
             else:
-                stopped = self._finish_if_stopped(plan_id)
+                stopped = self._aborted(plan_id, generation, cancel)
                 if stopped is not None:
                     return stopped
+                if _local_model_down(last_error) and str(plan.get("model") or "") == LOCAL_MODEL:
+                    self._remember_model_gap(plan, last_error, generation)
+                    try:
+                        ensure_local_gpt(cancel=cancel)
+                    except Exception as restart_error:  # noqa: BLE001 — keep mining after the model is back
+                        self._remember_model_gap(plan, str(restart_error), generation)
+                    stopped = self._aborted(plan_id, generation, cancel)
+                    if stopped is not None:
+                        return stopped
+                    time.sleep(5)
+                    continue
                 plan = self._load(plan_id)
                 plan["rounds"].append(
                     {
@@ -983,40 +1089,97 @@ class QlibFactorLoopService:
                         "model": str(plan["model"]),
                     }
                 )
-            score = plan["rounds"][-1].get("valid_ic")
-            if isinstance(score, float) and (best is None or abs(score) > abs(best) + 1e-6):
-                best = score
-                stagnant = 0
-            else:
-                stagnant += 1
-            if stagnant >= int(plan["patience"]):
-                plan["status"] = "completed"
-                plan["stop_reason"] = "验证 IC 没有再变好"
-                self._write_plan(plan)
-                return self._public(plan)
+            if not self._owns(plan_id, generation):
+                return {"plan_id": plan_id, "status": "superseded"}
             self._write_plan(plan)
+        if not self._owns(plan_id, generation):
+            return {"plan_id": plan_id, "status": "superseded"}
+        stopped = self._aborted(plan_id, generation, cancel)
+        if stopped is not None:
+            return stopped
+        plan = self._load(plan_id)
         plan["status"] = "completed"
-        plan["stop_reason"] = "已到循环上限"
-        self._write_plan(plan)
+        plan["stop_reason"] = "已挖满指定数量"
+        plan["stop_requested"] = False
+        self._write_plan(plan, force=True)
         return self._public(plan)
+
+    def _remember_model_gap(self, plan: dict[str, object], detail: str = "", generation: int | None = None) -> None:
+        """Note a model outage without ending the run or counting it as a factor."""
+        if not self._owns(str(plan.get("plan_id") or ""), generation):
+            return
+        reason = "本机模型中断，正在重新拉起"
+        if detail:
+            reason = f"{reason}：{detail[:180]}"
+        events = [item for item in plan.get("interruptions") or [] if isinstance(item, dict)]
+        if events and events[-1].get("message") == reason:
+            return
+        events.append({"created_at": _now_text(), "message": reason})
+        plan["interruptions"] = events
+        self._write_plan(plan)
+
+    def _owns(self, plan_id: str, generation: int | None) -> bool:
+        if generation is None:
+            return True
+        return self._generation.get(plan_id) == generation
+
+    def _live(self, plan_id: str) -> bool:
+        thread = self._runners.get(plan_id)
+        if thread is None:
+            return False
+        if thread.is_alive():
+            return True
+        return thread.ident is None
+
+    def _reap_orphans(self) -> None:
+        """A restarted process has no mining thread. Do not leave those plans looking active."""
+        for path in self._plan_paths():
+            plan = self._read_plan(path)
+            if plan.get("status") != "running":
+                continue
+            plan_id = str(plan.get("plan_id") or "")
+            if self._live(plan_id):
+                continue
+            plan["status"] = "stopped"
+            plan["stop_requested"] = True
+            plan["stop_reason"] = "已停止"
+            self._write_plan(plan, force=True)
+
+    def _aborted(self, plan_id: str, generation: int | None, cancel: threading.Event | None) -> dict[str, object] | None:
+        if not self._owns(plan_id, generation):
+            return {"plan_id": plan_id, "status": "superseded"}
+        plan = self._load(plan_id)
+        if not plan.get("stop_requested") and not (cancel is not None and cancel.is_set()):
+            return None
+        return self._finish_if_stopped(plan_id)
 
     def _finish_if_stopped(self, plan_id: str) -> dict[str, object] | None:
         plan = self._load(plan_id)
         if not plan.get("stop_requested"):
-            return None
+            plan["stop_requested"] = True
         plan["status"] = "stopped"
         plan["stop_reason"] = "已停止"
-        self._write_plan(plan)
+        self._write_plan(plan, force=True)
         return self._public(plan)
 
-    def _run_safe(self, plan_id: str) -> None:
+    def _run_safe(self, plan_id: str, generation: int, cancel: threading.Event) -> None:
         try:
-            self.execute(plan_id)
+            self.execute(plan_id, generation=generation, cancel=cancel)
         except Exception as error:  # noqa: BLE001
+            if not self._owns(plan_id, generation):
+                return
             plan = self._load(plan_id)
-            plan["status"] = "failed"
-            plan["stop_reason"] = str(error)
-            self._write_plan(plan)
+            if plan.get("stop_requested") or cancel.is_set():
+                plan["status"] = "stopped"
+                plan["stop_requested"] = True
+                plan["stop_reason"] = "已停止"
+            else:
+                plan["status"] = "failed"
+                plan["stop_reason"] = str(error)
+            self._write_plan(plan, force=True)
+        finally:
+            if self._runners.get(plan_id) is threading.current_thread():
+                self._runners.pop(plan_id, None)
 
     def _score_panel(self) -> pd.DataFrame:
         path = self.qlib_root / "panel.parquet"
@@ -1089,9 +1252,16 @@ class QlibFactorLoopService:
             raise ValueError("找不到这个循环计划")
         return self._read_plan(path)
 
-    def _write_plan(self, plan: dict[str, object]) -> None:
+    def _write_plan(self, plan: dict[str, object], *, force: bool = False) -> None:
         path = self._plan_path(str(plan["plan_id"]))
         path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file() and not force:
+            current = self._read_plan(path)
+            if current.get("stop_requested"):
+                plan["stop_requested"] = True
+            if current.get("status") in {"stopped", "completed"} and plan.get("status") == "running":
+                plan["status"] = current["status"]
+                plan["stop_reason"] = current.get("stop_reason") or plan.get("stop_reason") or ""
         temporary = path.with_suffix(".json.next")
         temporary.write_text(json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(path)
@@ -1109,5 +1279,6 @@ class QlibFactorLoopService:
             "valid_end": plan["valid_end"],
             "agent_calls": plan.get("agent_calls", 0),
             "stop_reason": plan.get("stop_reason", ""),
+            "interruptions": [item for item in plan.get("interruptions") or [] if isinstance(item, dict)],
             "rounds": plan.get("rounds", []),
         }

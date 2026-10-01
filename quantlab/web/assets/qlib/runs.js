@@ -5,6 +5,7 @@
   const pager = document.getElementById("qlib-runs-pager");
   const live = document.getElementById("qlib-runs-live");
   const filter = document.getElementById("qlib-plan-filter");
+  const purgeButton = document.getElementById("qlib-purge-errors");
   const table = body.closest("table");
   const dialog = document.getElementById("qlib-formula-dialog");
   const PAGE_SIZES = [10, 20, 50, 100];
@@ -116,11 +117,29 @@
     return view.sortDir === "asc" ? order : -order;
   }
 
+  function interruptionItems(plan) {
+    const stored = Array.isArray(plan.interruptions) ? plan.interruptions.filter((item) => item && item.message) : [];
+    if (stored.length) return stored;
+    if (plan.stop_reason && String(plan.stop_reason).includes("模型")) {
+      return [{created_at: "", message: plan.stop_reason}];
+    }
+    return [];
+  }
+
   function rowsOf(planList) {
     const rows = [];
     planList.forEach((plan) => {
+      interruptionItems(plan).forEach((item) => {
+        rows.push({
+          plan,
+          round: {name: "模型中断", error: item.message, created_at: item.created_at || "", model: plan.model},
+          index: -1,
+          time: item.created_at || "",
+          interruption: true,
+        });
+      });
       const rounds = plan.rounds || [];
-      if (!rounds.length) {
+      if (!rounds.length && !interruptionItems(plan).length) {
         rows.push({plan, round: null, index: 0, time: ""});
         return;
       }
@@ -176,6 +195,8 @@
       `错误 ${stats.failed}`,
       `调用 ${stats.calls} 次`,
     ];
+    const breaks = interruptionItems(plan);
+    if (breaks.length) parts.push(`模型中断 ${breaks.length} 次`);
     if (stats.reasons) parts.push(stats.reasons);
     if (stats.stop) parts.push(stats.stop);
     return parts.filter(Boolean).join(" · ");
@@ -282,7 +303,7 @@
     tr.append(
       cell(plan.plan_id || "—", "plan-id"),
       source,
-      cell(`${row.index + 1}/${plan.max_loops}`, "num"),
+      cell(row.interruption ? "—" : `${row.index + 1}/${plan.max_loops}`, "num"),
       cell(displayTime(row.time) || "—"),
       cell(round.name || "—"),
       reasonCell(round),
@@ -320,9 +341,33 @@
     return `${head}正在向模型要公式，或正在算验证、测试和策略。记下之后才会出现在表里。`;
   }
 
+  function noticeText(plan) {
+    return interruptionItems(plan).map((item) => {
+      const when = displayTime(item.created_at);
+      return `${plan.plan_id}${when ? ` ${when}` : ""} ${item.message}`;
+    }).join(" ");
+  }
+
+  function syncPurge(planList) {
+    const plan = view.planId ? planList.find((item) => item.plan_id === view.planId) : null;
+    if (!plan) {
+      purgeButton.disabled = true;
+      purgeButton.title = "先在编号里选一个任务";
+      return;
+    }
+    const stats = planStats(plan);
+    if (plan.status === "running") {
+      purgeButton.disabled = true;
+      purgeButton.title = "先停止这个任务，再删除错误记录";
+      return;
+    }
+    purgeButton.disabled = stats.failed === 0;
+    purgeButton.title = stats.failed ? `删除 ${stats.failed} 条错误记录，留下 ${stats.succeeded} 条成功因子` : "没有错误记录";
+  }
+
   function syncLive(planList) {
     const chosen = view.planId ? planList.filter((plan) => plan.plan_id === view.planId) : planList;
-    const text = chosen.map(liveText).filter(Boolean).join(" ");
+    const text = chosen.map((plan) => liveText(plan) || noticeText(plan)).filter(Boolean).join(" ");
     live.hidden = !text;
     live.textContent = text;
   }
@@ -330,6 +375,7 @@
   function render(nextPlans) {
     plans = plansNewestFirst(nextPlans || []);
     syncFilter(plans);
+    syncPurge(plans);
     syncLive(plans);
     empty.classList.toggle("hidden", plans.length > 0);
     table.hidden = plans.length === 0;
@@ -434,6 +480,25 @@
     view.planId = filter.value;
     view.page = 1;
     render(plans);
+  });
+  purgeButton.addEventListener("click", async () => {
+    const plan = plans.find((item) => item.plan_id === view.planId);
+    if (!plan || plan.status === "running") return;
+    const stats = planStats(plan);
+    if (!stats.failed) return;
+    const agreed = window.confirm(`删除 ${plan.plan_id} 的 ${stats.failed} 条错误记录？成功的 ${stats.succeeded} 条会留下。`);
+    if (!agreed) return;
+    purgeButton.disabled = true;
+    try {
+      const result = await window.apiFetch(`/api/qlib/plans/${plan.plan_id}/purge-errors`, {method: "POST"});
+      errorBox.classList.add("hidden");
+      live.hidden = false;
+      live.textContent = `已删除 ${result.removed || 0} 条错误记录，留下 ${result.kept || 0} 条。`;
+      await refresh();
+    } catch (error) {
+      showError(error);
+      purgeButton.disabled = false;
+    }
   });
 
   document.getElementById("qlib-formula-close").addEventListener("click", closeFormula);

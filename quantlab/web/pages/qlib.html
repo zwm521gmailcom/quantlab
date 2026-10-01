@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · Qlib 挖因子</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260930resume2">
+    <link rel="stylesheet" href="/assets/app.css?v=20261001resume">
   </head>
   <body>
     <div class="shell">
@@ -13,7 +13,7 @@
         <nav class="page-back" aria-label="返回路径"><a href="/factors">← 因子研究</a></nav>
         <div class="eyebrow">Qlib</div>
         <h2>Qlib 挖因子</h2>
-        <p>把标准行情宽表转成 Qlib 日频数据。循环由本机 GPT-OSS 120B 每次只提一个公式，本机按验证段打分，再用 LightGBM 和 TopkDropout（持有 50 只、每次换 5 只）在测试段做出持仓。填好最多几轮后点开始循环，会按这个轮数跑完。保存配置不会开始。</p>
+        <p>把标准行情宽表转成 Qlib 日频数据。循环由本机 GPT-OSS 120B 每次只提一个公式，本机按验证段打分，再用 LightGBM 和 TopkDropout（持有 50 只、每次换 5 只）在测试段做出持仓。填好挖因子数量后点开始循环。保存配置不会开始。</p>
         <div id="qlib-error" class="state error hidden"></div>
         <section class="card">
           <h3>数据</h3>
@@ -22,12 +22,12 @@
           <div class="factor-form-actions">
             <button id="qlib-convert" type="button">转换数据</button>
           </div>
-          <p class="form-note">后复权价写入 open/high/low/close，成交量沿用 vol（手），复权因子是后复权收盘除以原始收盘。停牌日价量置空。代码 000001.SZ 写成 SZ000001。</p>
+          <p class="form-note">后复权价写入 open/high/low/close，成交量沿用 vol（手），复权因子是后复权收盘除以原始收盘。停牌日价量置空。转换时按股票和交易日并入每日指标、资金流向，这些字段可以写进因子公式。代码 000001.SZ 写成 SZ000001。</p>
         </section>
         <form id="qlib-plan" class="card factor-form-grid">
           <h3>循环配置</h3>
           <div class="factor-form-fields">
-            <label>最多几轮<input id="qlib-loops" type="number" min="1" max="500" value="3" required></label>
+            <label>挖因子数量<input id="qlib-loops" type="number" min="1" max="1000" value="3" required></label>
             <label>模型
               <select id="qlib-model">
                 <option value="gpt-oss-120b" selected>GPT-OSS 120B（本机）</option>
@@ -36,12 +36,14 @@
             <label>训练结束<input id="qlib-train-end" type="date" value="2022-12-31" required></label>
             <label>验证结束<input id="qlib-valid-end" type="date" value="2024-12-31" required></label>
           </div>
-          <p class="form-note">设定最多几轮后直接点开始循环即可，会跑满这个轮数，验证分暂时不提升也不会提前停。训练结束之前不参与打分。验证结束之前的下一段给模型看。再往后的测试段只显示在这页，不写进提示词。名字或公式和已经挖出的全部公式相同会再问，不会记成一轮。去掉空格后相同也算重复。提问超时会再试两次，仍失败就记下这一轮并继续。只用本机 GPT-OSS 120B。开始循环时如果 llama-server 没开，会先拉起，等它能回答再提问。循环真正跑起来后，开始循环会变灰。停止会结束当前挖掘并关掉本机模型。继续要从下拉里选一个还没跑满轮数的任务，需要的话会再拉起模型接着跑。</p>
+          <p class="form-note">挖因子数量是要挖出的因子个数。例如填 1000，就会连续挖到 1000 个不重复的因子才停。点停止也会停。模型中断、提问失败或公式重复都不计入这个数量，会重新拉起模型或再问，然后继续挖。训练结束之前不参与打分。验证结束之前的下一段给模型看。再往后的测试段只显示在这页，不写进提示词。去掉空格后相同也算重复。只用本机 GPT-OSS 120B。开始循环时如果 llama-server 没开，会先拉起，等它能回答再提问。正在挖的时候开始循环是灰的。停止会结束当前挖掘并关掉本机模型。继续要从下拉里选一个还没挖满数量的任务。</p>
           <p id="qlib-mining" class="form-note">正在确认有没有挖掘在跑…</p>
           <div class="factor-form-actions">
             <button id="qlib-save" type="submit">保存配置</button>
             <button id="qlib-start" type="button" class="secondary" disabled>开始循环</button>
             <button id="qlib-stop" type="button" class="secondary" disabled>停止</button>
+          </div>
+          <div class="resume-row">
             <label>未完成的任务
               <select id="qlib-resume"></select>
             </label>
@@ -52,7 +54,7 @@
       </main>
     </div>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/qlib/page.js?v=20260930resume2"></script>
+    <script src="/assets/qlib/page.js?v=20261001resume"></script>
     <script src="/assets/bootstrap.js?v=20260911layout"></script>
     <script src="/assets/nav.js?v=20260930nojobs"></script>
   </body>
