@@ -22,8 +22,14 @@ from quantlab.services.backtest_control import (
 from quantlab.services.backtest_job import BacktestJobService
 from quantlab.services.model_training import kind_display_name
 from quantlab.services.backtest_workbench import BacktestWorkbenchService
-from quantlab.services.result_sync import delete_plan_snapshot, write_plan_snapshot
-from quantlab.services.settings import max_concurrent_backtests
+from quantlab.domain.identifiers import validate_run_id
+from quantlab.services.result_sync import (
+    delete_plan_snapshot,
+    purge_backtest_run,
+    write_deleted_marker,
+    write_plan_snapshot,
+)
+from quantlab.services import backtest_admission
 
 
 _runtime_lock = threading.Lock()
@@ -84,6 +90,26 @@ def _metrics_for_runs(connection: Any, run_ids: list[str]) -> dict[str, dict[str
     }
 
 
+def _load_factor_names(connection: Any, configs: list[dict[str, Any]]) -> dict[str, str]:
+    ids = sorted(
+        {
+            str(item.get("factor_id") or "").strip()
+            for config in configs
+            for item in (config.get("factor_versions") or [])
+            if isinstance(item, dict)
+        }
+        - {""}
+    )
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = connection.execute(
+        f"SELECT entity_id, name FROM factors WHERE entity_id IN ({placeholders})",
+        ids,
+    ).fetchall()
+    return {str(row["entity_id"]): str(row["name"] or "").strip() for row in rows if str(row["name"] or "").strip()}
+
+
 def _load_model_names(connection: Any, configs: list[dict[str, Any]]) -> dict[str, str]:
     ids = sorted(
         {
@@ -117,14 +143,21 @@ def _model_display_name(config: dict[str, Any], names: dict[str, str] | None = N
     return kind_display_name(kind) or "—"
 
 
-def _summary(config: dict[str, Any], names: dict[str, str] | None = None) -> dict[str, Any]:
+def _summary(
+    config: dict[str, Any],
+    names: dict[str, str] | None = None,
+    factor_names: dict[str, str] | None = None,
+) -> dict[str, Any]:
     factors: list[str] = []
     for item in config.get("factor_versions") or []:
         if not isinstance(item, dict):
             continue
-        field = str(item.get("field") or item.get("factor_id") or "").strip()
-        if field:
-            factors.append(field.removeprefix("factor_"))
+        factor_id = str(item.get("factor_id") or "").strip()
+        label = str((factor_names or {}).get(factor_id) or "").strip()
+        if not label:
+            label = str(item.get("field") or factor_id).strip().removeprefix("factor_")
+        if label:
+            factors.append(label)
     train = config.get("train") if isinstance(config.get("train"), dict) else {}
     test = config.get("test") if isinstance(config.get("test"), dict) else {}
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
@@ -142,7 +175,11 @@ def _summary(config: dict[str, Any], names: dict[str, str] | None = None) -> dic
     }
 
 
-def _item_view(row: Any, names: dict[str, str] | None = None) -> dict[str, Any]:
+def _item_view(
+    row: Any,
+    names: dict[str, str] | None = None,
+    factor_names: dict[str, str] | None = None,
+) -> dict[str, Any]:
     config = json.loads(row["config_json"] or "{}")
     model = config.get("model") if isinstance(config.get("model"), dict) else {}
     model_name = _model_display_name(config, names)
@@ -159,7 +196,7 @@ def _item_view(row: Any, names: dict[str, str] | None = None) -> dict[str, Any]:
         "error_message": row["error_message"],
         "started_at": row["started_at"],
         "finished_at": row["finished_at"],
-        "summary": _summary(config, names),
+        "summary": _summary(config, names, factor_names),
         "config": config,
     }
 
@@ -220,7 +257,8 @@ class BacktestPlanService:
             ).fetchall()
             configs = [json.loads(item["config_json"] or "{}") for item in items]
             names = _load_model_names(connection, configs)
-            views = [_item_view(item, names) for item in items]
+            factor_names = _load_factor_names(connection, configs)
+            views = [_item_view(item, names, factor_names) for item in items]
             run_ids = [item["run_id"] for item in views if item.get("run_id")]
             metrics_by_run = _metrics_for_runs(connection, run_ids)
         empty = _empty_metrics()
@@ -234,6 +272,7 @@ class BacktestPlanService:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "items": views,
+            "admission": backtest_admission.snapshot(),
         }
 
     def sync_model_names(self) -> dict[str, Any]:
@@ -304,18 +343,67 @@ class BacktestPlanService:
 
     def delete(self, plan_id: str) -> dict[str, Any]:
         plan = self.get(plan_id)
-        if plan["items"]:
-            raise ValueError("not_empty")
-        if plan["status"] == "running":
-            raise ValueError("回测计划正在运行，不能删除。")
+        self._require_idle(plan)
+        run_ids = self._owned_run_ids(plan_id, plan["items"])
+        plan = self.get(plan_id)
+        self._require_idle(plan)
+        for run_id in run_ids:
+            write_deleted_marker(self.settings, run_id)
+            purge_backtest_run(
+                self.settings, self.database, run_id, audit_action="backtest_plan_delete"
+            )
         with self.database.transaction() as connection:
+            current = connection.execute(
+                "SELECT status FROM backtest_plans WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if current is None:
+                raise ValueError("backtest plan not found")
+            if current["status"] == "running":
+                raise ValueError("回测计划正在运行，不能删除。")
+            active = connection.execute(
+                "SELECT COUNT(*) FROM backtest_plan_items WHERE plan_id=? AND status IN ('queued', 'running')",
+                (plan_id,),
+            ).fetchone()[0]
+            if int(active):
+                raise ValueError("回测计划正在运行，不能删除。")
+            connection.execute("DELETE FROM backtest_plan_items WHERE plan_id=?", (plan_id,))
             deleted = connection.execute(
                 "DELETE FROM backtest_plans WHERE plan_id=?", (plan_id,)
             ).rowcount
         if not deleted:
             raise ValueError("backtest plan not found")
         delete_plan_snapshot(self.settings, plan_id)
-        return {"deleted": True, "plan_id": plan_id}
+        return {"deleted": True, "plan_id": plan_id, "deleted_run_ids": run_ids}
+
+    def _require_idle(self, plan: dict[str, Any]) -> None:
+        if plan["status"] == "running" or any(
+            item["status"] in {"queued", "running"} for item in plan["items"]
+        ):
+            raise ValueError("回测计划正在运行，不能删除。")
+
+    def _owned_run_ids(self, plan_id: str, items: list[dict[str, Any]]) -> list[str]:
+        seen: list[str] = []
+        for item in items:
+            run_id = str(item.get("run_id") or "").strip()
+            if not run_id or run_id in seen:
+                continue
+            try:
+                validate_run_id(run_id)
+            except ValueError:
+                continue
+            seen.append(run_id)
+        if not seen:
+            return []
+        owned: list[str] = []
+        with self.database.connect() as connection:
+            for run_id in seen:
+                others = connection.execute(
+                    "SELECT COUNT(*) FROM backtest_plan_items WHERE run_id=? AND plan_id<>?",
+                    (run_id, plan_id),
+                ).fetchone()[0]
+                if int(others) == 0:
+                    owned.append(run_id)
+        return owned
 
     def add_item(self, plan_id: str, raw: dict[str, Any]) -> dict[str, Any]:
         plan = self.get(plan_id)
@@ -532,7 +620,7 @@ class BacktestPlanService:
     def _run_loop(self, plan_id: str, item_ids: list[str], stop: threading.Event) -> None:
         try:
             bind_execution_thread()
-            workers = max(1, int(max_concurrent_backtests()))
+            workers = backtest_admission.memory_ceiling()
             if workers <= 1:
                 for item_id in item_ids:
                     if stop.is_set():
@@ -573,63 +661,70 @@ class BacktestPlanService:
         mark_plan_worker()
         if stop.is_set():
             return
-        stamp = _now()
-        with self.database.transaction() as connection:
-            row = connection.execute(
-                "SELECT * FROM backtest_plan_items WHERE item_id=?", (item_id,)
-            ).fetchone()
-            if row is None:
+        if not backtest_admission.enter(stop):
+            return
+        try:
+            if stop.is_set():
                 return
-            connection.execute(
-                "UPDATE backtest_plan_items SET status='running', started_at=?, updated_at=? WHERE item_id=?",
-                (stamp, stamp, item_id),
-            )
-        config = json.loads(row["config_json"] or "{}")
-        payload = dict(config)
-        payload["submission_token"] = uuid.uuid4().hex
-        payload["name"] = row["name"]
-        try:
-            submitted = self.workbench.submit(payload)
-            run_id = str(submitted["run_id"])
-        except Exception as error:
-            self._finish_item(item_id, "failed", error_message=str(error), finished_at=_now())
-            return
-        with _runtime_lock:
-            state = _runtime.get(plan_id)
-            if state is not None:
-                state["current_run_id"] = run_id
-                state.setdefault("current_run_ids", set()).add(run_id)
-        with self.database.transaction() as connection:
-            connection.execute(
-                "UPDATE backtest_plan_items SET run_id=?, updated_at=? WHERE item_id=?",
-                (run_id, _now(), item_id),
-            )
-        if stop.is_set():
+            stamp = _now()
+            with self.database.transaction() as connection:
+                row = connection.execute(
+                    "SELECT * FROM backtest_plan_items WHERE item_id=?", (item_id,)
+                ).fetchone()
+                if row is None:
+                    return
+                connection.execute(
+                    "UPDATE backtest_plan_items SET status='running', started_at=?, updated_at=? WHERE item_id=?",
+                    (stamp, stamp, item_id),
+                )
+            config = json.loads(row["config_json"] or "{}")
+            payload = dict(config)
+            payload["submission_token"] = uuid.uuid4().hex
+            payload["name"] = row["name"]
             try:
-                stop_run(self.job, run_id)
-            except ValueError:
-                pass
+                submitted = self.workbench.submit(payload)
+                run_id = str(submitted["run_id"])
+            except Exception as error:
+                self._finish_item(item_id, "failed", error_message=str(error), finished_at=_now())
+                return
+            with _runtime_lock:
+                state = _runtime.get(plan_id)
+                if state is not None:
+                    state["current_run_id"] = run_id
+                    state.setdefault("current_run_ids", set()).add(run_id)
+            with self.database.transaction() as connection:
+                connection.execute(
+                    "UPDATE backtest_plan_items SET run_id=?, updated_at=? WHERE item_id=?",
+                    (run_id, _now(), item_id),
+                )
+            if stop.is_set():
+                try:
+                    stop_run(self.job, run_id)
+                except ValueError:
+                    pass
+                self._finish_item(
+                    item_id, "failed", run_id=run_id, error_message="已强行停止", finished_at=_now()
+                )
+                return
+            try:
+                result = run_isolated(self.settings, self.job, run_id) or {}
+            except Exception as error:
+                self._finish_item(
+                    item_id, "failed", run_id=run_id, error_message=str(error), finished_at=_now()
+                )
+                return
+            status = str(result.get("status") or "failed")
+            item_status = "completed" if status == "completed" else "failed"
+            message = None if item_status == "completed" else str(result.get("error_message") or status)
             self._finish_item(
-                item_id, "failed", run_id=run_id, error_message="已强行停止", finished_at=_now()
+                item_id,
+                item_status,
+                run_id=run_id,
+                error_message=message,
+                finished_at=_now(),
             )
-            return
-        try:
-            result = run_isolated(self.settings, self.job, run_id) or {}
-        except Exception as error:
-            self._finish_item(
-                item_id, "failed", run_id=run_id, error_message=str(error), finished_at=_now()
-            )
-            return
-        status = str(result.get("status") or "failed")
-        item_status = "completed" if status == "completed" else "failed"
-        message = None if item_status == "completed" else str(result.get("error_message") or status)
-        self._finish_item(
-            item_id,
-            item_status,
-            run_id=run_id,
-            error_message=message,
-            finished_at=_now(),
-        )
+        finally:
+            backtest_admission.leave()
 
     def _finish_item(
         self,

@@ -743,3 +743,90 @@ def test_submit_backfill_reports_job_and_rejects_unknown_or_overlap(tmp_path, mo
         assert "不存在" in str(error)
     else:
         raise AssertionError("missing job should be rejected")
+
+
+def _wait_job(svc, job_id: str) -> dict:
+    import threading
+
+    job = {}
+    for _ in range(50):
+        job = svc.backfill_job(job_id)
+        if job["status"] != "running":
+            return job
+        threading.Event().wait(0.02)
+    return job
+
+
+def test_stop_backfill_finishes_the_current_index_then_leaves_the_next(tmp_path, monkeypatch):
+    import threading
+
+    from quantlab.services.tushare_download import TushareDownloadService
+
+    _calendar(tmp_path, _TAIL_OPENS)
+    folder = tmp_path / "data/raw/index_daily"
+    _write(folder / "index_daily_000300_SH.parquet", [{"ts_code": "000300.SH", "trade_date": "20260921"}])
+    _write(folder / "index_daily_000905_SH.parquet", [{"ts_code": "000905.SH", "trade_date": "20260921"}])
+    svc = TushareDownloadService(_settings(tmp_path))
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def _call(_api, params):
+        calls.append(params["ts_code"])
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        return [{"ts_code": params["ts_code"], "trade_date": "20260922", "close": 1}]
+
+    monkeypatch.setattr(svc, "_call", _call)
+    job = svc.submit_backfill("index_daily", now=_shanghai(14))
+    assert entered.wait(3)
+    stopping = svc.stop_backfill(job["job_id"])
+    assert stopping["cancel_requested"] is True
+    assert svc.active_backfill()["job_id"] == job["job_id"]
+    release.set()
+    finished = _wait_job(svc, job["job_id"])
+    assert finished["status"] == "stopped"
+    assert finished["summary"] == "已停止，已补 1 笔"
+    assert calls == ["000300.SH"]
+    stored = pq.read_table(folder / "index_daily_000300_SH.parquet").to_pylist()
+    assert any(row["trade_date"] == "20260922" for row in stored)
+    assert svc.active_backfill()["status"] == "idle"
+    try:
+        svc.stop_backfill(job["job_id"])
+    except ValueError as error:
+        assert "没有在跑" in str(error)
+    else:
+        raise AssertionError("a finished backfill should not stop again")
+
+
+def test_stop_backfill_finishes_the_current_trade_date_then_skips_the_rest(tmp_path, monkeypatch):
+    import threading
+
+    from quantlab.services.tushare_download import TushareDownloadService
+
+    _calendar(tmp_path, _TAIL_OPENS)
+    _write(tmp_path / "data/raw/daily/20260921.parquet", [{"ts_code": "000001.SZ", "trade_date": "20260921"}])
+    svc = TushareDownloadService(_settings(tmp_path))
+    entered = threading.Event()
+    release = threading.Event()
+    calls: list[str] = []
+
+    def _call(_api, params):
+        calls.append(params["trade_date"])
+        if len(calls) == 1:
+            entered.set()
+            assert release.wait(3)
+        return [{"ts_code": "000001.SZ", "trade_date": params["trade_date"]}]
+
+    monkeypatch.setattr(svc, "_call", _call)
+    monkeypatch.setattr("quantlab.services.tushare_download.time.sleep", lambda _seconds: None)
+    job = svc.submit_backfill("daily", now=_shanghai(14))
+    assert entered.wait(3)
+    svc.stop_backfill(job["job_id"])
+    release.set()
+    finished = _wait_job(svc, job["job_id"])
+    assert finished["status"] == "stopped"
+    assert calls == ["20260922"]
+    assert (tmp_path / "data/raw/daily/20260922.parquet").is_file()
+    assert not (tmp_path / "data/raw/daily/20260928.parquet").exists()

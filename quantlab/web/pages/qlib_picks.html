@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 筛选结果</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20260929picks">
+    <link rel="stylesheet" href="/assets/app.css?v=20261002picks4">
   </head>
   <body>
     <div class="shell">
@@ -13,29 +13,30 @@
         <nav class="page-back" aria-label="返回路径"><a href="/qlib/runs">← 挖因子记录</a></nav>
         <div class="eyebrow">Qlib</div>
         <h2>筛选结果</h2>
-        <p>只留下测试年化高于该轮基准、并且信息比率为正的因子。公式里只换 Ref、Mean、Std 窗口的算同一类，一类只留信息比率最高的一条；信息比率相同则留更早写出的那条。验证 IC、测试 IC 为负而年化为正，表示模型在做低因子值。</p>
+        <p>这里的测试年化和信息比率是这个因子自己的持仓成绩：当天分数最高的 50 只，掉出去当天卖。不是 Alpha158 加上该因子之后整本组合的成绩。只留下测试年化高于该轮基准、并且信息比率为正的因子。公式里只换 Ref、Mean、Std 窗口的算同一类，一类只留信息比率最高的一条；信息比率相同则留更早写出的那条。验证 IC、测试 IC 为负而年化为正，表示模型在做低因子值。</p>
         <div id="qlib-picks-error" class="state error hidden"></div>
         <section class="card qlib-runs-card">
           <p id="qlib-picks-summary" class="form-note">正在读取。</p>
           <div id="qlib-picks-board" class="qlib-picks-board hidden"></div>
           <p id="qlib-picks-empty" class="form-note hidden">还没有过线的因子。</p>
           <div class="archive-table">
-            <table class="archive-grid qlib-runs-grid">
+            <table class="archive-grid qlib-runs-grid qlib-picks-grid">
               <thead>
                 <tr>
-                  <th class="source">出处</th>
-                  <th>编号</th>
-                  <th class="num">轮次</th>
-                  <th>因子</th>
-                  <th>公式</th>
-                  <th class="num">验证</th>
-                  <th class="num">测试</th>
-                  <th class="num">测试年化</th>
-                  <th class="num">基准</th>
-                  <th class="num">回撤</th>
-                  <th class="num">信息比率</th>
-                  <th class="num">同类</th>
-                  <th></th>
+                  <th class="source archive-sortable" aria-sort="none"><button type="button" data-sort="source">出处</button></th>
+                  <th class="plan-id archive-sortable" aria-sort="none"><button type="button" data-sort="plan">编号</button></th>
+                  <th class="num round archive-sortable" aria-sort="none"><button type="button" data-sort="round">轮次</button></th>
+                  <th class="factor archive-sortable" aria-sort="none"><button type="button" data-sort="name">因子</button></th>
+                  <th class="explain archive-sortable" aria-sort="none"><button type="button" data-sort="reason">因子说明</button></th>
+                  <th class="formula archive-sortable" aria-sort="none"><button type="button" data-sort="formula">公式</button></th>
+                  <th class="num stat archive-sortable" aria-sort="none"><button type="button" data-sort="valid_ic">验证 IC</button></th>
+                  <th class="num stat archive-sortable" aria-sort="none"><button type="button" data-sort="test_ic">测试 IC</button></th>
+                  <th class="num stat archive-sortable" aria-sort="none"><button type="button" data-sort="test_annual">测试年化</button></th>
+                  <th class="num stat archive-sortable" aria-sort="none"><button type="button" data-sort="benchmark">基准年化</button></th>
+                  <th class="num stat archive-sortable" aria-sort="none"><button type="button" data-sort="test_drawdown">测试回撤</button></th>
+                  <th class="num stat archive-sortable" aria-sort="none"><button type="button" data-sort="test_ir">测试信息比率</button></th>
+                  <th class="num family archive-sortable" aria-sort="none"><button type="button" data-sort="family">同类</button></th>
+                  <th class="action"></th>
                 </tr>
               </thead>
               <tbody id="qlib-picks-body"></tbody>
@@ -45,7 +46,7 @@
       </main>
     </div>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/qlib/picks.js?v=20260929picks"></script>
+    <script src="/assets/qlib/picks.js?v=20261002picks3"></script>
     <script src="/assets/bootstrap.js?v=20260911layout"></script>
     <script src="/assets/nav.js?v=20260930nojobs"></script>
   </body>

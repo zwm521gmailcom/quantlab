@@ -15,11 +15,13 @@ from tests.quantlab.test_backtest_workbench import config, setup_env
 
 
 def _patch_slots(monkeypatch: pytest.MonkeyPatch, slots: int) -> None:
-    def _slots(ram=None, value: int = slots) -> int:
+    def _slots(ram=None, cpu=None, value: int = slots) -> int:
         return value
 
-    monkeypatch.setattr("quantlab.services.backtest_plan.max_concurrent_backtests", _slots)
     monkeypatch.setattr("quantlab.services.settings.max_concurrent_backtests", _slots)
+    from quantlab.services.backtest_admission import set_slot_override_for_test
+
+    set_slot_override_for_test(slots)
 
 
 def _wait_plan(client: TestClient, plan_id: str, timeout: float = 20.0) -> dict:
@@ -119,6 +121,9 @@ def test_start_runs_two_items_in_parallel_when_machine_allows_two(tmp_path: Path
     original = backtest_control.run_isolated
 
     def together(settings, job, run_id):
+        from quantlab.services import backtest_admission as gate
+
+        gate.mark_holder_settled_for_test()
         barrier.wait()
         return original(settings, job, run_id)
 
@@ -144,6 +149,7 @@ def test_start_runs_two_items_in_parallel_when_machine_allows_two(tmp_path: Path
     finished_at = [item["finished_at"] for item in finished["items"]]
     assert all(started_at) and all(finished_at)
     assert min(finished_at) >= max(started_at)
+    assert started_at[0] <= started_at[1]
 
 
 def test_plan_workers_can_hold_two_slots_and_still_block_workbench(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,6 +206,27 @@ def test_plan_workers_can_hold_two_slots_and_still_block_workbench(monkeypatch: 
         assert thread.is_alive() is False
     assert errors == []
     release_reservation()
+
+
+def test_plan_detail_includes_admission_snapshot(tmp_path: Path) -> None:
+    from quantlab.services import backtest_admission as gate
+
+    gate.reset_admission()
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    created = client.post(
+        "/api/backtest-plans",
+        json={"name": "放行快照", "items": [{"name": "一笔", "config": config("snap")}]},
+    )
+    assert created.status_code == 201
+    body = client.get(f"/api/backtest-plans/{created.json()['plan_id']}").json()
+    admission = body["admission"]
+    assert admission["loading"] == 0
+    assert admission["running"] == 0
+    assert admission["limit"] >= 1
+    assert admission["load_limit"] >= 1
+    assert admission["can_start"] is True
+    gate.reset_admission()
 
 
 def test_start_skips_unselected_and_completed_items(tmp_path: Path) -> None:
@@ -432,28 +459,136 @@ def test_closed_plan_rejects_new_items_and_start(tmp_path: Path) -> None:
     assert started.json()["error_code"] == "BACKTEST_PLAN_CLOSED"
 
 
-def test_empty_plan_can_be_deleted_and_plan_with_items_cannot(tmp_path: Path) -> None:
+def _insert_run(database, settings, run_id: str, name: str) -> Path:
+    from quantlab.repositories.artifacts import ArtifactRepository
+    from quantlab.services.backtest_summary import refresh_backtest_summary
+
+    folder = settings.runtime_root / "results" / run_id
+    folder.mkdir(parents=True)
+    metrics = folder / "metrics.json"
+    trades = folder / "trades.json"
+    metrics.write_text('{"return":0.2}', encoding="utf-8")
+    trades.write_text("[]", encoding="utf-8")
+    with database.transaction() as connection:
+        connection.execute(
+            "INSERT INTO run_registry(run_id, run_type, created_at, finished_at) VALUES (?, 'backtest', ?, ?)",
+            (run_id, "2026-10-03T10:00:00.000000+00:00", "2026-10-03T10:01:00.000000+00:00"),
+        )
+        connection.execute(
+            "INSERT INTO backtest_runs(run_id,status,config_json,metrics_json) VALUES (?, 'queued', ?, ?)",
+            (
+                run_id,
+                json.dumps({"name": name, "test": {"date_from": "2025-01-02", "date_to": "2026-08-31"}}),
+                '{"return":0.2}',
+            ),
+        )
+        connection.execute("UPDATE backtest_runs SET status='running' WHERE run_id=?", (run_id,))
+        connection.execute("UPDATE backtest_runs SET status='completed' WHERE run_id=?", (run_id,))
+        connection.execute(
+            "INSERT INTO backtest_steps(run_id, ordinal, step_name, status) VALUES (?, 1, 'metrics', 'completed')",
+            (run_id,),
+        )
+        refresh_backtest_summary(connection, run_id)
+    ArtifactRepository(settings, database).register(
+        run_id=run_id, path=metrics, display_name="回测指标", artifact_role="metrics"
+    )
+    return folder
+
+
+def test_empty_plan_can_be_deleted(tmp_path: Path) -> None:
     settings, database = setup_env(tmp_path)
     client = TestClient(create_app(settings, database))
     empty_id = client.post("/api/backtest-plans", json={"name": "空计划"}).json()["plan_id"]
-    filled = client.post(
-        "/api/backtest-plans",
-        json={"name": "有任务", "items": [{"name": "一笔", "config": config("keep")}]},
-    ).json()
-    blocked = client.delete(f"/api/backtest-plans/{filled['plan_id']}")
-    assert blocked.status_code == 400
-    assert blocked.json()["error_code"] == "BACKTEST_PLAN_NOT_EMPTY"
-    assert client.get(f"/api/backtest-plans/{filled['plan_id']}").status_code == 200
     client.post(f"/api/backtest-plans/{empty_id}/close")
     deleted = client.delete(f"/api/backtest-plans/{empty_id}")
     assert deleted.status_code == 200
-    assert deleted.json() == {"deleted": True, "plan_id": empty_id}
+    assert deleted.json() == {"deleted": True, "plan_id": empty_id, "deleted_run_ids": []}
     missing = client.get(f"/api/backtest-plans/{empty_id}")
     assert missing.status_code == 404
     listed = client.get("/api/backtest-plans").json()["items"]
     assert all(item["plan_id"] != empty_id for item in listed)
     unknown = client.delete("/api/backtest-plans/plan-missing")
     assert unknown.status_code == 404
+
+
+def test_deleting_plan_removes_its_runs_artifacts_and_leaves_other_runs(tmp_path: Path) -> None:
+    settings, database = setup_env(tmp_path)
+    client = TestClient(create_app(settings, database))
+    filled = client.post(
+        "/api/backtest-plans",
+        json={
+            "name": "有任务",
+            "items": [
+                {"name": "独有", "config": config("keep")},
+                {"name": "共用", "config": config("shared")},
+            ],
+        },
+    ).json()
+    kept = client.post(
+        "/api/backtest-plans",
+        json={"name": "别的计划", "items": [{"name": "留着", "config": config("other")}]},
+    ).json()
+    run_id = "20261003-184700-0001"
+    kept_id = "20261003-184700-0002"
+    shared_id = "20261003-184700-0003"
+    folder = _insert_run(database, settings, run_id, "要删的回测")
+    kept_folder = _insert_run(database, settings, kept_id, "别的回测")
+    shared_folder = _insert_run(database, settings, shared_id, "两边都引用")
+    snapshot = settings.runtime_root / "results" / "_plans" / f"{filled['plan_id']}.json"
+    assert snapshot.is_file()
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_plan_items SET run_id=?, status='completed' WHERE item_id=?",
+            (run_id, filled["items"][0]["item_id"]),
+        )
+        connection.execute(
+            "UPDATE backtest_plan_items SET run_id=?, status='completed' WHERE item_id=?",
+            (shared_id, filled["items"][1]["item_id"]),
+        )
+        connection.execute(
+            "UPDATE backtest_plan_items SET run_id=?, status='completed' WHERE item_id=?",
+            (shared_id, kept["items"][0]["item_id"]),
+        )
+        connection.execute(
+            "UPDATE backtest_plans SET status='running' WHERE plan_id=?",
+            (filled["plan_id"],),
+        )
+    running = client.delete(f"/api/backtest-plans/{filled['plan_id']}")
+    assert running.status_code == 400
+    assert "正在运行" in running.json()["message"]
+    with database.transaction() as connection:
+        connection.execute(
+            "UPDATE backtest_plans SET status='completed' WHERE plan_id=?",
+            (filled["plan_id"],),
+        )
+    deleted = client.delete(f"/api/backtest-plans/{filled['plan_id']}")
+    assert deleted.status_code == 200
+    body = deleted.json()
+    assert body["plan_id"] == filled["plan_id"]
+    assert body["deleted_run_ids"] == [run_id]
+    assert client.get(f"/api/backtest-plans/{filled['plan_id']}").status_code == 404
+    assert not folder.exists()
+    assert not snapshot.exists()
+    marker = settings.runtime_root / "results" / "_deleted" / f"{run_id}.json"
+    assert marker.is_file()
+    assert kept_folder.is_dir() and shared_folder.is_dir()
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM backtest_runs WHERE run_id=?", (run_id,)).fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM backtest_summaries WHERE run_id=?", (run_id,)).fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM artifacts WHERE run_id=?", (run_id,)).fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM backtest_steps WHERE run_id=?", (run_id,)).fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM backtest_plan_items WHERE plan_id=?", (filled["plan_id"],)).fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM backtest_runs WHERE run_id=?", (kept_id,)).fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM backtest_runs WHERE run_id=?", (shared_id,)).fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM backtest_summaries WHERE run_id=?", (shared_id,)).fetchone()[0] == 1
+    assert client.get(f"/api/backtest-plans/{kept['plan_id']}").status_code == 200
+    removed_kept = client.delete(f"/api/backtest-plans/{kept['plan_id']}")
+    assert removed_kept.status_code == 200
+    assert removed_kept.json()["deleted_run_ids"] == [shared_id]
+    assert not shared_folder.exists()
+    with database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM backtest_runs WHERE run_id=?", (shared_id,)).fetchone()[0] == 0
+        assert connection.execute("SELECT COUNT(*) FROM backtest_summaries WHERE run_id=?", (shared_id,)).fetchone()[0] == 0
 
 
 def test_selected_plan_items_can_be_deleted_in_bulk(tmp_path: Path) -> None:
@@ -507,7 +642,7 @@ def test_plan_page_and_workbench_expose_select_all_start(tmp_path: Path) -> None
     plan_js = Path("quantlab/web/assets/backtest/plan.js").read_text(encoding="utf-8")
     source = html + plan_js
     assert "回测计划" in html
-    assert "内存和核数" in html
+    assert "同时读几笔行情" in html
     assert "正在跑 ${running} 笔" in plan_js
     assert "全选" in html
     assert "开始" in html

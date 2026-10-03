@@ -166,12 +166,30 @@ def raw_backfill(request: Request, interface: str) -> dict[str, object]:
         ) from error
 
 
+@router.get("/api/datasets/raw/backfill/active")
+def raw_backfill_active(request: Request) -> dict[str, object]:
+    return request.app.state.tushare_download_service.active_backfill()
+
+
 @router.get("/api/datasets/raw/backfill/{job_id}")
 def raw_backfill_job(request: Request, job_id: str) -> dict[str, object]:
     try:
         return request.app.state.tushare_download_service.backfill_job(job_id)
     except ValueError as error:
         raise HTTPException(status_code=404, detail=_error_payload("RAW_BACKFILL_NOT_FOUND", str(error))) from error
+
+
+@router.post("/api/datasets/raw/backfill/{job_id}/stop")
+def raw_backfill_stop(request: Request, job_id: str) -> dict[str, object]:
+    try:
+        return request.app.state.tushare_download_service.stop_backfill(job_id)
+    except ValueError as error:
+        message = str(error)
+        missing = "不存在" in message
+        raise HTTPException(
+            status_code=404 if missing else 409,
+            detail=_error_payload("RAW_BACKFILL_NOT_FOUND" if missing else "RAW_BACKFILL_IDLE", message),
+        ) from error
 
 
 @router.get("/api/datasets/quality-alerts")

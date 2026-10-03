@@ -146,6 +146,9 @@ def execute_rule_signal(job_service: Any, run_id: str) -> dict[str, Any]:
 
         job_service._step(run_id, 4, "running")
         frame = _read_frame(path, date_from=date_from, date_to=date_to)
+        from quantlab.services.backtest_admission import settle_after_load
+
+        settle_after_load(job_service.settings.runtime_root, run_id)
         history = _upto(frame, date_to)
         market = _window(frame, date_from, date_to)
         params = _signal_params(config)

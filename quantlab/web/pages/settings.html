@@ -146,7 +146,7 @@
         </section>
         <section class="card">
           <h3>回测运算资源</h3>
-          <p class="settings-help">这些项控制本机并行，不改变切折、成交或分层档位的结果。同时回测条数按本机内存和核数自动算，没有手动档；16GB 仍是 1 条。本机若是 16GB 内存，不要按 CPU 核数去开分层进程。只停运算请用回测中心的「回测强行停止」，不要停整个 QuantLab。</p>
+          <p class="settings-help">这些项控制折训练和分层净值的并行，不改变切折、成交或分层档位的结果。同时回测条数不在这里设置，也不读环境变量里的条数。同时读几笔行情、稳定阶段最多跑几笔，都按内存估算，不写死。16GB 内存仍然一条一条跑。本机若是 16GB 内存，不要按 CPU 核数去开分层进程。只停运算请用回测中心的「回测强行停止」，不要停整个 QuantLab。</p>
           <div class="settings-fields">
             <label>机器码
               <input id="machine-id" type="text" readonly>
@@ -206,7 +206,7 @@
     </div>
     <script src="/assets/shared/dom.js"></script>
     <script src="/assets/shared/fetch.js"></script>
-    <script src="/assets/settings.js?v=20260916points"></script>
+    <script src="/assets/settings.js?v=20261002admission3"></script>
     <script src="/assets/nav.js?v=20260930nojobs"></script>
   </body>
 </html>

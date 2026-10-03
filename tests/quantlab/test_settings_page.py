@@ -245,9 +245,13 @@ def test_settings_page_is_separate_and_does_not_auto_run(tmp_path: Path) -> None
     assert "git pull" in page.text
     assert "打开页面" in page.text or "打开页面" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
     assert "8765" in page.text
-    assert "同时回测" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
-    assert "max_concurrent_backtests" in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
-    assert "内存和核数" in Path("quantlab/web/pages/settings.html").read_text(encoding="utf-8")
+    settings_js = Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
+    assert "同时回测" in settings_js
+    assert "admission_load_slots" in settings_js
+    assert "同时读" in settings_js
+    assert "不由设置决定" in settings_js
+    assert "admission_ceiling" in settings_js
+    assert "不在这里设置" in Path("quantlab/web/pages/settings.html").read_text(encoding="utf-8")
     assert '"版本"' in Path("quantlab/web/assets/settings.js").read_text(encoding="utf-8")
 
 

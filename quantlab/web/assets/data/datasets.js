@@ -49,7 +49,6 @@ async function loadDatasets() {
     appendText(header, "span", null, "总行数");
     appendText(header, "span", null, "总大小");
     appendText(header, "span", null, "质量");
-    appendText(header, "span", null, "文件目录");
     appendText(header, "span", null, "Tushare 接口");
     appendText(header, "span", null, "补数据");
     payload.items.forEach((item) => {
@@ -60,7 +59,7 @@ async function loadDatasets() {
       nameButton.type = "button";
       nameButton.className = "dataset-name-link";
       nameButton.textContent = item.name;
-      nameButton.addEventListener("click", () => showRawInterfaceFiles(item.entity_id, item.name_cn || item.name));
+      nameButton.addEventListener("click", () => showRawInterfaceFiles(item.entity_id, item.name_cn || item.name, item.path_alias));
       nameCell.append(nameButton);
       appendText(row, "span", "dataset-cn-name", item.name_cn || item.name);
       appendText(row, "span", "dataset-asset-class", item.asset_class_label || "A股");
@@ -70,7 +69,6 @@ async function loadDatasets() {
       appendText(row, "span", null, item.row_count == null ? "—" : new Intl.NumberFormat("zh-CN").format(item.row_count));
       appendText(row, "span", null, formatFileSize(item.total_size_bytes));
       appendText(row, "span", `quality-${item.quality_status}`, item.quality_status);
-      appendText(row, "span", "path-alias", item.path_alias);
       const linkCell = appendText(row, "span", null, "");
       const link = document.createElement("a");
       link.href = item.tushare_url || "https://tushare.pro/document/2";
@@ -85,11 +83,19 @@ async function loadDatasets() {
       backfillButton.dataset.backfill = item.name;
       backfillButton.textContent = "补数据";
       backfillButton.addEventListener("click", () => startRawBackfill(item.name));
+      const stopButton = document.createElement("button");
+      stopButton.type = "button";
+      stopButton.className = "backfill-stop";
+      stopButton.dataset.backfillStop = item.name;
+      stopButton.textContent = "停止";
+      stopButton.hidden = true;
+      stopButton.addEventListener("click", () => stopRawBackfill());
       const note = document.createElement("small");
       note.className = "backfill-note";
-      actionCell.append(backfillButton, note);
+      actionCell.append(backfillButton, stopButton, note);
     });
     applyBackfillButtons();
+    await restoreRawBackfill();
     bindTablePager(document.getElementById("dataset-pagination"), {
       page: payload.page || datasetPage,
       pages,
@@ -117,9 +123,16 @@ function applyBackfillButtons() {
     const note = button.parentElement && button.parentElement.querySelector(".backfill-note");
     if (note) note.textContent = backfillState && button.dataset.backfill === backfillState.interface ? backfillState.note : "";
   });
+  document.querySelectorAll("[data-backfill-stop]").forEach((button) => {
+    const active = running && button.dataset.backfillStop === backfillState.interface;
+    button.hidden = !active;
+    button.disabled = !active || Boolean(backfillState && backfillState.stopping);
+    button.textContent = backfillState && backfillState.stopping ? "停止中" : "停止";
+  });
 }
 
 function backfillErrorMessage(payload, status) {
+  if (payload && payload.message) return payload.message;
   if (payload && payload.detail && payload.detail.message) return payload.detail.message;
   return `HTTP ${status}`;
 }
@@ -148,7 +161,14 @@ async function startRawBackfill(interfaceName) {
 
 async function pollRawBackfill() {
   if (!backfillState || backfillState.phase !== "running" || !backfillState.jobId) return;
-  const response = await fetch(`/api/datasets/raw/backfill/${encodeURIComponent(backfillState.jobId)}`);
+  let response;
+  try {
+    response = await fetch(`/api/datasets/raw/backfill/${encodeURIComponent(backfillState.jobId)}`);
+  } catch (errorValue) {
+    backfillState.note = "连接中断，仍在查询";
+    applyBackfillButtons();
+    return;
+  }
   const job = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (backfillTimer) clearInterval(backfillTimer);
@@ -157,16 +177,68 @@ async function pollRawBackfill() {
     applyBackfillButtons();
     return;
   }
-  if (job.status === "running") return;
+  if (job.status === "running") {
+    if (job.cancel_requested) {
+      backfillState.stopping = true;
+      backfillState.note = "正在停止，当前这一笔写完后结束";
+    }
+    applyBackfillButtons();
+    return;
+  }
   if (backfillTimer) clearInterval(backfillTimer);
   backfillTimer = null;
   const failed = Array.isArray(job.failed_dates) && job.failed_dates.length ? `，失败 ${job.failed_dates.join("、")}` : "";
-  let note = job.status === "failed" ? (job.error || "补数失败") : `${job.summary || ""}${failed}`;
+  let note = job.status === "failed" ? (job.error || "补数失败") : `${job.summary || "已停止"}${failed}`;
   if (job.status !== "failed" && job.error) note = note ? `${note}；${job.error}` : job.error;
   const interfaceName = backfillState.interface;
   backfillState = { interface: interfaceName, phase: "done", note, jobId: job.job_id || "" };
-  if (job.status === "succeeded") await loadDatasets();
+  if (job.status === "succeeded" || job.status === "stopped") await loadDatasets();
   else applyBackfillButtons();
+}
+
+async function stopRawBackfill() {
+  if (!backfillState || backfillState.phase !== "running" || !backfillState.jobId || backfillState.stopping) return;
+  backfillState.stopping = true;
+  backfillState.note = "正在停止，当前这一笔写完后结束";
+  applyBackfillButtons();
+  try {
+    const response = await fetch(`/api/datasets/raw/backfill/${encodeURIComponent(backfillState.jobId)}/stop`, { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      backfillState.stopping = false;
+      backfillState.note = backfillErrorMessage(payload, response.status);
+      applyBackfillButtons();
+    }
+  } catch (errorValue) {
+    backfillState.stopping = false;
+    backfillState.note = errorValue.message;
+    applyBackfillButtons();
+  }
+}
+
+async function restoreRawBackfill() {
+  if (backfillState && backfillState.phase === "running" && backfillState.jobId) {
+    applyBackfillButtons();
+    return;
+  }
+  try {
+    const response = await fetch("/api/datasets/raw/backfill/active");
+    if (!response.ok) return;
+    const job = await response.json();
+    if (!job || job.status !== "running" || !job.job_id) return;
+    backfillState = {
+      interface: job.interface,
+      phase: "running",
+      stopping: Boolean(job.cancel_requested),
+      note: job.cancel_requested ? "正在停止，当前这一笔写完后结束" : "",
+      jobId: job.job_id,
+    };
+    if (backfillTimer) clearInterval(backfillTimer);
+    backfillTimer = setInterval(() => { pollRawBackfill(); }, 2000);
+    applyBackfillButtons();
+  } catch (_errorValue) {
+    /* 页面仍可手动补数 */
+  }
 }
 
 
@@ -387,7 +459,13 @@ function appendSuspendDDownload(panel, entityId, displayName) {
   panel.append(actions);
 }
 
-async function showRawInterfaceFiles(entityId, displayName) {
+function rawDirectory(entityId, pathAlias) {
+  if (pathAlias) return pathAlias;
+  const interfaceName = String(entityId || "").replace(/^raw_/, "");
+  return interfaceName ? `raw/${interfaceName}` : "";
+}
+
+async function showRawInterfaceFiles(entityId, displayName, pathAlias) {
   if (document.getElementById("raw-files-dialog")) return;
   const interfaceName = String(entityId || "").replace(/^raw_/, "");
   const overlay = document.createElement("div");
@@ -405,10 +483,17 @@ async function showRawInterfaceFiles(entityId, displayName) {
   close.textContent = "关闭";
   close.addEventListener("click", () => overlay.remove());
   head.append(title, close);
+  const directory = document.createElement("p");
+  directory.className = "raw-files-directory";
+  const directoryLabel = document.createElement("span");
+  directoryLabel.textContent = "文件目录";
+  const directoryValue = document.createElement("code");
+  directoryValue.textContent = rawDirectory(entityId, pathAlias);
+  directory.append(directoryLabel, directoryValue);
   const loading = document.createElement("p");
   loading.className = "state";
   loading.textContent = "正在加载文件列表…";
-  panel.append(head, loading);
+  panel.append(head, directory, loading);
   overlay.append(panel);
   document.body.append(overlay);
   const response = await fetch(`/api/raw/${encodeURIComponent(interfaceName)}/files?limit=20`);

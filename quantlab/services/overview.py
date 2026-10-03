@@ -21,6 +21,19 @@ _DETAIL_URLS = {
 _RECENT_RUN_LIMIT = 10
 
 
+def _fixed_bins(values: list[float], start: float, end: float, bins: int) -> dict[str, Any]:
+    width = (end - start) / bins
+    counts = [0] * bins
+    for value in values:
+        index = int((float(value) - start) / width)
+        if index < 0:
+            index = 0
+        elif index >= bins:
+            index = bins - 1
+        counts[index] += 1
+    return {"start": start, "end": end, "counts": counts}
+
+
 class OverviewService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -57,6 +70,87 @@ class OverviewService:
             "run_status_counts": {row["status"]: row["count"] for row in status_rows},
             "recent_runs": recent_runs,
             "quality_alerts": quality_alerts,
+        }
+
+    def chart_data(self) -> dict[str, Any]:
+        """Read stored columns into fixed bins for the overview charts."""
+        annual_kinds = (
+            "qlib_topk_dropout",
+            "qlib_lgb_multi",
+            "qlib_lgb_regression",
+            "lightgbm_tree",
+            "factor_rank",
+        )
+        drawdown_kinds = ("qlib_topk_dropout", "qlib_lgb_multi", "lightgbm_tree")
+        with self.database.connect() as connection:
+            kind_counts: dict[str, int] = {}
+            status_counts: dict[str, int] = {}
+            for row in connection.execute(
+                "SELECT kind, status, COUNT(*) AS count FROM backtest_summaries GROUP BY kind, status"
+            ):
+                kind = str(row["kind"] or "") or "unknown"
+                status = str(row["status"] or "") or "unknown"
+                count = int(row["count"])
+                kind_counts[kind] = kind_counts.get(kind, 0) + count
+                status_counts[status] = status_counts.get(status, 0) + count
+            annual = {kind: [] for kind in annual_kinds}
+            drawdown = {kind: [] for kind in drawdown_kinds}
+            for row in connection.execute(
+                "SELECT kind, annual_return, max_drawdown FROM backtest_summaries WHERE annual_return IS NOT NULL"
+            ):
+                kind = str(row["kind"] or "")
+                if kind in annual and row["annual_return"] is not None:
+                    annual[kind].append(float(row["annual_return"]))
+                if kind in drawdown and row["max_drawdown"] is not None:
+                    drawdown[kind].append(float(row["max_drawdown"]))
+            ic_values: list[float] = []
+            coverage_values: list[float] = []
+            for row in connection.execute(
+                "SELECT ic_mean, coverage FROM factor_calculation_runs WHERE status = 'completed'"
+            ):
+                if row["ic_mean"] is not None:
+                    ic_values.append(float(row["ic_mean"]))
+                if row["coverage"] is not None:
+                    coverage_values.append(float(row["coverage"]))
+            quality: list[dict[str, Any]] = []
+            for source, table in (
+                ("dataset_version", "dataset_versions"),
+                ("factor_version", "factor_versions"),
+                ("model_version", "model_versions"),
+                ("strategy_version", "strategy_versions"),
+            ):
+                for row in connection.execute(
+                    f"SELECT quality_status, COUNT(*) AS count FROM {table} GROUP BY quality_status"
+                ):
+                    quality.append(
+                        {
+                            "source": source,
+                            "status": str(row["quality_status"] or ""),
+                            "count": int(row["count"]),
+                        }
+                    )
+            datasets = [
+                {
+                    "id": str(row["entity_id"] or ""),
+                    "rows": int(row["row_count"] or 0),
+                    "date_min": str(row["date_min"] or ""),
+                    "date_max": str(row["date_max"] or ""),
+                    "quality_status": str(row["quality_status"] or ""),
+                }
+                for row in connection.execute(
+                    "SELECT entity_id, row_count, date_min, date_max, quality_status "
+                    "FROM dataset_versions ORDER BY entity_id"
+                )
+            ]
+        return {
+            "kind_counts": [{"kind": kind, "count": count} for kind, count in sorted(kind_counts.items(), key=lambda item: (-item[1], item[0]))],
+            "status_counts": status_counts,
+            "annual": {kind: _fixed_bins(annual[kind], -0.8, 1.2, 20) for kind in annual_kinds},
+            "drawdown": {kind: _fixed_bins(drawdown[kind], -1.0, 0.0, 16) for kind in drawdown_kinds},
+            "factor_ic": _fixed_bins(ic_values, -0.05, 0.05, 16),
+            "factor_coverage": _fixed_bins(coverage_values, 0.6, 1.0, 16),
+            "quality": quality,
+            "datasets": datasets,
         }
 
     @staticmethod

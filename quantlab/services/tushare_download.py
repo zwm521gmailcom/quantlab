@@ -252,6 +252,7 @@ class TushareDownloadService:
         self._daily_budget = TushareDailyBudget(budget_path, daily_limit_per_api=8000)
         self._backfill_guard = threading.Lock()
         self._backfill_running = False
+        self._backfill_cancel = threading.Event()
         self._backfill_jobs: dict[str, dict[str, Any]] = {}
         if self._enforce_quota:
             self.apply_saved_quota()
@@ -446,6 +447,9 @@ class TushareDownloadService:
         return result
 
     def download_index_basic(self) -> dict[str, Any]:
+        stopped = self._consume_backfill_stop()
+        if stopped:
+            return {"rows": 0, "stopped": stopped, "target": "raw/index_basic/index_basic.parquet"}
         rows = self._call("index_basic", {})
         if not rows:
             raise ValueError("tushare returned no index_basic rows")
@@ -605,6 +609,10 @@ class TushareDownloadService:
 
         def fetch(params: dict[str, Any]) -> list[dict[str, Any]] | None:
             nonlocal calls, stopped
+            reason = self._consume_backfill_stop()
+            if reason:
+                stopped = reason
+                return None
             try:
                 rows = self._call("moneyflow", params)
             except ValueError as error:
@@ -724,6 +732,10 @@ class TushareDownloadService:
 
         def fetch(params: dict[str, Any]) -> list[dict[str, Any]] | None:
             nonlocal calls, stopped
+            reason = self._consume_backfill_stop()
+            if reason:
+                stopped = reason
+                return None
             try:
                 rows = self._call("stk_week_month_adj", params)
             except ValueError as error:
@@ -823,8 +835,15 @@ class TushareDownloadService:
         output = self.settings.raw_root / "suspend_d" / "suspend_d.parquet"
         existing = pq.read_table(output).to_pandas() if output.exists() else pd.DataFrame()
         rows: list[dict[str, Any]] = []
-        for month_start, month_end in self._month_ranges(start_date, end_date):
-            rows.extend(self._call("suspend_d", {"start_date": month_start, "end_date": month_end}))
+        stopped = self._consume_backfill_stop()
+        if stopped is None:
+            for month_start, month_end in self._month_ranges(start_date, end_date):
+                stopped = self._consume_backfill_stop()
+                if stopped:
+                    break
+                rows.extend(self._call("suspend_d", {"start_date": month_start, "end_date": month_end}))
+        if stopped and not rows:
+            return {"rows": 0, "target": "raw/suspend_d/suspend_d.parquet", "stopped": stopped}
         if not rows and existing.empty:
             raise ValueError("tushare returned no suspend_d rows")
         frame = pd.concat([existing, pd.DataFrame(rows)], ignore_index=True)
@@ -834,19 +853,29 @@ class TushareDownloadService:
                 frame = frame.drop_duplicates(keys, keep="last")
         output.parent.mkdir(parents=True, exist_ok=True)
         pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), output)
-        return {"rows": len(rows), "target": "raw/suspend_d/suspend_d.parquet", "file_name": output.name}
+        result: dict[str, Any] = {"rows": len(rows), "target": "raw/suspend_d/suspend_d.parquet", "file_name": output.name}
+        if stopped:
+            result["stopped"] = stopped
+        return result
 
     def refresh_stock_basic(self) -> dict[str, Any]:
         target_dir = self.settings.raw_root / "stock_basic"
         target_dir.mkdir(parents=True, exist_ok=True)
         totals = {}
+        stopped = None
         for status in ("L", "D", "P"):
+            stopped = self._consume_backfill_stop()
+            if stopped:
+                break
             rows = self._call("stock_basic", {"list_status": status})
             if rows:
                 output = target_dir / f"stock_basic_{status}.parquet"
                 pq.write_table(pa.Table.from_pylist(rows), output)
                 totals[status] = len(rows)
-        return {"rows": totals}
+        result: dict[str, Any] = {"rows": totals}
+        if stopped:
+            result["stopped"] = stopped
+        return result
 
     _DATE_FILE_APIS = ("daily", "daily_basic", "adj_factor", "stk_limit")
 
@@ -880,11 +909,13 @@ class TushareDownloadService:
         with self._backfill_guard:
             if self._backfill_running:
                 raise ValueError("已有补数在进行")
+            self._backfill_cancel.clear()
             self._backfill_running = True
             self._backfill_jobs[job_id] = {
                 "job_id": job_id,
                 "interface": interface,
                 "status": "running",
+                "cancel_requested": False,
                 "processed": 0,
                 "total": 0,
                 "filled": 0,
@@ -908,15 +939,41 @@ class TushareDownloadService:
                 raise ValueError("补数任务不存在")
             return dict(job)
 
+    def active_backfill(self) -> dict[str, Any]:
+        with self._backfill_guard:
+            for job in self._backfill_jobs.values():
+                if job.get("status") == "running":
+                    return dict(job)
+        return {"status": "idle"}
+
+    def stop_backfill(self, job_id: str) -> dict[str, Any]:
+        """Ask the running backfill to finish its current write, then exit."""
+        with self._backfill_guard:
+            job = self._backfill_jobs.get(job_id)
+            if job is None:
+                raise ValueError("补数任务不存在")
+            if job.get("status") != "running":
+                raise ValueError("这个补数没有在跑")
+            job["cancel_requested"] = True
+            self._backfill_cancel.set()
+            return dict(job)
+
+    def _consume_backfill_stop(self) -> str | None:
+        if self._backfill_cancel.is_set():
+            return "已停止"
+        return None
+
     def _run_backfill_job(self, job_id: str, interface: str, now: datetime) -> None:
         try:
             result = self._backfill_one(interface, now)
-            self._write_backfill_job(job_id, status="succeeded", **self._backfill_view(result))
+            status = "stopped" if str(result.get("stopped") or "") == "已停止" else "succeeded"
+            self._write_backfill_job(job_id, status=status, **self._backfill_view(result))
         except Exception as error:
             self._write_backfill_job(job_id, status="failed", error=str(error))
         finally:
             with self._backfill_guard:
                 self._backfill_running = False
+                self._backfill_cancel.clear()
 
     def _write_backfill_job(self, job_id: str, **fields: Any) -> None:
         with self._backfill_guard:
@@ -950,12 +1007,14 @@ class TushareDownloadService:
             summary = "已是最新"
             filled = 0
         stopped = str(result.get("stopped") or "")
+        if stopped == "已停止":
+            summary = "已停止" if filled == 0 else f"已停止，已补 {filled} 笔"
         return {
             "processed": processed,
             "total": total,
             "filled": filled,
             "failed_dates": failed,
-            "error": stopped,
+            "error": "" if stopped == "已停止" else stopped,
             "summary": summary,
         }
 
@@ -964,6 +1023,7 @@ class TushareDownloadService:
         with self._backfill_guard:
             if self._backfill_running:
                 raise ValueError("已有补数在进行")
+            self._backfill_cancel.clear()
             self._backfill_running = True
         try:
             return self._backfill_one(interface, now)
@@ -1030,7 +1090,8 @@ class TushareDownloadService:
             return {"interface": api_name, "calls": 0, "status": "已是最新", "filled": []}
         result = self.download_interface_dates(api_name, api_name, missing, pause=0)
         result["interface"] = api_name
-        result["filled"] = missing
+        done = int(result.get("done") or 0)
+        result["filled"] = missing[:done] if result.get("stopped") else missing
         return result
 
     def _backfill_moneyflow(self, cutoff: str) -> dict[str, Any]:
@@ -1089,6 +1150,9 @@ class TushareDownloadService:
             missing = self._open_after(latest, cutoff)
             if not missing:
                 continue
+            stopped = self._consume_backfill_stop()
+            if stopped:
+                return {"interface": "index_daily", "calls": calls, "stopped": stopped, "status": "已停止"}
             self.refresh_index_daily(code, missing[0], cutoff)
             calls += 1
         return {"interface": "index_daily", "calls": calls, "status": "已是最新" if calls == 0 else "已补"}
@@ -1119,6 +1183,15 @@ class TushareDownloadService:
             if code is None or latest is None or latest >= target:
                 continue
             start = (datetime.strptime(latest, "%Y%m%d") + timedelta(days=1)).strftime("%Y%m%d")
+            stopped = self._consume_backfill_stop()
+            if stopped:
+                return {
+                    "interface": "index_weight",
+                    "calls": calls,
+                    "stopped": stopped,
+                    "status": "已停止",
+                    "target_date": target,
+                }
             self.download_index_weight(code, start, target)
             calls += 1
         return {"interface": "index_weight", "calls": calls, "status": "已是最新" if calls == 0 else "已补", "target_date": target}
@@ -1151,6 +1224,9 @@ class TushareDownloadService:
         year_end = cutoff[:4] + "1231"
         if self._calendar_covers(cutoff, year_end):
             return {"interface": "trade_cal", "calls": 0, "status": "已是最新"}
+        stopped = self._consume_backfill_stop()
+        if stopped:
+            return {"interface": "trade_cal", "calls": 0, "stopped": stopped, "status": "已停止"}
         result = self.refresh_trade_cal(cutoff, year_end)
         result["interface"] = "trade_cal"
         return result
@@ -1163,6 +1239,9 @@ class TushareDownloadService:
             output = target_dir / f"{date}.parquet"
             if output.exists():
                 continue
+            stopped = self._consume_backfill_stop()
+            if stopped:
+                return {"done": done, "failed": failed, "rows": total, "stopped": stopped}
             for attempt in range(1, max_retries + 1):
                 try:
                     result = self.download_date_interface(api_name, date, interface_dir)

@@ -150,10 +150,13 @@ def purge_backtest_run(settings: Settings, database: Database, run_id: str, *, a
         artifact_rows = connection.execute("SELECT path FROM artifacts WHERE run_id=?", (run_id,)).fetchall()
     artifact_paths = [str(item["path"]) for item in artifact_rows]
     if row is None:
+        with database.transaction() as connection:
+            connection.execute("DELETE FROM backtest_summaries WHERE run_id=?", (run_id,))
         _unlink_artifact_files(settings, artifact_paths)
         _remove_run_folder(settings, run_id)
         return False
     with database.transaction() as connection:
+        connection.execute("DELETE FROM backtest_summaries WHERE run_id=?", (run_id,))
         connection.execute("DELETE FROM artifacts WHERE run_id=?", (run_id,))
         connection.execute("DELETE FROM backtest_steps WHERE run_id=?", (run_id,))
         connection.execute("DELETE FROM backtest_model_versions WHERE backtest_run_id=?", (run_id,))

@@ -1,4 +1,4 @@
-"""LightGBM scores plus Qlib's TopkDropout holdings, scored on the test window."""
+"""LightGBM scores plus a top-50 book. A holding that leaves today's top 50 is sold the same day."""
 
 from __future__ import annotations
 
@@ -14,21 +14,23 @@ BOOK_CAPITAL = 1_000_000.0
 
 
 def topk_dropout_targets(score: pd.Series, held: list[str], *, topk: int = TOPK, n_drop: int = N_DROP) -> list[str]:
-    """Match Qlib TopkDropoutStrategy: keep the book, sell the weakest n_drop, buy replacements."""
-    ranked = score.dropna().sort_values(ascending=False)
-    held_index = pd.Index(dict.fromkeys(held))
-    last = ranked.reindex(held_index.intersection(ranked.index)).sort_values(ascending=False).index
-    missing = [code for code in held_index if code not in ranked.index]
-    last = pd.Index(list(last) + missing)
-    fresh = ranked.index.difference(last)
-    buy_cap = n_drop + topk - len(last)
-    today = pd.Index(fresh[: max(buy_cap, 0)])
-    combined = ranked.reindex(last.union(today)).sort_values(ascending=False).index
-    weakest = set(combined[-n_drop:]) if n_drop and len(combined) else set()
-    sell = [code for code in last if code in weakest]
-    buy = list(today[: max(len(sell) + topk - len(last), 0)])
-    kept = [code for code in last if code not in set(sell)]
-    return (kept + buy)[:topk]
+    """Hold today's highest scores. Sell every name that left that list, even when more than `n_drop` leave.
+
+    `n_drop` stays in the signature so existing callers still pass it. It does not keep a name after that name
+    falls out of the top list. Equal scores keep names already held, so a tie does not churn the book.
+    """
+    del n_drop
+    ranked = score.dropna()
+    if ranked.empty or topk <= 0:
+        return []
+    if ranked.index.has_duplicates:
+        ranked = ranked[~ranked.index.duplicated(keep="first")]
+    held_pos = {code: position for position, code in enumerate(dict.fromkeys(held))}
+    frame = pd.DataFrame({"score": ranked.to_numpy()}, index=ranked.index)
+    frame["held_pos"] = [held_pos.get(code, 10**9) for code in frame.index]
+    frame["pos"] = range(len(frame))
+    ordered = frame.sort_values(["score", "held_pos", "pos"], ascending=[False, True, True], kind="mergesort")
+    return [str(code) for code in ordered.index[:topk]]
 
 
 def _daily_zscore(factor: pd.Series, dates: pd.Series) -> pd.Series:
@@ -38,6 +40,24 @@ def _daily_zscore(factor: pd.Series, dates: pd.Series) -> pd.Series:
     std = grouped.transform("std").replace(0, np.nan)
     values = ((frame["factor"] - mean) / std).to_numpy()
     return pd.Series(values, index=factor.index)
+
+
+def _score_masks(
+    dates: pd.Series,
+    train_end: str,
+    valid_end: str,
+    *,
+    score_after: str,
+    score_end: str | None,
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Train stays on or before train_end. Score dates are an inclusive window after score_after."""
+    day = dates.astype(str)
+    train = day <= train_end
+    valid = (day > train_end) & (day <= valid_end)
+    score = day > score_after
+    if score_end is not None:
+        score = score & (day <= score_end)
+    return train, valid, score
 
 
 def lightgbm_scores(
@@ -55,6 +75,9 @@ def lightgbm_scores(
     short_valid_rounds: int | None = None,
     num_threads: int | None = None,
     seed: int | None = None,
+    score_after: str | None = None,
+    score_end: str | None = None,
+    use_early_stopping: bool = True,
 ) -> pd.Series:
     import lightgbm as lgb
 
@@ -63,11 +86,19 @@ def lightgbm_scores(
         {
             "x": features.to_numpy(),
             "y": future.to_numpy(),
-            "date": dates.to_numpy(),
+            "date": dates.astype(str).to_numpy(),
         }
     )
-    train = rows[rows["date"] <= train_end].dropna()
-    valid = rows[(rows["date"] > train_end) & (rows["date"] <= valid_end)].dropna()
+    after = valid_end if score_after is None else score_after
+    train_mask, valid_mask, score_mask = _score_masks(
+        pd.Series(rows["date"]),
+        train_end,
+        valid_end,
+        score_after=after,
+        score_end=score_end,
+    )
+    train = rows[train_mask.to_numpy()].dropna()
+    valid = rows[valid_mask.to_numpy()].dropna()
     if len(train) < 30:
         raise ValueError("训练样本不够")
     train_set = lgb.Dataset(train[["x"]], label=train["y"])
@@ -82,7 +113,7 @@ def lightgbm_scores(
         params["seed"] = seed
     if num_threads is not None:
         params["num_threads"] = num_threads
-    if len(valid) >= 10:
+    if use_early_stopping and len(valid) >= 10:
         valid_set = lgb.Dataset(valid[["x"]], label=valid["y"])
         booster = lgb.train(
             params,
@@ -92,17 +123,14 @@ def lightgbm_scores(
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
         )
     else:
-        booster = lgb.train(
-            params,
-            train_set,
-            num_boost_round=40 if short_valid_rounds is None else short_valid_rounds,
-        )
+        fallback_rounds = num_boost_round if not use_early_stopping else (40 if short_valid_rounds is None else short_valid_rounds)
+        booster = lgb.train(params, train_set, num_boost_round=fallback_rounds)
     scores = pd.Series(np.nan, index=factor.index, dtype="float64")
-    test_rows = rows[(rows["date"] > valid_end) & rows["x"].notna()]
-    if test_rows.empty:
+    score_rows = rows[score_mask.to_numpy() & rows["x"].notna()]
+    if score_rows.empty:
         raise ValueError("测试段没有可预测的样本")
-    predicted = booster.predict(test_rows[["x"]])
-    scores.iloc[test_rows.index.to_numpy()] = predicted
+    predicted = booster.predict(score_rows[["x"]])
+    scores.iloc[score_rows.index.to_numpy()] = predicted
     return scores
 
 
@@ -176,6 +204,9 @@ def lightgbm_multi_scores(
     short_valid_rounds: int | None = None,
     num_threads: int | None = None,
     seed: int | None = None,
+    score_after: str | None = None,
+    score_end: str | None = None,
+    use_early_stopping: bool = True,
 ) -> pd.Series:
     import lightgbm as lgb
 
@@ -189,9 +220,18 @@ def lightgbm_multi_scores(
     )
     label = pd.Series(pd.to_numeric(future, errors="coerce").to_numpy(), index=features.index)
     day = pd.Series(dates.to_numpy(), index=features.index)
-    train_mask = day <= train_end
+    after = valid_end if score_after is None else score_after
+    train_mask, valid_mask, score_mask = _score_masks(
+        day.astype(str),
+        train_end,
+        valid_end,
+        score_after=after,
+        score_end=score_end,
+    )
+    train_mask.index = features.index
+    valid_mask.index = features.index
+    score_mask.index = features.index
     train_ready = train_mask & zscored.notna().all(axis=1) & label.notna()
-    valid_mask = (day > train_end) & (day <= valid_end)
     valid_ready = valid_mask & zscored.notna().all(axis=1) & label.notna()
     if int(train_ready.sum()) < 30:
         raise ValueError("训练样本不够")
@@ -207,7 +247,7 @@ def lightgbm_multi_scores(
         params["seed"] = seed
     if num_threads is not None:
         params["num_threads"] = num_threads
-    if int(valid_ready.sum()) >= 10:
+    if use_early_stopping and int(valid_ready.sum()) >= 10:
         valid_set = lgb.Dataset(zscored.loc[valid_ready, columns], label=label.loc[valid_ready])
         booster = lgb.train(
             params,
@@ -217,16 +257,13 @@ def lightgbm_multi_scores(
             callbacks=[lgb.early_stopping(early_stopping_rounds, verbose=False)],
         )
     else:
-        booster = lgb.train(
-            params,
-            train_set,
-            num_boost_round=40 if short_valid_rounds is None else short_valid_rounds,
-        )
+        fallback_rounds = num_boost_round if not use_early_stopping else (40 if short_valid_rounds is None else short_valid_rounds)
+        booster = lgb.train(params, train_set, num_boost_round=fallback_rounds)
     scores = pd.Series(np.nan, index=features.index, dtype="float64")
-    score_mask = (day > valid_end) & zscored.notna().all(axis=1)
-    if not bool(score_mask.any()):
+    score_ready = score_mask & zscored.notna().all(axis=1)
+    if not bool(score_ready.any()):
         raise ValueError("测试段没有可预测的样本")
-    scores.loc[score_mask] = booster.predict(zscored.loc[score_mask, columns])
+    scores.loc[score_ready] = booster.predict(zscored.loc[score_ready, columns])
     return scores
 
 
@@ -368,6 +405,22 @@ def backtest_topk(
     return stats
 
 
+def _changed_weights(previous: dict[str, float], current: dict[str, float]) -> list[str]:
+    """Sells keep the old book order. Buys keep the new score order. Stock code is not the order."""
+    ordered: list[str] = []
+    seen: set[str] = set()
+    for code in previous:
+        if float(current.get(code, 0.0)) < float(previous.get(code, 0.0)) - 1e-12:
+            ordered.append(code)
+            seen.add(code)
+    for code in current:
+        if code in seen:
+            continue
+        if float(current.get(code, 0.0)) > float(previous.get(code, 0.0)) + 1e-12:
+            ordered.append(code)
+    return ordered
+
+
 def _record_weight_trades(
     episodes: dict[str, dict[str, float | str]],
     trades: list[dict[str, object]],
@@ -378,7 +431,7 @@ def _record_weight_trades(
     day: str,
 ) -> None:
     """Record buys and sells when the target weight changes. Drift back to the same weight is not a fill."""
-    for code in sorted(set(previous) | set(current)):
+    for code in _changed_weights(previous, current):
         old = float(previous.get(code, 0.0))
         new = float(current.get(code, 0.0))
         if abs(new - old) < 1e-12:
@@ -401,7 +454,6 @@ def _record_weight_trades(
                     "hold_pnl": 0.0,
                     "weight": new,
                 }
-                reason = "开仓"
             else:
                 bought = float(episode["buy_amount"])
                 episode["buy_price"] = (float(episode["buy_price"]) * bought + price * amount) / (bought + amount)
@@ -409,11 +461,6 @@ def _record_weight_trades(
                 episode["buy_fee"] = float(episode["buy_fee"]) + fee
                 episode["shares"] = float(episode["shares"]) + shares
                 episode["weight"] = new
-                reason = "加仓"
-            trades.append(_fill_row(
-                day=day, code=code, side="buy", price=price, amount=amount, fee=fee,
-                shares=shares, pnl=None, reason=reason,
-            ))
             continue
         episode = episodes.get(code)
         if episode is None or old <= 0:
@@ -447,7 +494,7 @@ def _record_weight_trades(
 
 def _open_episodes(episodes: dict[str, dict[str, float | str]], day: str) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for code in sorted(episodes):
+    for code in episodes:
         episode = episodes[code]
         row = _fill_row(
             day=str(episode["buy_date"]),
@@ -531,6 +578,38 @@ def _turnover_cost(previous: dict[str, float], current: dict[str, float]) -> flo
     return cost
 
 
+def run_library_strategy(
+    features: pd.DataFrame,
+    future: pd.Series,
+    dates: pd.Series,
+    instruments: pd.Series,
+    *,
+    prices: pd.Series | None = None,
+    train_end: str,
+    valid_end: str,
+    book: str = "test",
+) -> dict[str, object]:
+    """LightGBM on Alpha158 plus the new factors. book=valid scores only the validation window."""
+    try:
+        kwargs: dict[str, object] = {}
+        if book == "valid":
+            kwargs = {"score_after": train_end, "score_end": valid_end, "use_early_stopping": False}
+        scores = lightgbm_multi_scores(
+            features,
+            future,
+            dates,
+            train_end=train_end,
+            valid_end=valid_end,
+            **kwargs,  # type: ignore[arg-type]
+        )
+        result = backtest_topk(scores, future, dates, instruments, prices=prices)
+        result["model"] = "LightGBM"
+        result["strategy"] = "TopkDropout"
+        return result
+    except Exception as error:  # noqa: BLE001 — the mining loop records the book error on the factor row
+        return {"error": str(error), "strategy": "TopkDropout", "model": "LightGBM", "topk": TOPK, "n_drop": N_DROP}
+
+
 def run_factor_strategy(
     factor: pd.Series,
     future: pd.Series,
@@ -540,9 +619,32 @@ def run_factor_strategy(
     prices: pd.Series | None = None,
     train_end: str,
     valid_end: str,
+    book: str = "test",
+    num_threads: int | None = None,
 ) -> dict[str, object]:
+    """book=test keeps the existing early-stopped test scores. book=valid fits on train only."""
     try:
-        scores = lightgbm_scores(factor, future, dates, train_end=train_end, valid_end=valid_end)
+        if book == "valid":
+            scores = lightgbm_scores(
+                factor,
+                future,
+                dates,
+                train_end=train_end,
+                valid_end=valid_end,
+                score_after=train_end,
+                score_end=valid_end,
+                use_early_stopping=False,
+                num_threads=num_threads,
+            )
+        else:
+            scores = lightgbm_scores(
+                factor,
+                future,
+                dates,
+                train_end=train_end,
+                valid_end=valid_end,
+                num_threads=num_threads,
+            )
         return backtest_topk(scores, future, dates, instruments, prices=prices)
     except Exception as error:  # noqa: BLE001 — keep the factor row and show why the book was not built
         return {"error": str(error), "strategy": "TopkDropout", "model": "LightGBM", "topk": TOPK, "n_drop": N_DROP}

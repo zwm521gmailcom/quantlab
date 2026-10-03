@@ -95,15 +95,16 @@ def acquire_execution(label: str) -> None:
     global _gate_label
     ident = threading.get_ident()
     is_plan = bool(getattr(_plan_worker, "active", False))
-    from quantlab.services.settings import max_concurrent_backtests
+    from quantlab.services.backtest_admission import memory_ceiling
 
+    limit = memory_ceiling()
     with _gate_lock:
         if ident in _depths:
             _depths[ident] += 1
             return
         if _plan_reserved and not is_plan:
             raise ValueError(f"已有回测在运行（{_gate_label}），请等当前任务结束或先停止。")
-        if len(_depths) >= max_concurrent_backtests():
+        if len(_depths) >= limit:
             raise ValueError(f"已有回测在运行（{_gate_label}），请等当前任务结束或先停止。")
         _depths[ident] = 1
         if _gate_label is None:
@@ -250,42 +251,56 @@ def stop_run(job: BacktestJobService, run_id: str) -> dict[str, Any]:
 
 
 def run_isolated(settings: Settings, job: BacktestJobService, run_id: str) -> dict[str, Any] | None:
+    from quantlab.services import backtest_admission
+
     current = job.get(run_id)
     if current is None:
         return None
-    acquire_execution(f"run:{run_id}")
+    owned_admission = False
+    if not backtest_admission.holds():
+        if not backtest_admission.enter(None):
+            mark_stopped(job.database, run_id)
+            return job.get(run_id)
+        owned_admission = True
     try:
-        with _lock:
-            _stop_requested.discard(run_id)
-        inline = str(os.environ.get("QUANTLAB_BACKTEST_INLINE") or "").strip().lower()
-        if inline in {"1", "true", "yes"}:
-            return job.execute(run_id)
-        ctx = multiprocessing.get_context("spawn")
-        proc = ctx.Process(
-            target=_spawn_backtest_worker,
-            args=(os.fspath(settings.project_root), settings_payload(settings), run_id),
-            name=f"quantlab-bt-{run_id}",
-        )
-        with _lock:
-            if run_id in _stop_requested:
-                mark_stopped(job.database, run_id)
-                return job.get(run_id)
-            _workers[run_id] = proc
-        proc.start()
+        acquire_execution(f"run:{run_id}")
         try:
             with _lock:
+                _stop_requested.discard(run_id)
+            inline = str(os.environ.get("QUANTLAB_BACKTEST_INLINE") or "").strip().lower()
+            if inline in {"1", "true", "yes"}:
+                backtest_admission.attach(os.getpid(), run_id, settings.runtime_root)
+                return job.execute(run_id)
+            ctx = multiprocessing.get_context("spawn")
+            proc = ctx.Process(
+                target=_spawn_backtest_worker,
+                args=(os.fspath(settings.project_root), settings_payload(settings), run_id),
+                name=f"quantlab-bt-{run_id}",
+            )
+            with _lock:
                 if run_id in _stop_requested:
-                    _terminate(proc)
-            proc.join()
-        finally:
-            with _lock:
-                _workers.pop(run_id, None)
-        result = job.get(run_id)
-        if proc.exitcode not in (0,) and result and result.get("status") == "running":
-            with _lock:
-                user_stop = run_id in _stop_requested
-            mark_stopped(job.database, run_id, STOPPED_MESSAGE if user_stop else KILLED_MESSAGE)
+                    mark_stopped(job.database, run_id)
+                    return job.get(run_id)
+                _workers[run_id] = proc
+            proc.start()
+            backtest_admission.attach(proc.pid, run_id, settings.runtime_root)
+            try:
+                with _lock:
+                    if run_id in _stop_requested:
+                        _terminate(proc)
+                proc.join()
+            finally:
+                with _lock:
+                    _workers.pop(run_id, None)
             result = job.get(run_id)
-        return result
+            if proc.exitcode not in (0,) and result and result.get("status") == "running":
+                with _lock:
+                    user_stop = run_id in _stop_requested
+                mark_stopped(job.database, run_id, STOPPED_MESSAGE if user_stop else KILLED_MESSAGE)
+                result = job.get(run_id)
+            return result
+        finally:
+            release_execution()
     finally:
-        release_execution()
+        if owned_admission:
+            backtest_admission.leave()

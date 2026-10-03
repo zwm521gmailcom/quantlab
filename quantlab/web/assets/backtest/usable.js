@@ -167,7 +167,7 @@ async function loadUsable() {
   if (!host) return;
   const rules = document.getElementById("usable-rules");
   const body = document.getElementById("usable-body");
-  const catalog = await fetch("/assets/backtest/usable-versions.json?v=20260919usablebase").then((r) => r.json());
+  const catalog = await fetch("/assets/backtest/usable-versions.json?v=20261003usable2").then((r) => r.json());
   if (rules) {
     rules.replaceChildren();
     (catalog.rules || []).forEach((line) => {
@@ -182,14 +182,23 @@ async function loadUsable() {
   const runs = await Promise.all(items.map(async (item) => {
     try {
       const response = await fetch(`/api/backtests/runs/${encodeURIComponent(item.run_id)}`);
-      if (!response.ok) return {};
+      if (!response.ok) return null;
       return await response.json();
     } catch (error) {
-      return {};
+      return null;
     }
   }));
-  items.forEach((item, index) => {
-    const run = runs[index] || {};
+  const visible = items.flatMap((item, index) => (runs[index] ? [[item, runs[index]]] : []));
+  if (!visible.length) {
+    const row = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 7;
+    td.textContent = "没有可固定的回测。";
+    row.append(td);
+    body.append(row);
+    return;
+  }
+  visible.forEach(([item, run]) => {
     const metrics = run.metrics || {};
     const config = run.configuration || {};
     const row = document.createElement("tr");
