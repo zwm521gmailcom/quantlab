@@ -80,7 +80,7 @@ function syncButtons() {
   $("select-all").disabled = !current || running || closed || !(current.items || []).length;
   $("delete-items").disabled = !current || running || closed || !(current.items || []).some((item) => item.selected);
   $("close-plan").disabled = !current || running || closed;
-  $("delete-plan").disabled = !current || running || (current.items || []).length > 0;
+  $("delete-plan").disabled = !current || running;
 }
 
 function metricValue(item, key) {
@@ -226,7 +226,11 @@ function updatePlanChrome() {
   const pending = planItems.filter((item) => item.status === "pending").length;
   const done = planItems.filter((item) => item.status === "completed").length;
   const failed = planItems.filter((item) => item.status === "failed").length;
-  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${planItems.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}`;
+  const admission = current.admission;
+  const admissionNote = admission
+    ? `，读数据 ${admission.loading}${admission.load_limit == null ? "" : `/${admission.load_limit}`} 笔，上限 ${admission.limit} 笔`
+    : "";
+  $("plan-state").textContent = `${current.name} · ${current.plan_id} · ${current.closed ? "完结" : (STATUS[current.status] || current.status)} · ${planItems.length} 笔，已完成 ${done}，待运行 ${pending}${queued ? `，排队 ${queued}` : ""}${running ? `，正在跑 ${running} 笔` : ""}${admissionNote}`;
   setBanner(
     current.closed
       ? "这份计划已完结。不能再加入任务或开始，回测中心下拉框也不会再列出它。"
@@ -693,19 +697,24 @@ $("close-plan").addEventListener("click", async () => {
 });
 
 $("delete-plan").addEventListener("click", async () => {
-  if (!current || (current.items || []).length) return;
+  if (!current || current.status === "running") return;
   const name = current.name;
   const planId = current.plan_id;
-  if (!window.confirm(`确定删除「${name}」？只有没有任务的计划可以删除。`)) return;
+  const taskCount = (current.items || []).length;
+  const warning = taskCount
+    ? `确定删除「${name}」？其中 ${taskCount} 个任务，以及已经跑出的回测和产物都会一起删除。`
+    : `确定删除「${name}」？`;
+  if (!window.confirm(warning)) return;
   $("delete-plan").disabled = true;
   try {
-    await request(`/api/backtest-plans/${encodeURIComponent(planId)}`, {method: "DELETE"});
+    const result = await request(`/api/backtest-plans/${encodeURIComponent(planId)}`, {method: "DELETE"});
+    const removed = Array.isArray(result.deleted_run_ids) ? result.deleted_run_ids.length : 0;
     const url = new URL(window.location.href);
     url.searchParams.delete("plan_id");
     history.replaceState(history.state, "", `${url.pathname}${url.search}`);
     current = null;
     await load();
-    setBanner(`已删除「${name}」。`);
+    setBanner(removed ? `已删除「${name}」，并清掉 ${removed} 笔回测和产物。` : `已删除「${name}」。`);
   } catch (error) {
     setBanner(error.message, true);
     syncButtons();

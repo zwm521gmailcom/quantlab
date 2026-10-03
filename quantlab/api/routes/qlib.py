@@ -63,9 +63,25 @@ def qlib_stop(request: Request, plan_id: str) -> dict[str, object]:
         raise _invalid(error, "QLIB_PLAN_INVALID") from error
 
 
+@router.post("/api/qlib/plans/{plan_id}/rounds/{round_index}/own-archive")
+def qlib_own_archive(request: Request, plan_id: str, round_index: int) -> dict[str, object]:
+    try:
+        return request.app.state.qlib_factor_loop_service.publish_own_archive(plan_id, round_index)
+    except ValueError as error:
+        raise _invalid(error, "QLIB_PLAN_INVALID") from error
+
+
 @router.post("/api/qlib/plans/{plan_id}/purge-errors")
 def qlib_purge_errors(request: Request, plan_id: str) -> dict[str, object]:
     try:
         return request.app.state.qlib_factor_loop_service.purge_errors(plan_id)
+    except ValueError as error:
+        raise _invalid(error, "QLIB_PLAN_INVALID") from error
+
+
+@router.post("/api/qlib/plans/{plan_id}/delete")
+def qlib_delete_plan(request: Request, plan_id: str) -> dict[str, object]:
+    try:
+        return request.app.state.qlib_factor_loop_service.delete_plan(plan_id)
     except ValueError as error:
         raise _invalid(error, "QLIB_PLAN_INVALID") from error

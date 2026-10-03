@@ -10,6 +10,9 @@ const esc = (x) => String(x ?? "").replace(/[&<>"']/g, (c) => ({
 const metricLabels = {
   return: "累计收益",
   annual_return: "年化收益",
+  information_ratio: "信息比率",
+  valid_annual_return: "验证年化",
+  valid_information_ratio: "验证信息比率",
   sharpe: "夏普",
   sortino: "索提诺",
   calmar: "卡玛",
@@ -460,7 +463,6 @@ function renderAnnualSummary(d) {
 }
 
 const TRADE_COLUMNS = [
-  ["signal_date", "信号日", "date"],
   ["instrument", "股票", "text"],
   ["buy_date", "买入日", "date"],
   ["sell_date", "卖出日", "date"],
@@ -484,16 +486,122 @@ function formatTradeDate(value) {
 }
 
 function formatTradeNumber(value, digits) {
+  if (value == null || value === "") return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
   return number.toLocaleString("zh-CN", {minimumFractionDigits: digits, maximumFractionDigits: digits});
+}
+
+let tradeRows = [];
+let tradeSort = {key: "default", dir: "asc"};
+
+function tradeDateKey(value) {
+  const text = formatTradeDate(value);
+  return text === "—" ? "" : text;
+}
+
+function isBareOpen(row) {
+  const reason = row && row.reason;
+  if (reason === "开仓" || reason === "加仓") return true;
+  return row && row.side === "buy" && !row.sell_date && reason !== "期末仍持有";
+}
+
+function presentRoundTrip(row) {
+  const view = Object.assign({}, row);
+  const reason = String(view.reason || "");
+  if (view.status === "unfilled" || reason === "suspended_or_limit") {
+    view.status = "unfilled";
+    view.reason = "停牌或涨跌停";
+    return view;
+  }
+  if (!view.buy_date) view.buy_date = view.signal_date || null;
+  if (reason === "减仓") {
+    view.status = "reduced";
+    view.reason = "减仓";
+    return view;
+  }
+  if (reason === "平仓" || (view.sell_date && reason !== "期末仍持有" && reason !== "尚未卖出")) {
+    view.status = "sold";
+    if (!reason || reason === "开仓" || reason === "加仓" || reason === "平仓") view.reason = "平仓";
+    return view;
+  }
+  view.status = "holding";
+  view.sell_date = null;
+  view.sell_price = null;
+  view.sell_amount = null;
+  view.sell_fee = null;
+  view.reason = "尚未卖出";
+  return view;
+}
+
+function foldRoundTrips(rows) {
+  const views = (Array.isArray(rows) ? rows : []).map(displayTrade);
+  const covered = new Set();
+  views.forEach((row) => {
+    if (isBareOpen(row)) return;
+    const buy = tradeDateKey(row.buy_date || row.signal_date);
+    if (row.instrument && buy) covered.add(`${row.instrument}|${buy}`);
+  });
+  return views.filter((row) => {
+    if (!isBareOpen(row)) return true;
+    const buy = tradeDateKey(row.buy_date || row.signal_date);
+    return !covered.has(`${row.instrument}|${buy}`);
+  }).map(presentRoundTrip);
+}
+
+function tradeNumber(value) {
+  if (value == null || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function compareTrades(left, right, sort) {
+  if (!sort || sort.key === "default") {
+    const leftBuy = tradeDateKey(left.buy_date);
+    const rightBuy = tradeDateKey(right.buy_date);
+    if (leftBuy !== rightBuy) {
+      if (!leftBuy || !rightBuy) return leftBuy ? -1 : 1;
+      return leftBuy < rightBuy ? -1 : 1;
+    }
+    const leftSell = tradeDateKey(left.sell_date);
+    const rightSell = tradeDateKey(right.sell_date);
+    if (leftSell !== rightSell) {
+      if (!leftSell || !rightSell) return leftSell ? -1 : 1;
+      return leftSell < rightSell ? -1 : 1;
+    }
+    return left._order - right._order;
+  }
+  const kind = sort.kind;
+  const numeric = kind === "int" || kind === "price" || kind === "money" || kind === "pnl";
+  let order = 0;
+  let missing = false;
+  if (numeric) {
+    const a = tradeNumber(left[sort.key]);
+    const b = tradeNumber(right[sort.key]);
+    if (a == null || b == null) {
+      missing = true;
+      order = a == null && b == null ? 0 : a == null ? 1 : -1;
+    } else order = a - b;
+  } else {
+    const a = left[sort.key] == null || left[sort.key] === "" ? "" : String(kind === "date" ? formatTradeDate(left[sort.key]) : tradeCell(left, sort.key, kind));
+    const b = right[sort.key] == null || right[sort.key] === "" ? "" : String(kind === "date" ? formatTradeDate(right[sort.key]) : tradeCell(right, sort.key, kind));
+    if (!a || a === "—" || !b || b === "—") {
+      missing = true;
+      order = (!a || a === "—") && (!b || b === "—") ? 0 : !a || a === "—" ? 1 : -1;
+    } else order = a.localeCompare(b, "zh");
+  }
+  if (!missing && sort.dir === "desc") order = -order;
+  if (order === 0) order = left._order - right._order;
+  return order;
 }
 
 function tradeCell(row, key, kind) {
   const value = row[key];
   if (kind === "date") return formatTradeDate(value);
   if (kind === "status") {
-    if (value === "filled") return "已成交";
+    if (value === "sold" || value === "filled") return row.sell_date ? "已卖出" : "持有中";
+    if (value === "reduced") return "已减仓";
+    if (value === "holding") return "持有中";
     if (value === "unfilled") return "未成交";
     return value ? String(value) : "—";
   }
@@ -502,6 +610,7 @@ function tradeCell(row, key, kind) {
     return value ? String(value) : "—";
   }
   if (kind === "int") {
+    if (value == null || value === "") return "—";
     const number = Number(value);
     return Number.isFinite(number) ? Math.round(number).toLocaleString("zh-CN") : "—";
   }
@@ -528,7 +637,16 @@ function displayTrade(row) {
 }
 
 function renderTradeTable(host, rows) {
-  const list = (Array.isArray(rows) ? rows : []).map(displayTrade);
+  tradeRows = foldRoundTrips(rows).map((row, index) => {
+    row._order = index;
+    return row;
+  });
+  tradeSort = {key: "default", dir: "asc"};
+  paintTradeTable(host);
+}
+
+function paintTradeTable(host) {
+  const list = tradeRows.slice().sort((left, right) => compareTrades(left, right, tradeSort));
   host.replaceChildren();
   const summary = document.createElement("p");
   summary.className = "muted";
@@ -544,8 +662,24 @@ function renderTradeTable(host, rows) {
   const head = document.createElement("tr");
   columns.forEach((column) => {
     const cell = document.createElement("th");
-    cell.textContent = column[1];
-    if (column[2] !== "date" && column[2] !== "text" && column[2] !== "status" && column[2] !== "reason") cell.className = "num";
+    const numeric = column[2] === "int" || column[2] === "price" || column[2] === "money" || column[2] === "pnl";
+    if (numeric) cell.className = "num";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = column[1];
+    const active = tradeSort.key === column[0];
+    cell.setAttribute("aria-sort", active ? (tradeSort.dir === "asc" ? "ascending" : "descending") : "none");
+    button.addEventListener("click", () => {
+      if (tradeSort.key !== column[0]) {
+        tradeSort = {key: column[0], kind: column[2], dir: numeric ? "desc" : "asc"};
+      } else if ((numeric && tradeSort.dir === "desc") || (!numeric && tradeSort.dir === "asc")) {
+        tradeSort = {key: column[0], kind: column[2], dir: tradeSort.dir === "asc" ? "desc" : "asc"};
+      } else {
+        tradeSort = {key: "default", dir: "asc"};
+      }
+      paintTradeTable(host);
+    });
+    cell.append(button);
     head.append(cell);
   });
   const thead = document.createElement("thead");

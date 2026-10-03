@@ -138,7 +138,23 @@ main.dash { padding: 36px 48px 56px; max-width: 1180px; }
 .dash-action b { font-size: 14px; font-weight: 600; }
 .dash-action span { display: none; }
 .dash-action-primary, .dash-action-primary:hover { background: transparent; border: 0; color: var(--color-primary); }
+.dash-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 40px; margin-top: 8px; }
+.dash-chart h3 { margin: 0 0 8px; font-size: 16px; }
+.dash-chart-svg { width: 100%; height: auto; display: block; overflow: visible; }
+.dash-chart-bar { fill: var(--color-primary); }
+.dash-chart-dot { fill: var(--color-ok); fill-opacity: 0.72; }
+.dash-chart-axis { stroke: var(--color-border); stroke-width: 1; }
+.dash-chart-zero { stroke: var(--color-text-muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.dash-chart-label { fill: var(--color-text-muted); font-size: 12px; font-family: var(--font-sans); }
+.dash-desk { display: grid; grid-template-columns: 1.15fr .85fr; gap: 40px; align-items: start; margin: 22px 0 8px; }
+@media (max-width: 900px) {
+  .dash-charts { grid-template-columns: 1fr; }
+}
+.dash-note { margin: 10px 0 0; color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
 .dash-body { display: grid; grid-template-columns: 1.4fr .8fr; gap: 40px; align-items: start; margin: 28px 0 8px; }
+@media (max-width: 900px) {
+  .dash-desk, .dash-body { grid-template-columns: 1fr; }
+}
 .dash-side { display: grid; gap: 28px; min-width: 0; }
 .dash-panel { padding: 0; border: 0; border-radius: 0; background: transparent; }
 .dash-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--color-border); }
@@ -869,6 +885,12 @@ button.secondary { background: var(--color-bg-card); border-color: var(--color-b
 .trade-table-wrap { max-height: 520px; overflow: auto; border: 1px solid var(--color-border-light); border-radius: var(--radius-md); }
 .trade-table th { position: sticky; top: 0; z-index: 1; background: var(--color-bg-card); }
 .trade-table th.num, .trade-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.trade-table th button {
+  all: unset; display: inline; cursor: pointer; color: inherit; font: inherit; font-weight: inherit;
+}
+.trade-table th.num button { display: block; width: 100%; text-align: right; }
+.trade-table th[aria-sort="ascending"] button::after { content: " ↑"; }
+.trade-table th[aria-sort="descending"] button::after { content: " ↓"; }
 .trade-pnl-pos { color: var(--color-danger); }
 .trade-pnl-neg { color: var(--color-ok); }
 .param-field { display: grid; gap: 5px; color: var(--color-text-secondary); font-size: 13px; }
@@ -1233,7 +1255,7 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
 .qlib-run-progress.is-failed .qlib-run-progress-fill { background: var(--color-danger); }
 .qlib-run-progress-meta { margin: 0; color: var(--color-text-secondary); font-size: 13px; }
 .qlib-picks-board { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(260px, .7fr); gap: 8px 28px; align-items: start; margin: 8px 0 18px; }
-.qlib-picks-plot { width: 100%; height: auto; display: block; overflow: visible; }
+.qlib-picks-plot { width: 100%; height: auto; display: block; overflow: hidden; }
 .qlib-picks-plot text { fill: var(--color-text-muted); font-family: var(--font-sans); font-size: 12px; }
 .qlib-picks-plot .axis { stroke: var(--color-border); stroke-width: 1; }
 .qlib-picks-plot .grid { stroke: var(--color-border-light); stroke-width: 1; }
@@ -1409,9 +1431,9 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
 .plan-dialog .form-note { margin: 0; color: var(--color-text-muted); font-size: 12px; }
 
 .qlib-runs-card { min-width: 0; max-width: 100%; }
-.qlib-runs-card .archive-table { overflow-x: auto; }
+.qlib-runs-card .archive-table { max-height: calc(100vh - 340px); overflow: auto; }
 .qlib-plan-block + .qlib-plan-block { margin-top: 28px; }
-.qlib-runs-card .archive-grid.qlib-runs-grid { width: 100%; min-width: 720px; table-layout: fixed; }
+.qlib-runs-card .archive-grid.qlib-runs-grid { width: 100%; min-width: 1680px; table-layout: fixed; }
 .qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(n),
 .qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(n) {
   width: auto; max-width: none; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: middle;
@@ -1460,3 +1482,89 @@ html.dark .fold-table th, html.dark .fold-table td { border-bottom-color: var(--
 .qlib-runs-toolbar label, .qlib-runs-toolbar .btn { white-space: nowrap; flex-shrink: 0; }
 .qlib-runs-card .archive-grid.qlib-runs-grid th.source,
 .qlib-runs-card .archive-grid.qlib-runs-grid td.source { width: 4.2em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid thead th {
+  position: sticky; top: 0; z-index: 1; background: var(--color-bg-card);
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid th.score,
+.qlib-runs-card .archive-grid.qlib-runs-grid td.score {
+  display: table-cell; width: 8.8em; overflow: hidden; text-overflow: ellipsis;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid th.status,
+.qlib-runs-card .archive-grid.qlib-runs-grid td.status { display: table-cell; width: 5.2em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(1),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(1) { width: 12.4em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(3),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(3) { width: 6.4em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(4),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(4) { width: 11.6em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(5),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(5) { width: 14em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(6),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(6) { width: 16em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(7),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(7) { width: 4.4em; }
+.qlib-runs-card .archive-grid.qlib-runs-grid th:nth-child(16),
+.qlib-runs-card .archive-grid.qlib-runs-grid td:nth-child(16) { width: 6.8em; }
+
+.qlib-runs-card:has(.qlib-picks-grid) .archive-table {
+  max-height: none;
+  overflow: visible;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td {
+  padding: 10px 8px 10px 0;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th:nth-child(n),
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td:nth-child(n) {
+  width: auto;
+  max-width: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: top;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid thead th:nth-child(n) {
+  white-space: normal;
+  line-height: 1.25;
+  overflow: visible;
+  text-overflow: clip;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.archive-sortable button {
+  white-space: normal;
+}
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.source,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.source { width: 4%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.plan-id,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.plan-id { width: 8%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.round,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.round { width: 6%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.factor,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.factor { width: 11%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.explain,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.explain { width: 13%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.formula,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.formula { width: 10%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.stat,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.stat { width: 6.4%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.family,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.family { width: 4%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid th.action,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.qlib-actions { width: 5.4%; }
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.factor,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.explain,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.formula,
+.qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid td.plan-id {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+@media (max-width: 1100px) {
+  .qlib-runs-card .archive-grid.qlib-runs-grid.qlib-picks-grid .plan-id { display: none; }
+}

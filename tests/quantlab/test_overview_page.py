@@ -17,14 +17,17 @@ def test_overview_page_contains_real_overview_containers_and_run_links() -> None
     page = PAGE.read_text(encoding="utf-8")
     script = SCRIPT.read_text(encoding="utf-8")
 
-    assert 'id="overview-summary"' in page
-    assert 'id="recent-runs"' in page
-    assert 'id="quality-alerts"' in page
-    assert 'fetch("/api/overview")' in script
-    assert "detail_url" in script
-    assert "dataset_count" in script
-    assert "model_count" in script
-    assert "backtest_count" in script
+    for chart_id in (
+        "chart-ir", "chart-excess", "chart-scatter", "chart-drawdown",
+        "chart-test-ic", "chart-benchmark", "chart-kinds", "chart-annual-multi",
+        "chart-factor-ic", "chart-quality", "chart-datasets",
+    ):
+        assert f'id="{chart_id}"' in page
+    assert 'fetch("/api/qlib/picks")' in script
+    assert 'fetch("/api/overview/charts")' in script
+    assert "createElementNS" in script
+    assert "innerHTML" not in script
+    assert "最近运行" not in page
 
 
 def test_overview_api_returns_error_contract_when_service_fails(tmp_path) -> None:

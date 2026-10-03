@@ -1,8 +1,14 @@
-"""The local GPT-OSS 120B proposes one factor per round. This process scores it and stops."""
+"""The local GPT-OSS 120B proposes a hypothesis and a small batch of factors.
+
+A repeated name or formula is skipped. Every other formula is validated and
+tested on its own LightGBM TopkDropout book. It is kept when its own test
+annual return beats its own benchmark and its test information ratio is positive.
+"""
 
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
@@ -31,6 +37,7 @@ LOCAL_MODEL = "gpt-oss-120b"
 DEFAULT_MODEL = LOCAL_MODEL
 LOCAL_PROMPT_RECENT = 24
 LOCAL_CATALOG_LINES = 48
+FACTOR_BATCH = 4
 ALLOWED_MODELS = (LOCAL_MODEL,)
 LLAMA_CHAT_URL = os.environ.get("QUANTLAB_LLAMA_URL", "http://127.0.0.1:8080/v1/chat/completions")
 LLAMA_API_KEY = os.environ.get("QUANTLAB_LLAMA_API_KEY", "local")
@@ -247,6 +254,115 @@ def extract_proposal(text: str) -> dict[str, str]:
     return {"name": name, "formula": formula, "reason": reason}
 
 
+def extract_factor_batch(text: str) -> dict[str, object]:
+    """A hypothesis plus up to four factors. A single name/formula object still counts as one factor."""
+    cleaned = text.strip()
+    if "```" in cleaned:
+        fenced = cleaned.split("```", 2)[1]
+        cleaned = fenced[4:] if fenced.startswith("json") else fenced
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("回复里没有 JSON")
+    payload = json.loads(cleaned[start : end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("JSON 不是对象")
+    hypothesis = str(payload.get("hypothesis") or "").strip()
+    raw = payload.get("factors")
+    factors: list[dict[str, str]] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            formula = str(item.get("formula") or "").strip()
+            reason = str(item.get("reason") or "").strip()
+            if name and formula:
+                factors.append({"name": name, "formula": formula, "reason": reason})
+    if not factors and payload.get("name") and payload.get("formula"):
+        factors.append(extract_proposal(text))
+    if not factors:
+        raise ValueError("JSON 缺少 factors")
+    return {"hypothesis": hypothesis, "factors": factors[:FACTOR_BATCH]}
+
+
+def _max_abs_daily_corr(
+    factor: pd.Series,
+    library: pd.DataFrame,
+    dates: pd.Series,
+    *,
+    min_names: int = 8,
+) -> float | None:
+    """Largest mean cross-sectional correlation between one factor and the library."""
+    if library is None or library.empty:
+        return None
+    values = np.column_stack(
+        [
+            pd.to_numeric(factor, errors="coerce").to_numpy(dtype=np.float64),
+            library.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=np.float64),
+        ]
+    )
+    codes, _ = pd.factorize(dates.to_numpy(), sort=False)
+    order = np.argsort(codes, kind="mergesort")
+    values = values[order]
+    codes = codes[order]
+    cuts = np.flatnonzero(np.diff(codes)) + 1
+    bounds = np.r_[0, cuts, len(codes)]
+    totals = np.zeros(values.shape[1] - 1, dtype=np.float64)
+    counts = np.zeros(values.shape[1] - 1, dtype=np.float64)
+    for start, end in zip(bounds[:-1], bounds[1:]):
+        block = values[start:end]
+        x = block[:, 0]
+        ready = np.isfinite(x)
+        if int(ready.sum()) < min_names:
+            continue
+        x = x[ready]
+        y = block[ready, 1:]
+        x_center = x - x.mean()
+        x_energy = float(np.dot(x_center, x_center))
+        if x_energy <= 0:
+            continue
+        finite = np.isfinite(y)
+        dense = finite.all(axis=0)
+        if dense.any():
+            block_y = y[:, dense]
+            center = block_y - block_y.mean(axis=0)
+            numer = x_center @ center
+            denom = np.sqrt((center**2).sum(axis=0) * x_energy)
+            corr = np.divide(numer, denom, out=np.zeros(int(dense.sum())), where=denom > 0)
+            totals[np.flatnonzero(dense)] += corr
+            counts[np.flatnonzero(dense)] += 1
+        for column in np.flatnonzero(~dense):
+            mask = finite[:, column]
+            if int(mask.sum()) < min_names:
+                continue
+            xs = x[mask]
+            ys = y[mask, column]
+            xs = xs - xs.mean()
+            ys = ys - ys.mean()
+            denom = np.sqrt(np.dot(xs, xs) * np.dot(ys, ys))
+            if denom <= 0:
+                continue
+            totals[column] += float(np.dot(xs, ys) / denom)
+            counts[column] += 1
+    if not np.any(counts):
+        return None
+    means = np.divide(totals, counts, out=np.zeros_like(totals), where=counts > 0)
+    return float(np.nanmax(np.abs(means)))
+
+
+def _book_ir(book: dict[str, object]) -> float | None:
+    if book.get("error"):
+        return None
+    value = book.get("test_information_ratio")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number != number:
+        return None
+    return number
+
+
 def _now_text() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
@@ -371,10 +487,10 @@ def _formula_fields_text() -> str:
 
 
 def _successful_rows(history: list[dict[str, object]]) -> list[dict[str, object]]:
-    """Formulas the model may see. Failed rounds stay out so a resumed run matches a new one."""
+    """Formulas the model may see. Failures and formulas that missed their own test stay out."""
     rows: list[dict[str, object]] = []
     for item in history:
-        if not isinstance(item, dict) or item.get("error"):
+        if not isinstance(item, dict) or item.get("error") or item.get("accepted") is False:
             continue
         if not str(item.get("formula") or "").strip():
             continue
@@ -465,17 +581,28 @@ def _pick_number(value: object) -> float | None:
     return number
 
 
+def _screen_book(row: dict[str, object]) -> dict[str, object]:
+    """The factor's own TopkDropout book. The Alpha158 joint book is a different information ratio."""
+    own = row.get("own_test")
+    if isinstance(own, dict):
+        return own
+    if row.get("rescore_status"):
+        return {}
+    strategy = row.get("strategy")
+    return strategy if isinstance(strategy, dict) else {}
+
+
 def screen_factor_picks(plans: list[dict[str, object]]) -> dict[str, object]:
-    """Keep one factor per window-family when test annual beats that row's benchmark and IR is positive."""
+    """Keep one factor per window-family when its own test annual beats that row's benchmark and IR is positive."""
     candidates: list[dict[str, object]] = []
     for plan in plans:
         rounds = plan.get("rounds") or []
         if not isinstance(rounds, list):
             continue
         for index, row in enumerate(rounds):
-            if not isinstance(row, dict) or row.get("error"):
+            if not isinstance(row, dict) or _mining_failure(row):
                 continue
-            strategy = row.get("strategy") if isinstance(row.get("strategy"), dict) else {}
+            strategy = _screen_book(row)
             if strategy.get("error"):
                 continue
             annual = _pick_number(strategy.get("test_annual_return"))
@@ -519,15 +646,132 @@ def screen_factor_picks(plans: list[dict[str, object]]) -> dict[str, object]:
     return {"candidate_count": len(candidates), "picks": picks}
 
 
+def _admission_decision(error: object) -> bool:
+    """A rescore decline is a status, not a broken formula."""
+    text = str(error or "")
+    return "没有更好" in text or "需要换方向" in text or "截面相关达到" in text
+
+
+def _mining_failure(row: object) -> bool:
+    return isinstance(row, dict) and bool(row.get("error")) and not _admission_decision(row.get("error"))
+
+
+def _own_test_ready(row: dict[str, object]) -> bool:
+    """The runs table treats a factor as scored only when its own test book has numbers."""
+    book = row.get("own_test")
+    if not isinstance(book, dict) or book.get("error"):
+        return False
+    for key in ("test_annual_return", "test_benchmark_annual_return", "test_information_ratio"):
+        value = book.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        if value != value:
+            return False
+    return True
+
+
+def _status_error(row: object) -> bool:
+    """A row the runs table labels 错误. Admission notes, blanks, and pending books stay."""
+    if not isinstance(row, dict):
+        return False
+    if _mining_failure(row):
+        return True
+    if not str(row.get("name") or "").strip() and not str(row.get("formula") or "").strip():
+        return False
+    if _own_test_ready(row):
+        return False
+    strategy = row.get("strategy")
+    return isinstance(strategy, dict) and bool(str(strategy.get("error") or "").strip())
+
+
+def _interruption_count(plan: dict[str, object]) -> int:
+    """Rows the runs table labels 中断, including a model stop reason with no stored event."""
+    events = [item for item in plan.get("interruptions") or [] if isinstance(item, dict) and item.get("message")]
+    if events:
+        return len(events)
+    if "模型" in str(plan.get("stop_reason") or ""):
+        return 1
+    return 0
+
+
+def _counted_factor(row: object) -> bool:
+    """A kept factor fills the plan quota. A formula that missed its own test does not."""
+    return (
+        isinstance(row, dict)
+        and not row.get("error")
+        and row.get("accepted") is not False
+        and bool(str(row.get("name") or "").strip())
+        and bool(str(row.get("formula") or "").strip())
+    )
+
+
 def _mined_factor_count(rounds: list[object]) -> int:
     """Factors that were actually saved. Failed calls and rejected formulas do not count."""
-    count = 0
-    for row in rounds:
-        if not isinstance(row, dict) or row.get("error"):
+    return sum(1 for row in rounds if _counted_factor(row))
+
+
+def _valid_ir(row: dict[str, object]) -> float | None:
+    value = row.get("valid_information_ratio")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if number != number:
+        return None
+    return number
+
+
+def _family_key(formula: str) -> str:
+    return "".join(formula_family(formula).split())
+
+
+def _family_index(rows: list[object]) -> tuple[set[str], dict[str, float]]:
+    """Counted formulas occupy a family. Only a numeric validation IR can be beaten."""
+    seen: set[str] = set()
+    best: dict[str, float] = {}
+    for row in rows:
+        if not _counted_factor(row):
             continue
-        if str(row.get("name") or "").strip() and str(row.get("formula") or "").strip():
-            count += 1
-    return count
+        assert isinstance(row, dict)
+        family = _family_key(str(row.get("formula") or ""))
+        seen.add(family)
+        ir = _valid_ir(row)
+        if ir is None:
+            continue
+        current = best.get(family)
+        if current is None or ir > current:
+            best[family] = ir
+    return seen, best
+
+
+def _family_allows(family: str, ir: float, seen: set[str], best: dict[str, float]) -> bool:
+    if family not in seen:
+        return True
+    incumbent = best.get(family)
+    if incumbent is None:
+        return False
+    return ir > incumbent
+
+
+def _validation_passes(strategy: dict[str, object]) -> bool:
+    if strategy.get("error"):
+        return False
+    annual = strategy.get("test_annual_return")
+    benchmark = strategy.get("test_benchmark_annual_return")
+    ir = strategy.get("test_information_ratio")
+    numbers = (annual, benchmark, ir)
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in numbers):
+        return False
+    annual_f, benchmark_f, ir_f = (float(annual), float(benchmark), float(ir))  # type: ignore[arg-type]
+    if annual_f != annual_f or benchmark_f != benchmark_f or ir_f != ir_f:
+        return False
+    return annual_f > benchmark_f and ir_f > 0
+
+
+def _remember_family(family: str, ir: float, seen: set[str], best: dict[str, float]) -> None:
+    seen.add(family)
+    current = best.get(family)
+    if current is None or ir > current:
+        best[family] = ir
 
 
 def _catalog_lines(history: list[dict[str, object]]) -> list[str]:
@@ -545,36 +789,157 @@ def _catalog_lines(history: list[dict[str, object]]) -> list[str]:
     return lines
 
 
-def _prompt_for_model(history: list[dict[str, object]], rejected: list[dict[str, str]] | None, model: str) -> str:
-    """Local prompts show the recent formulas. The full set is still rejected in code."""
+def _book_numbers(result: dict[str, object]) -> dict[str, object]:
+    """Keep the factor's own TopkDropout figures. Curves stay out of the mining row."""
+    if result.get("error"):
+        return {"error": str(result["error"])}
+    return {
+        "annual_return": result.get("test_annual_return"),
+        "benchmark_annual_return": result.get("test_benchmark_annual_return"),
+        "max_drawdown": result.get("test_max_drawdown"),
+        "information_ratio": result.get("test_information_ratio"),
+        "test_annual_return": result.get("test_annual_return"),
+        "test_benchmark_annual_return": result.get("test_benchmark_annual_return"),
+        "test_max_drawdown": result.get("test_max_drawdown"),
+        "test_information_ratio": result.get("test_information_ratio"),
+    }
+
+
+def _record_own_books(row: dict[str, object], valid_book: dict[str, object], test_book: dict[str, object]) -> None:
+    """Archive this formula's own validation book and test book on the mining row."""
+    row["own_valid"] = _book_numbers(valid_book)
+    row["own_test"] = _book_numbers(test_book)
+    row.pop("baseline_valid_information_ratio", None)
+    valid_error = str(valid_book.get("error") or "")
+    test_error = str(test_book.get("error") or "")
+    if not valid_error:
+        row["valid_annual_return"] = valid_book.get("test_annual_return")
+        row["valid_information_ratio"] = valid_book.get("test_information_ratio")
+    else:
+        row["valid_annual_return"] = None
+        row["valid_information_ratio"] = None
+    if valid_error or test_error:
+        row["error"] = valid_error or test_error
+        row["accepted"] = False
+        return
+    row["error"] = ""
+    row["accepted"] = _validation_passes(test_book)
+
+
+def _feedback_text(feedback: object) -> str:
+    if not isinstance(feedback, dict) or not feedback:
+        return "还没有上一轮回测。"
+    lines: list[str] = []
+    if feedback.get("hypothesis"):
+        lines.append(f"假设：{feedback.get('hypothesis')}")
+    for item in feedback.get("scored") or []:
+        if not isinstance(item, dict):
+            continue
+        mark = "测试段过线" if item.get("accepted") else "测试段未过线"
+        lines.append(
+            f"{item.get('name')} 验证信息比率 {item.get('valid_information_ratio')}，"
+            f"测试信息比率 {item.get('test_information_ratio')}，{mark}。"
+        )
+    return "\n".join(lines) if lines else "还没有上一轮回测。"
+
+
+def _prompt_for_model(
+    history: list[dict[str, object]],
+    rejected: list[dict[str, str]] | None,
+    model: str,
+    feedback: object = None,
+) -> str:
+    """Ask for one hypothesis and a short batch. Failures and test-segment scores stay out."""
     if model != LOCAL_MODEL:
         return _prompt(history, rejected)
     succeeded = _successful_rows(history)
-    catalog = _catalog_lines(succeeded)[-LOCAL_CATALOG_LINES:]
+    ranked = sorted(
+        enumerate(succeeded),
+        key=lambda pair: (_valid_ir(pair[1]) if _valid_ir(pair[1]) is not None else float("-inf"), pair[0]),
+        reverse=True,
+    )
+    catalog = _catalog_lines([item for _, item in ranked[:LOCAL_CATALOG_LINES]])
     recent = succeeded[-LOCAL_PROMPT_RECENT:]
     recent_lines = [
         f"- {item.get('name')}: {item.get('formula')}；验证 IC {item.get('valid_ic')}"
+        + (f"；验证段信息比率 {item.get('valid_information_ratio')}" if _valid_ir(item) is not None else "")
         for item in recent
     ]
     rejected_text = ""
     if rejected:
         lines = [f"- {item.get('name')}: {item.get('formula')}" for item in rejected]
-        rejected_text = "下面这些刚被拒绝，名字或公式已经有了，换一个：\n" + "\n".join(lines) + "\n"
-    recent_text = "\n".join(recent_lines) if recent_lines else "还没有可参考的验证分。"
-    # The catalog is append-only. Do not put a changing count or score above it.
+        rejected_text = "下面这些名字或公式已经有了，换一个：\n" + "\n".join(lines) + "\n"
+    recent_text = "\n".join(recent_lines) if recent_lines else "还没有留下的新因子。"
     return (
         "你是量化因子研究员。只回复一个 JSON 对象，不要解释，不要用 markdown。\n"
-        "字段：name（英文短名）、formula、reason（一句中文）。\n"
+        f"字段：hypothesis（一句中文的经济假设）、factors（1 到 {FACTOR_BATCH} 个对象，每个含 name、formula、reason）。\n"
         f"formula 只能使用 {_formula_fields_text()}、加减乘除、括号，"
         "以及 Ref(序列, 整数)、Mean(序列, 整数)、Std(序列, 整数)。\n"
         "窗口是 1 到 120 的整数。\n"
-        "下面每行都是已经挖过的公式。新的 name 和 formula 不能与其中任何一条相同，去掉空格后相同也算重复。\n"
+        "每个新公式单独做验证和测试，不和 Alpha158 合成一个模型。\n"
+        "验证段和测试段各自训练该因子的 LightGBM。持仓是当天分数最高的 50 只，掉出这 50 只当天卖出。\n"
+        "测试年化高于该因子自己的基准、并且测试信息比率为正，这一条才留下。\n"
+        "上一轮回测：\n"
+        + _feedback_text(feedback)
+        + "\n已经留下的公式，新的 name 和 formula 不能与其中任何一条相同，去掉空格后相同也算重复。\n"
         + "\n".join(catalog)
-        + "\n最近记录只供参考，里面的公式同样不能再用：\n"
+        + "\n最近留下的公式：\n"
         + recent_text
         + "\n"
         + rejected_text
     )
+
+
+_RESCORE: dict[str, object] = {}
+
+
+def _init_rescore_worker(threads: int) -> None:
+    """Load the score panel once in each rescore process."""
+    service = QlibFactorLoopService(Settings())
+    panel = service._score_panel()
+    close = panel["close"]
+    future = close.groupby(level="instrument", sort=False).shift(-1) / close - 1
+    _RESCORE["panel"] = panel
+    _RESCORE["close"] = close
+    _RESCORE["future"] = future
+    _RESCORE["dates"] = pd.Series(panel.index.get_level_values("date"), index=panel.index)
+    _RESCORE["instruments"] = pd.Series(panel.index.get_level_values("instrument"), index=panel.index)
+    _RESCORE["threads"] = threads
+
+
+def _rescore_saved_job(job: dict[str, object]) -> dict[str, object]:
+    """Refit one saved formula and rebuild its validation book and test book."""
+    try:
+        factor = evaluate_formula(str(job["formula"]), _RESCORE["panel"])  # type: ignore[arg-type]
+        common = {
+            "prices": _RESCORE["close"],
+            "train_end": str(job["train_end"]),
+            "valid_end": str(job["valid_end"]),
+            "num_threads": int(_RESCORE["threads"]),  # type: ignore[arg-type]
+        }
+        valid_book = run_factor_strategy(
+            factor,
+            _RESCORE["future"],  # type: ignore[arg-type]
+            _RESCORE["dates"],  # type: ignore[arg-type]
+            _RESCORE["instruments"],  # type: ignore[arg-type]
+            book="valid",
+            **common,  # type: ignore[arg-type]
+        )
+        test_book = run_factor_strategy(
+            factor,
+            _RESCORE["future"],  # type: ignore[arg-type]
+            _RESCORE["dates"],  # type: ignore[arg-type]
+            _RESCORE["instruments"],  # type: ignore[arg-type]
+            book="test",
+            **common,  # type: ignore[arg-type]
+        )
+        for key in ("equity_curve", "benchmark_curve", "trades"):
+            valid_book.pop(key, None)
+            if not job.get("archive"):
+                test_book.pop(key, None)
+        return {"plan_id": job["plan_id"], "index": job["index"], "valid": valid_book, "test": test_book}
+    except Exception as error:  # noqa: BLE001 — one formula must not stop the rescore
+        return {"plan_id": job["plan_id"], "index": job["index"], "error": str(error)}
 
 
 class QlibFactorLoopService:
@@ -586,6 +951,8 @@ class QlibFactorLoopService:
         self._runners: dict[str, threading.Thread] = {}
         self._generation: dict[str, int] = {}
         self._cancels: dict[str, threading.Event] = {}
+        self._archive_inflight: set[str] = set()
+        self._panel_cache: tuple[float, pd.DataFrame] | None = None
 
     @property
     def qlib_root(self) -> Path:
@@ -730,24 +1097,46 @@ class QlibFactorLoopService:
         return self._public(self._load(plan_id))
 
     def purge_errors(self, plan_id: str) -> dict[str, object]:
-        """Drop rounds that failed. Successful factors and the plan status stay."""
+        """Drop rows labeled 错误 or 中断. 过线, 未过线, and 待计算 stay."""
         with self._lock:
             if self._live(plan_id):
-                raise ValueError("循环还在跑，先停止再删除错误记录")
+                raise ValueError("循环还在跑，先停止再删除错误和中断")
             plan = self._load(plan_id)
             if plan.get("status") == "running":
-                raise ValueError("循环还在跑，先停止再删除错误记录")
+                raise ValueError("循环还在跑，先停止再删除错误和中断")
             rounds = plan.get("rounds") or []
             if not isinstance(rounds, list):
                 rounds = []
-            kept = [row for row in rounds if isinstance(row, dict) and not row.get("error")]
-            removed = len(rounds) - len(kept)
+            kept = [row for row in rounds if not _status_error(row)]
+            removed = len(rounds) - len(kept) + _interruption_count(plan)
             plan["rounds"] = kept
+            plan["interruptions"] = []
+            if "模型" in str(plan.get("stop_reason") or ""):
+                plan["stop_reason"] = "已停止" if plan.get("status") == "stopped" else ""
             self._write_plan(plan, force=True)
         public = self._public(self._load(plan_id))
         public["removed"] = removed
         public["kept"] = len(kept)
         return public
+
+    def delete_plan(self, plan_id: str) -> dict[str, object]:
+        """Remove one stopped plan file. A live run and every other plan stay."""
+        with self._lock:
+            if self._live(plan_id):
+                raise ValueError("循环还在跑，先停止再删除计划")
+            plan = self._load(plan_id)
+            if plan.get("status") == "running":
+                raise ValueError("循环还在跑，先停止再删除计划")
+            removed = len(plan.get("rounds") or [])
+            path = self._plan_path(plan_id)
+            path.unlink()
+            temporary = path.with_suffix(".json.next")
+            if temporary.is_file():
+                temporary.unlink()
+            self._runners.pop(plan_id, None)
+            self._cancels.pop(plan_id, None)
+            self._generation.pop(plan_id, None)
+        return {"plan_id": plan_id, "deleted": True, "rounds": removed}
 
     def get(self, plan_id: str) -> dict[str, object]:
         return self._public(self._load(plan_id))
@@ -789,6 +1178,33 @@ class QlibFactorLoopService:
         stored.pop("trades", None)
         round_row["strategy"] = stored
 
+    def _publish_own_test(
+        self,
+        plan: dict[str, object],
+        round_row: dict[str, object],
+        valid_book: dict[str, object],
+        test_book: dict[str, object],
+    ) -> None:
+        """Write the factor's own test book into the result archive. Validation numbers ride along."""
+        if test_book.get("error"):
+            return
+        archived = dict(test_book)
+        archived["book"] = "test"
+        if valid_book.get("error"):
+            archived["valid_annual_return"] = None
+            archived["valid_information_ratio"] = None
+        else:
+            archived["valid_annual_return"] = valid_book.get("test_annual_return")
+            archived["valid_information_ratio"] = valid_book.get("test_information_ratio")
+        self._store_strategy(plan, round_row, archived)
+        strategy = round_row.get("strategy")
+        own_test = round_row.get("own_test")
+        if isinstance(strategy, dict) and isinstance(own_test, dict):
+            if strategy.get("detail_url"):
+                own_test["detail_url"] = strategy["detail_url"]
+            if strategy.get("archive_run_id"):
+                own_test["archive_run_id"] = strategy["archive_run_id"]
+
     def _publish_archive(
         self,
         plan: dict[str, object],
@@ -826,6 +1242,9 @@ class QlibFactorLoopService:
             "turnover": strategy.get("test_turnover"),
             "capital_usage": strategy.get("test_capital_usage"),
             "rank_ic": round_row.get("test_ic"),
+            "information_ratio": strategy.get("test_information_ratio"),
+            "valid_annual_return": strategy.get("valid_annual_return"),
+            "valid_information_ratio": strategy.get("valid_information_ratio"),
             "win_rate": strategy.get("win_rate"),
             "ndcg_at_10": None,
             "trade_count": int(strategy.get("trade_count") or 0),
@@ -833,11 +1252,14 @@ class QlibFactorLoopService:
             "benchmark_curve": bench,
         }
         metrics = _attach_extra_performance_metrics(metrics, curve)
+        segment = "验证段" if strategy.get("book") == "valid" else "测试段"
         config = {
             "name": f"Qlib {name} · TopkDropout",
             "note": (
-                f"{formula}。LightGBM 打分，持有 {strategy.get('topk')} 只、每次换 {strategy.get('n_drop')} 只。"
-                "测试段按次日收盘到收盘。成交按 100 万本金，价格是当日收盘，买入 5bp、卖出 15bp。"
+                f"{formula}。LightGBM 打分，持有当天分数最高的 {strategy.get('topk')} 只，掉出这个名单当天卖出。"
+                "分数相同的已持有股票优先留下。"
+                f"{segment}按次日收盘到收盘。年化收益和信息比率都写在这份档案里。"
+                "成交按 100 万本金，价格是当日收盘，买入 5bp、卖出 15bp。"
                 "盈亏是持有期间的权重收益减去这两笔费用，全部成交的盈亏加总等于累计收益。期末仍持有是浮动盈亏。"
             ),
             "kind": "qlib_topk_dropout",
@@ -888,6 +1310,91 @@ class QlibFactorLoopService:
             refresh_backtest_summary(connection, run_id)
         return {"run_id": run_id}
 
+    def publish_own_archive(self, plan_id: str, round_index: int) -> dict[str, object]:
+        """Write this round's own test book into a new result archive. The old joint archive stays."""
+        key = f"{plan_id}:{round_index}"
+        with self._lock:
+            if self._live(plan_id):
+                raise ValueError("循环还在跑，先停止再写入回测")
+            plan = self._load(plan_id)
+            if plan.get("status") == "running":
+                raise ValueError("循环还在跑，先停止再写入回测")
+            rounds = plan.get("rounds") or []
+            if not isinstance(rounds, list) or round_index < 0 or round_index >= len(rounds) or not isinstance(rounds[round_index], dict):
+                raise ValueError("没有这一轮")
+            row = rounds[round_index]
+            own = row.get("own_test") if isinstance(row.get("own_test"), dict) else {}
+            ready = str(own.get("detail_url") or "")
+            archive_id = str(own.get("archive_run_id") or "")
+            if ready and archive_id:
+                from quantlab.repositories.database import Database
+
+                if self._archive_run_exists(Database(self.settings.database_path), archive_id):
+                    return {"plan_id": plan_id, "round": round_index + 1, "detail_url": ready}
+            formula = str(row.get("formula") or "").strip()
+            if not formula:
+                raise ValueError("这一轮没有公式")
+            train_end = str(plan["train_end"])
+            valid_end = str(plan["valid_end"])
+            if key in self._archive_inflight:
+                raise ValueError("这一轮的回测正在写入")
+            self._archive_inflight.add(key)
+        try:
+            panel = self._score_panel()
+            close = panel["close"]
+            future = close.groupby(level="instrument", sort=False).shift(-1) / close - 1
+            dates = pd.Series(panel.index.get_level_values("date"), index=panel.index)
+            instruments = pd.Series(panel.index.get_level_values("instrument"), index=panel.index)
+            factor = evaluate_formula(formula, panel)
+            valid_book = run_factor_strategy(
+                factor,
+                future,
+                dates,
+                instruments,
+                prices=close,
+                train_end=train_end,
+                valid_end=valid_end,
+                book="valid",
+                num_threads=1,
+            )
+            test_book = run_factor_strategy(
+                factor,
+                future,
+                dates,
+                instruments,
+                prices=close,
+                train_end=train_end,
+                valid_end=valid_end,
+                book="test",
+                num_threads=1,
+            )
+            if test_book.get("error"):
+                raise ValueError(str(test_book["error"]))
+            with self._lock:
+                if self._live(plan_id):
+                    raise ValueError("循环还在跑，先停止再写入回测")
+                plan = self._load(plan_id)
+                if plan.get("status") == "running":
+                    raise ValueError("循环还在跑，先停止再写入回测")
+                current = plan["rounds"][round_index]
+                if not isinstance(current, dict):
+                    raise ValueError("没有这一轮")
+                own = current.get("own_test") if isinstance(current.get("own_test"), dict) else {}
+                if own.get("detail_url") and own.get("archive_run_id"):
+                    return {"plan_id": plan_id, "round": round_index + 1, "detail_url": str(own["detail_url"])}
+                _record_own_books(current, valid_book, test_book)
+                self._publish_own_test(plan, current, valid_book, test_book)
+                self._write_plan(plan, force=True)
+                stored = current.get("own_test") if isinstance(current.get("own_test"), dict) else {}
+                detail_url = str(stored.get("detail_url") or "")
+                if not detail_url:
+                    strategy = current.get("strategy") if isinstance(current.get("strategy"), dict) else {}
+                    raise ValueError(str(strategy.get("archive_error") or "没有写入结果档案"))
+            return {"plan_id": plan_id, "round": round_index + 1, "detail_url": detail_url}
+        finally:
+            with self._lock:
+                self._archive_inflight.discard(key)
+
     def fill_strategy(self, plan_id: str) -> dict[str, object]:
         """Score an existing formula into TopkDropout. Does not call Grok."""
         plan = self._load(plan_id)
@@ -901,20 +1408,123 @@ class QlibFactorLoopService:
                 continue
             factor = evaluate_formula(str(row["formula"]), panel)
             previous = row.get("strategy") if isinstance(row.get("strategy"), dict) else {}
-            strategy = run_factor_strategy(
+            train_end = str(plan["train_end"])
+            valid_end = str(plan["valid_end"])
+            valid_book = run_factor_strategy(
                 factor,
                 future,
                 dates,
                 instruments,
                 prices=close,
-                train_end=str(plan["train_end"]),
-                valid_end=str(plan["valid_end"]),
+                train_end=train_end,
+                valid_end=valid_end,
+                book="valid",
             )
-            if previous.get("archive_run_id"):
-                strategy["archive_run_id"] = previous["archive_run_id"]
-            self._store_strategy(plan, row, strategy)
+            test_book = run_factor_strategy(
+                factor,
+                future,
+                dates,
+                instruments,
+                prices=close,
+                train_end=train_end,
+                valid_end=valid_end,
+                book="test",
+            )
+            valid_mask = (dates > plan["train_end"]) & (dates <= plan["valid_end"])
+            test_mask = dates > plan["valid_end"]
+            row["valid_ic"] = mean_rank_ic(factor[valid_mask], future[valid_mask], dates[valid_mask])
+            row["test_ic"] = mean_rank_ic(factor[test_mask], future[test_mask], dates[test_mask])
+            _record_own_books(row, valid_book, test_book)
+            if previous.get("archive_run_id") and not test_book.get("error"):
+                test_book = dict(test_book)
+                test_book["archive_run_id"] = previous["archive_run_id"]
+            self._publish_own_test(plan, row, valid_book, test_book)
         self._write_plan(plan)
         return self._public(plan)
+
+    def rescore_saved_books(self, *, workers: int = 8, threads: int = 1) -> dict[str, object]:
+        """Rebuild every saved formula's validation book and test book. Does not ask for new formulas."""
+        done_path = self.settings.runtime_root / "qlib" / "rescore_top50.done"
+        done_path.parent.mkdir(parents=True, exist_ok=True)
+        done = set(done_path.read_text(encoding="utf-8").split()) if done_path.is_file() else set()
+        plans: dict[str, dict[str, object]] = {}
+        jobs: list[dict[str, object]] = []
+        for path in self._plan_paths():
+            plan = self._read_plan(path)
+            plan_id = str(plan["plan_id"])
+            plans[plan_id] = plan
+            for index, row in enumerate(plan.get("rounds") or []):
+                if not isinstance(row, dict):
+                    continue
+                formula = str(row.get("formula") or "").strip()
+                if not formula or _mining_failure(row):
+                    continue
+                key = f"{plan_id}:{index}"
+                if key in done:
+                    continue
+                own = row.get("own_test") if isinstance(row.get("own_test"), dict) else {}
+                strategy = row.get("strategy") if isinstance(row.get("strategy"), dict) else {}
+                archive = str(own.get("archive_run_id") or strategy.get("archive_run_id") or "")
+                jobs.append(
+                    {
+                        "plan_id": plan_id,
+                        "index": index,
+                        "formula": formula,
+                        "train_end": str(plan["train_end"]),
+                        "valid_end": str(plan["valid_end"]),
+                        "archive": bool(archive),
+                    }
+                )
+        finished = 0
+        failed: list[dict[str, object]] = []
+        if jobs:
+            context = multiprocessing.get_context("spawn")
+            with context.Pool(workers, initializer=_init_rescore_worker, initargs=(threads,)) as pool:
+                for result in pool.imap_unordered(_rescore_saved_job, jobs, chunksize=1):
+                    plan_id = str(result["plan_id"])
+                    index = int(result["index"])
+                    plan = plans[plan_id]
+                    row = plan["rounds"][index]
+                    assert isinstance(row, dict)
+                    key = f"{plan_id}:{index}"
+                    if result.get("error") and "valid" not in result:
+                        failed.append({"plan_id": plan_id, "index": index, "error": result["error"]})
+                        print(f"rescore fail {key} {result['error']}", flush=True)
+                        continue
+                    self._apply_rescored_books(plan, row, result["valid"], result["test"])
+                    self._write_plan(plan, force=True)
+                    with done_path.open("a", encoding="utf-8") as handle:
+                        handle.write(key + "\n")
+                    finished += 1
+                    if finished % 25 == 0 or finished == len(jobs):
+                        print(f"rescore {finished}/{len(jobs)}", flush=True)
+        return {"jobs": len(jobs), "finished": finished, "failed": failed}
+
+    def _apply_rescored_books(
+        self,
+        plan: dict[str, object],
+        row: dict[str, object],
+        valid_book: dict[str, object],
+        test_book: dict[str, object],
+    ) -> None:
+        """Write the new books onto the mining row and refresh an archive that already exists."""
+        own = row.get("own_test") if isinstance(row.get("own_test"), dict) else {}
+        strategy = row.get("strategy") if isinstance(row.get("strategy"), dict) else {}
+        detail_url = str(own.get("detail_url") or strategy.get("detail_url") or "")
+        archive_id = str(own.get("archive_run_id") or strategy.get("archive_run_id") or "")
+        _record_own_books(row, valid_book, test_book)
+        stored = row.get("own_test")
+        if isinstance(stored, dict):
+            if detail_url:
+                stored["detail_url"] = detail_url
+            if archive_id:
+                stored["archive_run_id"] = archive_id
+        row["holding_rule"] = "top50"
+        if not archive_id or test_book.get("error"):
+            return
+        refreshed = dict(test_book)
+        refreshed["archive_run_id"] = archive_id
+        self._publish_own_test(plan, row, valid_book, refreshed)
 
     def _known_factors(self, plan_id: str) -> tuple[set[str], set[str], list[dict[str, object]]]:
         formulas: set[str] = set()
@@ -930,13 +1540,14 @@ class QlibFactorLoopService:
                     formulas.add(formula)
                 if name and not row.get("error"):
                     names.add(name)
-                if same_plan or row.get("error") or not formula:
+                if same_plan or row.get("error") or row.get("accepted") is False or not formula:
                     continue
                 prior.append(
                     {
                         "name": row.get("name"),
                         "formula": row.get("formula"),
                         "valid_ic": row.get("valid_ic"),
+                        "valid_information_ratio": row.get("valid_information_ratio"),
                         "error": "",
                     }
                 )
@@ -969,6 +1580,7 @@ class QlibFactorLoopService:
                     "name": item.get("name"),
                     "formula": item.get("formula"),
                     "valid_ic": item.get("valid_ic"),
+                    "valid_information_ratio": item.get("valid_information_ratio"),
                     "error": item.get("error"),
                 }
                 for item in plan["rounds"]
@@ -981,7 +1593,7 @@ class QlibFactorLoopService:
             for _attempt in range(AGENT_ATTEMPTS):
                 try:
                     reply = runner.run(
-                        _prompt_for_model(history, rejections, str(plan["model"])),
+                        _prompt_for_model(history, rejections, str(plan["model"]), plan.get("last_feedback")),
                         model=str(plan["model"]),
                         workspace=self._agent_workspace(),
                     )
@@ -1007,51 +1619,106 @@ class QlibFactorLoopService:
                         time.sleep(5)
                     continue
                 plan["agent_calls"] = int(plan["agent_calls"]) + 1
-                round_row: dict[str, object] = {
-                    "error": "",
-                    "valid_ic": None,
-                    "test_ic": None,
-                    "created_at": _now_text(),
-                    "model": str(plan["model"]),
-                }
                 try:
-                    proposal = extract_proposal(reply)
-                    formula = proposal["formula"]
-                    name = _name_key(str(proposal["name"]))
-                    round_row.update(proposal)
-                    if len(formula) > MAX_FORMULA_LENGTH:
-                        raise ValueError("公式过长")
-                    if not name:
-                        raise ValueError("缺少因子名")
-                    key = _formula_key(formula)
-                    if key in seen_formulas or name in seen_names:
-                        rejections.append({"name": str(proposal["name"]), "formula": formula})
-                        continue
-                    seen_formulas.add(key)
-                    seen_names.add(name)
-                    factor = evaluate_formula(formula, panel)
-                    valid_mask = (dates > plan["train_end"]) & (dates <= plan["valid_end"])
-                    test_mask = dates > plan["valid_end"]
-                    round_row["valid_ic"] = mean_rank_ic(factor[valid_mask], future[valid_mask], dates[valid_mask])
-                    round_row["test_ic"] = mean_rank_ic(factor[test_mask], future[test_mask], dates[test_mask])
-                    strategy = run_factor_strategy(
-                        factor,
-                        future,
-                        dates,
-                        instruments,
-                        prices=close,
-                        train_end=str(plan["train_end"]),
-                        valid_end=str(plan["valid_end"]),
-                    )
-                    self._store_strategy(plan, round_row, strategy)
-                    plan["rounds"].append(round_row)
-                    saved = True
+                    batch = extract_factor_batch(reply)
+                except Exception as error:  # noqa: BLE001 — a bad reply is one recorded row, then the loop goes on
+                    formula_error = {
+                        "error": str(error),
+                        "valid_ic": None,
+                        "test_ic": None,
+                        "formula": "",
+                        "name": "",
+                        "reason": "",
+                        "hypothesis": "",
+                        "created_at": _now_text(),
+                        "model": str(plan["model"]),
+                    }
                     break
-                except Exception as error:  # noqa: BLE001 — bad formula is feedback, not a second call
-                    round_row["error"] = str(error)
-                    round_row["formula"] = round_row.get("formula") or ""
-                    formula_error = round_row
-                    break
+                hypothesis = str(batch["hypothesis"])
+                batch_rows: list[dict[str, object]] = []
+                feedback_rows: list[dict[str, object]] = []
+                accepted_this_batch = 0
+                room = target - _mined_factor_count(plan["rounds"])
+                train_end = str(plan["train_end"])
+                valid_end = str(plan["valid_end"])
+                for proposal in batch["factors"]:
+                    assert isinstance(proposal, dict)
+                    round_row = {
+                        "error": "",
+                        "valid_ic": None,
+                        "test_ic": None,
+                        "created_at": _now_text(),
+                        "model": str(plan["model"]),
+                        "hypothesis": hypothesis,
+                        "accepted": False,
+                    }
+                    try:
+                        formula = str(proposal["formula"])
+                        name = _name_key(str(proposal["name"]))
+                        round_row.update(proposal)
+                        round_row["hypothesis"] = hypothesis
+                        if len(formula) > MAX_FORMULA_LENGTH:
+                            raise ValueError("公式过长")
+                        if not name:
+                            raise ValueError("缺少因子名")
+                        key = _formula_key(formula)
+                        if key in seen_formulas or name in seen_names:
+                            rejections.append({"name": str(proposal["name"]), "formula": formula})
+                            continue
+                        if accepted_this_batch >= room:
+                            round_row["error"] = "本轮数量已经够了"
+                            batch_rows.append(round_row)
+                            continue
+                        seen_formulas.add(key)
+                        seen_names.add(name)
+                        factor = evaluate_formula(formula, panel)
+                        valid_mask = (dates > plan["train_end"]) & (dates <= plan["valid_end"])
+                        test_mask = dates > plan["valid_end"]
+                        round_row["valid_ic"] = mean_rank_ic(factor[valid_mask], future[valid_mask], dates[valid_mask])
+                        round_row["test_ic"] = mean_rank_ic(factor[test_mask], future[test_mask], dates[test_mask])
+                        valid_book = run_factor_strategy(
+                            factor,
+                            future,
+                            dates,
+                            instruments,
+                            prices=close,
+                            train_end=train_end,
+                            valid_end=valid_end,
+                            book="valid",
+                        )
+                        test_book = run_factor_strategy(
+                            factor,
+                            future,
+                            dates,
+                            instruments,
+                            prices=close,
+                            train_end=train_end,
+                            valid_end=valid_end,
+                            book="test",
+                        )
+                        _record_own_books(round_row, valid_book, test_book)
+                        self._publish_own_test(plan, round_row, valid_book, test_book)
+                        if round_row.get("accepted"):
+                            accepted_this_batch += 1
+                        feedback_rows.append(
+                            {
+                                "name": round_row.get("name"),
+                                "accepted": bool(round_row.get("accepted")),
+                                "valid_information_ratio": round_row.get("valid_information_ratio"),
+                                "test_information_ratio": _book_ir(test_book),
+                            }
+                        )
+                        batch_rows.append(round_row)
+                    except Exception as error:  # noqa: BLE001 — one bad formula does not discard the rest of the batch
+                        round_row["error"] = str(error)
+                        round_row["formula"] = round_row.get("formula") or ""
+                        batch_rows.append(round_row)
+                if rejections and not batch_rows:
+                    continue
+                plan["last_feedback"] = {"hypothesis": hypothesis, "scored": feedback_rows}
+                plan["rounds"].extend(batch_rows)
+                saved = True
+                break
             if saved:
                 pass
             elif formula_error is not None:
@@ -1185,6 +1852,9 @@ class QlibFactorLoopService:
         path = self.qlib_root / "panel.parquet"
         if not path.is_file():
             raise ValueError("还没有转换后的行情面板")
+        mtime = path.stat().st_mtime
+        if self._panel_cache is not None and self._panel_cache[0] == mtime:
+            return self._panel_cache[1]
         frame = pd.read_parquet(path)
         csi300 = self.qlib_dir / "instruments" / "csi300.txt"
         if csi300.is_file():
@@ -1192,6 +1862,7 @@ class QlibFactorLoopService:
             frame = frame[frame["symbol"].isin(symbols)]
         frame = frame.rename(columns={"symbol": "instrument"})
         frame = frame.set_index(["instrument", "date"]).sort_index()
+        self._panel_cache = (mtime, frame)
         return frame
 
     def _load_membership(self) -> pd.DataFrame | None:

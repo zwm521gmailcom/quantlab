@@ -7,3 +7,8 @@ router = APIRouter()
 @router.get("/api/overview")
 def overview(request: Request) -> dict[str, object]:
     return request.app.state.overview_service.get_overview()
+
+
+@router.get("/api/overview/charts")
+def overview_charts(request: Request) -> dict[str, object]:
+    return request.app.state.overview_service.chart_data()

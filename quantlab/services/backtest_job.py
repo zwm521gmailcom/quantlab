@@ -775,6 +775,9 @@ def _execute_core(self, run_id):
         config = run["config"]
         field = self._factor_field(config)
         frame = self._load_frame(path, config)
+        from quantlab.services.backtest_admission import settle_after_load
+
+        settle_after_load(self.settings.runtime_root, run_id)
         note_workers(frame_nbytes=frame_nbytes(frame))
         if uses_stock_ma200(config):
             attach_sma(frame)
@@ -975,6 +978,7 @@ def _execute_core(self, run_id):
                     "year_line": _as_bool(portfolio_config.get("open_when_benchmark_gt_ma200"), False),
                     "extra_gates": extras,
                 }
+        predictions = filter_rows_to_segment(frame, predictions, portfolio_config)
         trades, equity_curve = run_portfolio(frame, predictions, portfolio_config)
         self._step(run_id, 4, "completed")
         self._step(run_id, 5, "running")

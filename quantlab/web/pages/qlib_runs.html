@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>QuantLab · 挖因子记录</title>
-    <link rel="stylesheet" href="/assets/app.css?v=20261001purge">
+    <link rel="stylesheet" href="/assets/app.css?v=20261002archive1">
   </head>
   <body>
     <div class="shell">
@@ -13,14 +13,17 @@
         <nav class="page-back" aria-label="返回路径"><a href="/qlib">← Qlib 挖因子</a></nav>
         <div class="eyebrow">Qlib</div>
         <h2>挖因子记录</h2>
-        <p>每一行是一轮挖出的因子。验证和测试是 Spearman IC。策略是 LightGBM 打分后的 TopkDropout，成绩只覆盖测试段。点「结果档案」打开同一条运行的曲线和指标。</p>
+        <p>每一行是一个挖出的公式。名字或公式和已有的重复，这一行不会再算。其余公式各自训练 LightGBM，验证段和测试段都持有当天分数最高的 50 只，掉出这 50 只当天卖出。表上的年化、回撤和信息比率都是这个因子自己的成绩。</p>
+        <p>列按处理顺序排：先是验证段的 IC、年化、信息比率，再是测试段的 IC、年化、回撤、信息比率。测试年化高于该因子自己的基准，并且测试信息比率为正，状态是过线；两段都算出但没达到，是未过线；公式还没有这两段结果，是待计算。公式写坏或计算失败才记为错误。</p>
         <div id="qlib-runs-error" class="state error hidden"></div>
         <section class="card qlib-runs-card">
           <div class="qlib-runs-toolbar">
             <label for="qlib-plan-filter">编号</label>
             <select id="qlib-plan-filter" class="select"><option value="">全部</option></select>
-            <button id="qlib-purge-errors" type="button" class="btn" disabled>删除错误记录</button>
+            <button id="qlib-purge-errors" type="button" class="btn" disabled>删除错误和中断</button>
+            <button id="qlib-delete-plan" type="button" class="btn" disabled>删除计划</button>
           </div>
+          <p id="qlib-runs-summary" class="form-note">正在汇总状态。</p>
           <p id="qlib-runs-live" class="form-note" hidden></p>
           <p id="qlib-runs-empty" class="form-note hidden">还没有计划。</p>
           <div class="archive-table">
@@ -34,12 +37,14 @@
                   <th class="archive-sortable"><button type="button" data-sort="name">因子</button></th>
                   <th>因子说明</th>
                   <th>公式</th>
-                  <th class="num archive-sortable"><button type="button" data-sort="valid_ic">验证</button></th>
-                  <th class="num archive-sortable"><button type="button" data-sort="test_ic">测试</button></th>
-                  <th class="num archive-sortable"><button type="button" data-sort="annual">测试年化</button></th>
-                  <th class="num archive-sortable"><button type="button" data-sort="drawdown">回撤</button></th>
-                  <th class="num archive-sortable"><button type="button" data-sort="ir">信息比率</button></th>
-                  <th>说明</th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="valid_ic">验证 IC</button></th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="valid_annual">验证年化</button></th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="valid_ir">验证信息比率</button></th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="test_ic">测试 IC</button></th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="test_annual">测试年化</button></th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="test_drawdown">测试回撤</button></th>
+                  <th class="num score archive-sortable"><button type="button" data-sort="test_ir">测试信息比率</button></th>
+                  <th class="status archive-sortable"><button type="button" data-sort="status">状态</button></th>
                   <th></th>
                 </tr>
               </thead>
@@ -63,7 +68,7 @@
     </div>
     <script src="/assets/shared/fetch.js"></script>
     <script src="/assets/table-pager.js?v=20260909pager"></script>
-    <script src="/assets/qlib/runs.js?v=20261001purge"></script>
+    <script src="/assets/qlib/runs.js?v=20261002archive1"></script>
     <script src="/assets/bootstrap.js?v=20260911layout"></script>
     <script src="/assets/nav.js?v=20260930nojobs"></script>
   </body>

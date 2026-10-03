@@ -4,6 +4,10 @@
   const empty = document.getElementById("qlib-picks-empty");
   const body = document.getElementById("qlib-picks-body");
   const board = document.getElementById("qlib-picks-board");
+  const table = body.closest("table");
+  const TEXT_SORT = new Set(["source", "plan", "name", "reason", "formula"]);
+  const view = {sortKey: "test_ir", sortDir: "desc"};
+  let latest = {picks: [], candidate_count: 0};
 
   const KINDS = [
     { id: "stability", label: "振幅×量稳", color: "#e39158", hint: "日内振幅，再乘上成交量相对自身波动有多稳" },
@@ -271,13 +275,62 @@
     if (plot.best) showDetail(plot.best);
   }
 
+  function finite(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function sortValue(pick, key) {
+    if (key === "source") return sourceLabel(pick.model);
+    if (key === "plan") return pick.plan_id || "";
+    if (key === "round") return finite(pick.round);
+    if (key === "name") return pick.name || "";
+    if (key === "reason") return String(pick.reason || "").trim();
+    if (key === "formula") return pick.formula || "";
+    if (key === "valid_ic") return finite(pick.valid_ic);
+    if (key === "test_ic") return finite(pick.test_ic);
+    if (key === "test_annual") return finite(pick.test_annual_return);
+    if (key === "benchmark") return finite(pick.test_benchmark_annual_return);
+    if (key === "test_drawdown") return finite(pick.test_max_drawdown);
+    if (key === "test_ir") return finite(pick.test_information_ratio);
+    if (key === "family") return finite(pick.family_size);
+    return "";
+  }
+
+  function ordered(picks) {
+    return picks.map((pick, index) => ({pick, index})).sort((left, right) => {
+      const a = sortValue(left.pick, view.sortKey);
+      const b = sortValue(right.pick, view.sortKey);
+      const aMissing = a == null || a === "";
+      const bMissing = b == null || b === "";
+      if (aMissing || bMissing) {
+        if (aMissing && bMissing) return left.index - right.index;
+        return aMissing ? 1 : -1;
+      }
+      let order = typeof a === "number" && typeof b === "number"
+        ? a - b
+        : String(a).localeCompare(String(b), "zh");
+      if (order === 0) order = left.index - right.index;
+      return view.sortDir === "asc" ? order : -order;
+    }).map((row) => row.pick);
+  }
+
+  function markSort() {
+    table.querySelectorAll("[data-sort]").forEach((button) => {
+      const header = button.closest("th");
+      const active = button.dataset.sort === view.sortKey;
+      header.setAttribute("aria-sort", active ? (view.sortDir === "asc" ? "ascending" : "descending") : "none");
+    });
+  }
+
   function render(payload) {
+    latest = payload;
     const picks = payload.picks || [];
     summary.textContent = `过线 ${payload.candidate_count || 0} 条，留下 ${picks.length} 类。`;
     empty.classList.toggle("hidden", picks.length > 0);
     renderBoard(picks);
     body.replaceChildren();
-    picks.forEach((pick) => {
+    ordered(picks).forEach((pick) => {
       const tr = document.createElement("tr");
       const source = cell(sourceLabel(pick.model), "source");
       if (pick.model) source.title = String(pick.model);
@@ -292,25 +345,29 @@
       }
       const family = Number(pick.family_size) > 1 ? `1/${pick.family_size}` : "1";
       const kind = kindOf(pick.formula);
-      const nameCell = cell(pick.name || "—");
+      const nameCell = cell(pick.name || "—", "factor");
       nameCell.title = `${kind.label} · ${styleOf(pick).label}。${kind.hint}`;
+      const explain = cell(String(pick.reason || "").trim() || "—", "explain");
+      const formula = cell(pick.formula || "—", "formula");
       tr.append(
         source,
         cell(pick.plan_id || "—", "plan-id"),
-        cell(`${pick.round}/${pick.max_loops || "—"}`, "num"),
+        cell(`${pick.round}/${pick.max_loops || "—"}`, "num round"),
         nameCell,
-        cell(pick.formula || "—"),
-        cell(icText(pick.valid_ic), "num"),
-        cell(icText(pick.test_ic), "num"),
-        cell(pct(pick.test_annual_return), "num"),
-        cell(pct(pick.test_benchmark_annual_return), "num"),
-        cell(pct(pick.test_max_drawdown), "num"),
-        cell(icText(pick.test_information_ratio), "num"),
-        cell(family, "num"),
+        explain,
+        formula,
+        cell(icText(pick.valid_ic), "num stat"),
+        cell(icText(pick.test_ic), "num stat"),
+        cell(pct(pick.test_annual_return), "num stat"),
+        cell(pct(pick.test_benchmark_annual_return), "num stat"),
+        cell(pct(pick.test_max_drawdown), "num stat"),
+        cell(icText(pick.test_information_ratio), "num stat"),
+        cell(family, "num family"),
         actions,
       );
       body.append(tr);
     });
+    markSort();
   }
 
   async function load() {
@@ -322,6 +379,19 @@
       errorBox.classList.remove("hidden");
     }
   }
+
+  table.addEventListener("click", (event) => {
+    const header = event.target.closest("th.archive-sortable");
+    const button = event.target.closest("[data-sort]") || (header && header.querySelector("[data-sort]"));
+    if (!button) return;
+    const key = button.dataset.sort;
+    if (view.sortKey === key) view.sortDir = view.sortDir === "asc" ? "desc" : "asc";
+    else {
+      view.sortKey = key;
+      view.sortDir = TEXT_SORT.has(key) ? "asc" : "desc";
+    }
+    render(latest);
+  });
 
   load();
   window.setInterval(load, 5000);

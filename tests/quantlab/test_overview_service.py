@@ -12,6 +12,16 @@ def _database(tmp_path):
     return database
 
 
+def test_chart_data_reads_empty_tables(tmp_path) -> None:
+    charts = OverviewService(_database(tmp_path)).chart_data()
+    assert charts["kind_counts"] == []
+    assert charts["status_counts"] == {}
+    assert charts["annual"]["qlib_lgb_multi"]["counts"] == [0] * 20
+    assert charts["factor_ic"]["counts"] == [0] * 16
+    assert charts["quality"] == []
+    assert charts["datasets"] == []
+
+
 def test_empty_database_returns_zero_counts_and_empty_collections(tmp_path) -> None:
     overview = OverviewService(_database(tmp_path)).get_overview()
 

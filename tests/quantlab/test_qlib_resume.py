@@ -218,16 +218,51 @@ def test_purge_errors_keeps_successful_factors_and_refuses_a_live_run(tmp_path):
     service = QlibFactorLoopService(_settings(tmp_path))
     plan = _plan("qlib-stopped0001", "stopped", 2, max_loops=1000)
     plan["rounds"].append({"name": "bad", "formula": "Ref(close, -1)", "error": "窗口必须是整数"})
+    plan["rounds"].append({"name": "note", "formula": "close+1", "error": "这一家没有更好"})
+    plan["rounds"].append({"name": "pending", "formula": "Mean(close, 5)", "error": ""})
+    plan["rounds"].append({"name": "blank", "formula": "", "error": ""})
+    plan["rounds"].append(
+        {
+            "name": "broken-book",
+            "formula": "close",
+            "error": "",
+            "strategy": {"error": "训练样本不够"},
+        }
+    )
+    plan["rounds"].append(
+        {
+            "name": "passed",
+            "formula": "Mean(close, 10)",
+            "error": "",
+            "own_test": {
+                "test_annual_return": 0.2,
+                "test_benchmark_annual_return": 0.05,
+                "test_information_ratio": 0.4,
+            },
+            "strategy": {"error": "旧的联合回测错误"},
+        }
+    )
     plan["interruptions"] = [{"message": "本机模型中断"}]
     service._write_plan(plan)
     purged = service.purge_errors("qlib-stopped0001")
-    assert purged["removed"] == 1
-    assert purged["kept"] == 2
+    assert purged["removed"] == 3
+    assert purged["kept"] == 6
     stored = service._load("qlib-stopped0001")
     assert stored["status"] == "stopped"
     assert stored["stop_reason"] == "已停止"
-    assert [row["name"] for row in stored["rounds"]] == ["f0", "f1"]
-    assert stored["interruptions"] == [{"message": "本机模型中断"}]
+    assert [row["name"] for row in stored["rounds"]] == ["f0", "f1", "note", "pending", "blank", "passed"]
+    assert stored["interruptions"] == []
+    ghost = _plan("qlib-stopped0002", "stopped", 1)
+    ghost["stop_reason"] = "本机模型中断"
+    ghost["interruptions"] = []
+    service._write_plan(ghost)
+    cleared = service.purge_errors("qlib-stopped0002")
+    assert cleared["removed"] == 1
+    assert cleared["kept"] == 1
+    ghost_stored = service._load("qlib-stopped0002")
+    assert ghost_stored["interruptions"] == []
+    assert "模型" not in str(ghost_stored["stop_reason"])
+    assert ghost_stored["rounds"][0]["name"] == "f0"
     running = _plan("qlib-running0001", "running", 1)
     running["rounds"].append({"name": "bad", "formula": "Ref(close, -1)", "error": "窗口必须是整数"})
     service._write_plan(running)
@@ -253,8 +288,81 @@ def test_runs_page_can_purge_error_rows() -> None:
     html = Path("quantlab/web/pages/qlib_runs.html").read_text(encoding="utf-8")
     js = Path("quantlab/web/assets/qlib/runs.js").read_text(encoding="utf-8")
     assert 'id="qlib-purge-errors"' in html
+    assert "删除错误和中断" in html
     assert "/purge-errors" in js
-    assert "成功的" in js
+    assert "过线、未过线和待计算" in js
+    assert "全部任务" in js
+    assert "interrupted" in js
+
+
+def test_delete_plan_removes_one_file_and_its_screen_pick(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr("quantlab.services.qlib_factor_loop.stop_local_gpt", lambda: calls.append("stop"))
+    service = QlibFactorLoopService(_settings(tmp_path))
+    gone = _plan("qlib-stopped0001", "completed", 1, max_loops=1)
+    gone["rounds"][0]["strategy"] = {
+        "test_annual_return": 0.2,
+        "test_benchmark_annual_return": 0.05,
+        "test_information_ratio": 0.8,
+    }
+    kept = _plan("qlib-stopped0002", "stopped", 1)
+    service._write_plan(gone)
+    service._write_plan(kept)
+    temporary = service._plan_path("qlib-stopped0001").with_suffix(".json.next")
+    temporary.write_text("{}", encoding="utf-8")
+    assert service.picks()["candidate_count"] == 1
+    deleted = service.delete_plan("qlib-stopped0001")
+    assert deleted == {"plan_id": "qlib-stopped0001", "deleted": True, "rounds": 1}
+    assert not service._plan_path("qlib-stopped0001").exists()
+    assert not temporary.exists()
+    assert service._load("qlib-stopped0002")["status"] == "stopped"
+    assert service.picks()["candidate_count"] == 0
+    assert calls == []
+    try:
+        service.get("qlib-stopped0001")
+    except ValueError as error:
+        assert "找不到" in str(error)
+    else:
+        raise AssertionError("a deleted plan should be gone")
+
+
+def test_delete_plan_refuses_a_live_run(tmp_path, monkeypatch):
+    import threading
+
+    calls = []
+    monkeypatch.setattr("quantlab.services.qlib_factor_loop.stop_local_gpt", lambda: calls.append("stop"))
+    service = QlibFactorLoopService(_settings(tmp_path))
+    running = _plan("qlib-running0001", "running", 1)
+    other = _plan("qlib-stopped0001", "stopped", 2)
+    service._write_plan(running)
+    service._write_plan(other)
+    hold = threading.Event()
+    worker = threading.Thread(target=hold.wait)
+    worker.start()
+    service._runners["qlib-running0001"] = worker
+    try:
+        service.delete_plan("qlib-running0001")
+    except ValueError as error:
+        assert "先停止" in str(error)
+    else:
+        raise AssertionError("a live run should stay on disk")
+    finally:
+        hold.set()
+        worker.join()
+    assert service._load("qlib-running0001")["status"] == "running"
+    assert len(service._load("qlib-stopped0001")["rounds"]) == 2
+    assert calls == []
+
+
+def test_runs_page_can_delete_a_plan() -> None:
+    from pathlib import Path
+
+    html = Path("quantlab/web/pages/qlib_runs.html").read_text(encoding="utf-8")
+    js = Path("quantlab/web/assets/qlib/runs.js").read_text(encoding="utf-8")
+    assert 'id="qlib-delete-plan"' in html
+    assert "/delete" in js
+    assert "先停止这个任务，再删除计划" in js
+    assert "结果档案里已有的回测还在" in js
 
 
 def test_local_prompt_shows_only_the_recent_catalog() -> None:

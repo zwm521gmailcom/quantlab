@@ -28,7 +28,7 @@ async function load() {
   $("fold-workers").placeholder = autoPlaceholder(x.compute_hint);
   $("bucket-workers").placeholder = autoPlaceholder(x.compute_hint);
   $("bucket-pool").value = x.compute.bucket_pool || "process";
-  $("compute-hint").textContent = `本机 ${x.compute_hint.cpu_count} 核、约 ${x.compute_hint.ram_gb} GB 内存。折并行建议不超过 ${x.compute_hint.safe_fold_workers}；分层净值建议 ${x.compute_hint.safe_bucket_workers}。同时回测 ${x.compute_hint.max_concurrent_backtests} 条（按内存和核数自动算，没有手动档）。留空时的自动核数（${x.compute_hint.auto_workers}）只适合折训练，不要用到分层进程。`;
+  $("compute-hint").textContent = `本机 ${x.compute_hint.cpu_count} 核、约 ${x.compute_hint.ram_gb} GB 内存。折并行建议不超过 ${x.compute_hint.safe_fold_workers}；分层净值建议 ${x.compute_hint.safe_bucket_workers}。同时回测不由设置决定。按总内存大约可同时读 ${x.compute_hint.admission_load_slots} 笔行情，稳定阶段最多 ${x.compute_hint.admission_ceiling} 笔。实际放行再看当时剩余内存。留空时的自动核数（${x.compute_hint.auto_workers}）只适合折训练，不要用到分层进程。`;
   const machine = x.machine || {};
   if ($("machine-id")) $("machine-id").value = machine.machine_id || "";
   if ($("serial-prefix")) $("serial-prefix").value = machine.serial_prefix == null ? "" : String(machine.serial_prefix);

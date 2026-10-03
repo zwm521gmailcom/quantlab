@@ -21,11 +21,14 @@ def _reset_compute_settings_cache() -> None:
 
 @pytest.fixture(autouse=True)
 def _reset_backtest_plan_runtime() -> None:
+    from quantlab.services.backtest_admission import reset_admission
     from quantlab.services.backtest_control import reset_execution_gate
     from quantlab.services.backtest_plan import reset_plan_runtime
 
+    reset_admission()
     reset_execution_gate()
     reset_plan_runtime()
     yield
     reset_plan_runtime()
     reset_execution_gate()
+    reset_admission()

@@ -13,7 +13,7 @@ def _first_party_js() -> str:
     root = Path("quantlab/web/assets")
     chunks = []
     for path in sorted(root.rglob("*.js")):
-        if "vendor" in path.parts:
+        if "vendor" in path.parts or path.name.startswith("._"):
             continue
         chunks.append(path.read_text(encoding="utf-8"))
     return "".join(chunks)
@@ -124,8 +124,8 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     html = _page("backtest_plan.html")
     js = _first_party_js()
     source = html + js
-    assert "app.css?v=20260911navadapt3" in html
-    assert "plan.js?v=20260912plansummary" in html
+    assert "app.css?v=20260918plannoscroll" in html
+    assert "plan.js?v=20261003plandelete" in html
     assert 'id="plan-pagination"' in html
     assert "table-pager.js" in html
     assert "QuantLabPager.mount" in js
@@ -134,7 +134,7 @@ def test_plan_grid_keeps_checkbox_column_narrow() -> None:
     assert 'id="delete-plan"' in html
     assert 'id="delete-items"' in html
     assert "删除任务" in html
-    assert "只有没有任务的计划可以删除" in source
+    assert "已经跑出的回测和产物都会一起删除" in source
     assert 'class="main plan-page"' in html
     assert ".main.plan-page" in css
     assert "max-width: none" in css
@@ -481,11 +481,10 @@ def test_run_record_page_includes_traceability_and_directory_sections() -> None:
 
 def test_overview_page_declares_performance_and_health_regions() -> None:
     html = _page("index.html")
-    app = _first_party_js()
-    assert 'id="recent-performance"' in html
-    assert 'id="data-health"' in html
-    assert 'getElementById("recent-performance")' in app
-    assert 'getElementById("data-health")' in app
+    script = Path("quantlab/web/assets/data/overview.js").read_text(encoding="utf-8")
+    for chart_id in ("chart-ir", "chart-kinds", "chart-annual-multi", "chart-quality", "chart-datasets"):
+        assert f'id="{chart_id}"' in html
+        assert f'getElementById("{chart_id}")' in script
 
 
 def test_kline_page_bundles_tradingview_lightweight_charts() -> None:

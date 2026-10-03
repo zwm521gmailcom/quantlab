@@ -264,6 +264,29 @@ def _strategy_label(name: Any) -> str:
     return text
 
 
+def _detail_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
+    shown = {
+        key: _metric(
+            metrics.get(key),
+            percentage=key in _PERCENT_METRICS,
+            integer=key in _INTEGER_METRICS,
+        )
+        for key, _ in _METRICS
+    }
+    extras = (
+        ("information_ratio", False),
+        ("valid_annual_return", True),
+        ("valid_information_ratio", False),
+    )
+    ordered: dict[str, Any] = {}
+    for key, value in shown.items():
+        ordered[key] = value
+        if key == "annual_return":
+            for extra, percentage in extras:
+                ordered[extra] = _metric(metrics.get(extra), percentage=percentage)
+    return ordered
+
+
 def _metric(value: Any, *, percentage: bool = False, integer: bool = False) -> dict[str, Any]:
     if value is None or value == "":
         return {"value": None, "display": "未生成"}
@@ -373,14 +396,7 @@ class ResultArchiveService:
             "strategy": {"entity_id": row["strategy_entity_id"], "name": model_name},
             "factors": self._factor_labels(row, config),
             "test_window": {"date_from": test.get("date_from"), "date_to": test.get("date_to")},
-            "metrics": {
-                key: _metric(
-                    metrics.get(key),
-                    percentage=key in _PERCENT_METRICS,
-                    integer=key in _INTEGER_METRICS,
-                )
-                for key, _ in _METRICS
-            },
+            "metrics": _detail_metrics(metrics),
             "benchmark": config.get("benchmark", "未生成"),
             "detail_url": f"/backtests/runs/{row['run_id']}",
             "copy_url": f"/api/backtests/runs/{row['run_id']}/copy-config",

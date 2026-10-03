@@ -55,6 +55,18 @@ def memory_safe_process_workers(nbytes: int, requested: int, ram: int | None = N
     return min(requested, copies - 1)
 
 
+def _admission_ceiling(ram: int) -> int:
+    from quantlab.services.backtest_admission import memory_ceiling
+
+    return memory_ceiling(int(ram or 0))
+
+
+def _admission_load_slots(ram: int) -> int:
+    from quantlab.services.backtest_admission import load_ceiling
+
+    return load_ceiling(int(ram or 0))
+
+
 def compute_hint() -> dict[str, Any]:
     cpu = cpu_count() or 1
     ram = total_ram_bytes()
@@ -73,6 +85,8 @@ def compute_hint() -> dict[str, Any]:
         "safe_bucket_workers": safe_bucket,
         "safe_fold_workers": memory_safe_process_workers(FOLD_PROCESS_BYTES, min(4, auto), ram=ram),
         "max_concurrent_backtests": max_concurrent_backtests(ram, cpu=int(cpu)),
+        "admission_ceiling": _admission_ceiling(ram),
+        "admission_load_slots": _admission_load_slots(ram),
     }
 
 
